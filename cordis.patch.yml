@@ -1,0 +1,6 @@
+# Security Assurance is installed as a dormant capability. Deployment owners
+# enable this row only after providing a qualified configuration.
+- insert:
+    - id: dsh-security-assurance
+      name: dsh-security-assurance
+      disabled: true

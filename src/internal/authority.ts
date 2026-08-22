@@ -1,0 +1,64 @@
+import type { SecurityInvocation } from '../contracts.ts'
+
+export type SecurityPermission = 'health:read'
+export type SecurityCallerChannelKind = 'harness-session' | 'host-operator' | 'control-plane'
+
+/** Package-private method key that Cordis traceable Service proxies can forward. */
+export const RESOLVE_TRUSTED_INVOCATION = Symbol('dsh-security-assurance.resolve-trusted-invocation')
+
+/**
+ * Identity already authenticated by a package-owned trusted channel adapter.
+ * This value and the Resolver are deliberately absent from package exports.
+ */
+export interface TrustedCallerChannel {
+  readonly kind: SecurityCallerChannelKind
+  readonly principalId: string
+  readonly permissions: readonly SecurityPermission[]
+}
+
+interface ResolvedSecurityAuthority {
+  readonly kind: SecurityCallerChannelKind
+  readonly principalId: string
+  readonly permissions: ReadonlySet<SecurityPermission>
+}
+
+/** Runtime identity registry for opaque, non-copyable Security Invocations. */
+export class SecurityAuthorityResolver {
+  readonly #issued = new WeakMap<object, ResolvedSecurityAuthority>()
+
+  resolve(channel: TrustedCallerChannel): SecurityInvocation {
+    if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/i.test(channel.principalId)) {
+      throw new TypeError('trusted caller channel has an invalid principal identity')
+    }
+    if (channel.permissions.length === 0 || channel.permissions.some(permission => permission !== 'health:read')) {
+      throw new TypeError('trusted caller channel has invalid permissions')
+    }
+
+    const token = Object.freeze(Object.create(null)) as object
+    this.#issued.set(token, Object.freeze({
+      kind: channel.kind,
+      principalId: channel.principalId,
+      permissions: new Set(channel.permissions),
+    }))
+    return token as SecurityInvocation
+  }
+
+  authorizes(invocation: unknown, permission: SecurityPermission): boolean {
+    if ((typeof invocation !== 'object' && typeof invocation !== 'function') || invocation === null) return false
+    return this.#issued.get(invocation)?.permissions.has(permission) ?? false
+  }
+}
+
+interface TrustedInvocationIssuer {
+  [RESOLVE_TRUSTED_INVOCATION](channel: TrustedCallerChannel): SecurityInvocation
+}
+
+/** Resolve a capability through the same internal path used by product adapters. */
+export function resolveTrustedInvocation(
+  owner: object,
+  channel: TrustedCallerChannel,
+): SecurityInvocation {
+  const issue = Reflect.get(owner, RESOLVE_TRUSTED_INVOCATION) as unknown
+  if (typeof issue !== 'function') throw new TypeError('security authority resolver is not installed')
+  return (issue as TrustedInvocationIssuer[typeof RESOLVE_TRUSTED_INVOCATION])(channel)
+}
