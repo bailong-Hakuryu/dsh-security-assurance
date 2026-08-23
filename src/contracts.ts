@@ -502,13 +502,24 @@ export const waitForAssessmentRevisionRequestSchema: z.ZodType<WaitForAssessment
 export interface AssessmentCoverageResolutionV1 {
   readonly obligationId: string
   readonly state: 'SATISFIED' | 'GAP'
-  readonly reason: 'ELIGIBLE_EVIDENCE' | 'NO_ELIGIBLE_ANALYZER'
+  readonly reason:
+    | 'ELIGIBLE_EVIDENCE'
+    | 'NO_ELIGIBLE_ANALYZER'
+    | 'UNSUPPORTED_SUBJECT'
+    | 'ANALYZER_INCOMPLETE'
+    | 'EVIDENCE_INELIGIBLE'
 }
 
 export const assessmentCoverageResolutionV1Schema: z.ZodType<AssessmentCoverageResolutionV1> = z.strictObject({
   obligationId: boundedBindingId,
   state: z.enum(['SATISFIED', 'GAP']),
-  reason: z.enum(['ELIGIBLE_EVIDENCE', 'NO_ELIGIBLE_ANALYZER']),
+  reason: z.enum([
+    'ELIGIBLE_EVIDENCE',
+    'NO_ELIGIBLE_ANALYZER',
+    'UNSUPPORTED_SUBJECT',
+    'ANALYZER_INCOMPLETE',
+    'EVIDENCE_INELIGIBLE',
+  ]),
 })
 
 export interface AssessmentCoverageSnapshotV1 {

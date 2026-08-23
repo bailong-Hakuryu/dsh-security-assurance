@@ -57,11 +57,13 @@ import {
 import type { TrustedCallerChannel } from './internal/authority.ts'
 import { deepFreeze } from './internal/freeze.ts'
 import { publicAssessmentSnapshot } from './internal/assessment-record.ts'
+import { analyzeNodePackageInstallLifecycle } from './internal/builtin-node-package-lifecycle-analyzer.ts'
 import {
   checkSealReadiness,
   evaluateDeterministicAssessment,
   prepareAssessmentContract,
 } from './internal/deterministic-kernel.ts'
+import { publishEvidenceSet } from './internal/evidence-persistence.ts'
 import {
   openSecurityPersistence,
   SecurityPersistenceError,
@@ -72,7 +74,11 @@ import {
   publishSealedArtifacts,
   verifyPublishedSealedArtifacts,
 } from './internal/sealed-artifacts.ts'
-import { freezeSubject, SubjectFreezeError } from './internal/subject-freeze.ts'
+import {
+  freezeSubject,
+  readVerifiedNodePackageManifestSlices,
+  SubjectFreezeError,
+} from './internal/subject-freeze.ts'
 
 export * from './contracts.ts'
 
@@ -713,8 +719,27 @@ export class SecurityAssuranceService extends Service {
       runningRevision = running.assessmentRevision
       if (signal.aborted) throw new Error('assessment execution canceled')
       const sealedAt = new Date().toISOString()
-      const outcome = evaluateDeterministicAssessment(running.contract, sealedAt)
-      const readiness = checkSealReadiness(running.contract, outcome)
+      const analysis = running.contract.policy.policyId === 'security/node-package-lifecycle'
+        ? {
+            expectedSubjectDigest: running.subject.digest,
+            contribution: analyzeNodePackageInstallLifecycle({
+              subjectDigest: running.subject.digest,
+              slices: await readVerifiedNodePackageManifestSlices(
+                this.securityRoot,
+                running.subject.digest,
+                signal,
+              ),
+            }),
+          }
+        : undefined
+      const outcome = evaluateDeterministicAssessment(running.contract, sealedAt, analysis)
+      const publishedEvidence = await publishEvidenceSet(
+        this.securityRoot,
+        assessmentId,
+        running.subject.digest,
+        outcome.evidence,
+      )
+      const readiness = checkSealReadiness(running.contract, outcome, publishedEvidence)
       if (!readiness.ready) throw new Error(`seal readiness failed: ${readiness.violations.join(',')}`)
       const artifacts = assembleSealedArtifacts(running, outcome, {
         sealId: `seal-${randomUUID()}`,

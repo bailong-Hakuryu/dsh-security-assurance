@@ -147,6 +147,12 @@ export function assembleSealedArtifacts(
     record('findings', 'dsh/security-findings', 'application/vnd.dsh.security.findings+json', findings),
     record('verdict', 'dsh/security-verdict', 'application/vnd.dsh.security.verdict+json', verdict),
     record('provenance', 'dsh/security-provenance', 'application/vnd.dsh.security.provenance+json', provenance),
+    ...outcome.evidence.map(value => record(
+      value.artifactId,
+      value.schemaId,
+      value.mediaType,
+      value.value,
+    )),
   ]
   const manifestCore = {
     schemaVersion: 1,
@@ -169,12 +175,7 @@ export function assembleSealedArtifacts(
     'provider-composition',
     'dsh/security-provider-composition',
     'application/vnd.dsh.security.provider-composition+json',
-    {
-      schemaVersion: 1,
-      providerId: SECURITY_ASSURANCE_PRODUCT_NAME,
-      providerVersion: SECURITY_ASSURANCE_PRODUCT_VERSION,
-      analyzers: [],
-    },
+    outcome.providerComposition,
   )
   const providerPolicy = artifact(
     'provider-policy',
@@ -219,6 +220,12 @@ export function assembleSealedArtifacts(
       'application/vnd.dsh.security.evaluation-trace+json',
       evaluationTrace,
     ),
+    ...outcome.evidence.map(value => artifact(
+      value.artifactId,
+      value.schemaId,
+      value.mediaType,
+      value.value,
+    )),
   ]
   const payload = {
     assessment: {

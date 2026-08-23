@@ -32,9 +32,21 @@ This repository is under active vertical-slice development, not at the
 - a deterministic package-private Assessment path with durable
   `CREATED → RUNNING → SEALED` revisions;
 - a pure Policy Evaluator and independent seal-readiness check;
-- honest mandatory Coverage reconciliation: because no qualified Analyzer is
-  registered in this slice, the default obligation resolves to `GAP` and the
-  Security Verdict is `INDETERMINATE`, never a fabricated success;
+- one versioned, built-in Pure Analyzer for the explicitly scoped
+  `security/node-package-lifecycle` Policy, with a frozen Descriptor,
+  development Qualification, bounded authority-free source slices, and no
+  process, network, model, credential, or workspace access;
+- staged, content-addressed publication of Analyzer Contribution, redacted Node
+  package-manifest Evidence, and Evidence Eligibility Decision before sealing;
+- deterministic tri-state results for that scoped Policy: complete eligible
+  Evidence with no forbidden install lifecycle script is `SATISFIED`, a
+  validated forbidden `preinstall/install/postinstall` control is `FAILED`, and
+  unsupported or malformed inputs remain `INDETERMINATE`;
+- blocking-Finding precedence over incomplete Coverage while every remaining
+  Coverage Gap stays visible;
+- honest default-Policy reconciliation: because the general application-
+  security obligation still has no complete qualified Analyzer portfolio, it
+  remains `INDETERMINATE`, never a fabricated success;
 - atomic persistence of Verdict, Assessment Seal, Bundle Manifest, and
   self-contained Assurance Submission at terminal revision 3;
 - content-addressed private Bundle publication with verification on every
@@ -43,11 +55,13 @@ This repository is under active vertical-slice development, not at the
   `BLOCKED`, sealed work is not rerun, and modified publication bytes are not
   served.
 
-Real Analyzer execution, validated Findings, the complete Evidence Store,
-Control Plane integration, tools, and Workbench are deliberately not claimed as
-implemented yet. The current deterministic path is a contract and lifecycle
-slice: it proves that missing verdict-eligible analysis produces a sealed
-`INDETERMINATE` result whose Coverage gap is explicit and digest-bound.
+External Analyzer registration, process or agent Analyzers, general Node and
+application-security coverage, the complete protected Evidence Store, Control
+Plane integration, tools, and Workbench are deliberately not claimed as
+implemented yet. The built-in Analyzer's development Qualification applies only
+to the exact Node package install-lifecycle key-presence contract; a
+`SATISFIED` Verdict under that Policy is not a claim that the Subject is broadly
+secure.
 
 ## Implemented service surface
 

@@ -19,12 +19,16 @@ import type {
   AssessmentSubjectSourceV1,
   DigestEnvelopeV1,
 } from '../contracts.ts'
+import { digestEnvelopeV1Schema } from '../contracts.ts'
 import { binaryDigest, canonicalJson, structuredDigest } from './canonical.ts'
 
 const MAX_SUBJECT_FILES = 10_000
 const MAX_SUBJECT_BYTES = 64 * 1024 * 1024
 const MAX_GIT_OUTPUT_BYTES = 80 * 1024 * 1024
 const MAX_PATH_BYTES = 1_024
+const MAX_ANALYZER_SOURCE_SLICES = 256
+const MAX_ANALYZER_SLICE_BYTES = 1024 * 1024
+const MAX_ANALYZER_SOURCE_BYTES = 4 * 1024 * 1024
 
 export type SubjectFreezeErrorCode =
   | 'invalid_subject'
@@ -97,6 +101,13 @@ export interface FrozenSubject {
   readonly bytes: number
   readonly symbolicLinks: number
   readonly submodules: number
+}
+
+/** One immutable, verified and authority-free text slice supplied to a Pure Analyzer. */
+export interface VerifiedSubjectTextSliceV1 {
+  readonly path: string
+  readonly digest: DigestEnvelopeV1
+  readonly text: string
 }
 
 export interface FreezeSubjectOptions {
@@ -496,7 +507,7 @@ async function materializedFilePaths(
 async function verifyPublishedSnapshot(
   publishedRoot: string,
   expectedDigest: DigestEnvelopeV1,
-): Promise<void> {
+): Promise<Record<string, unknown>> {
   const manifest = recordValue(JSON.parse(await readFile(join(publishedRoot, 'manifest.json'), 'utf8')))
   const declaredDigest = manifest.rootDigest
   const payload = Object.fromEntries(Object.entries(manifest).filter(([key]) => key !== 'rootDigest'))
@@ -532,6 +543,7 @@ async function verifyPublishedSnapshot(
   if (canonicalJson(actualFiles) !== canonicalJson(expectedFiles)) {
     throw new SubjectFreezeError('integrity_failure', 'Subject materialization does not match its Manifest')
   }
+  return manifest
 }
 
 /** Freeze one exact Subject and atomically publish its private content-addressed Snapshot. */
@@ -632,4 +644,57 @@ export async function freezeSubject(options: FreezeSubjectOptions): Promise<Froz
     }
     throw error
   }
+}
+
+/**
+ * Reverify one content-addressed Subject Snapshot and return only bounded Node
+ * package manifests. Absolute private paths never enter the Analyzer input.
+ */
+export async function readVerifiedNodePackageManifestSlices(
+  securityRoot: string,
+  subjectDigest: DigestEnvelopeV1,
+  signal?: AbortSignal,
+): Promise<readonly VerifiedSubjectTextSliceV1[]> {
+  canceled(signal)
+  if (
+    subjectDigest.algorithm !== 'sha256'
+    || subjectDigest.mediaType !== 'application/vnd.dsh.security.subject-manifest+json'
+    || !/^[0-9a-f]{64}$/u.test(subjectDigest.value)
+  ) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject identity is not a supported Manifest digest')
+  }
+  const publishedRoot = join(securityRoot, 'subjects', subjectDigest.value)
+  const manifest = await verifyPublishedSnapshot(publishedRoot, subjectDigest)
+  if (!Array.isArray(manifest.entries)) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject Manifest entries are invalid')
+  }
+  const packageEntries = manifest.entries.map(recordValue).filter(entry => (
+    entry.kind === 'file'
+    && typeof entry.path === 'string'
+    && entry.path.split('/').at(-1) === 'package.json'
+  ))
+  if (packageEntries.length > MAX_ANALYZER_SOURCE_SLICES) {
+    throw new SubjectFreezeError('resource_limit', 'Node package manifest count exceeds the Analyzer input limit')
+  }
+  let totalBytes = 0
+  const slices: VerifiedSubjectTextSliceV1[] = []
+  for (const entry of packageEntries) {
+    canceled(signal)
+    const path = entry.path as string
+    const digest = digestEnvelopeV1Schema.parse(entry.digest)
+    const captured = await stableFile(join(publishedRoot, 'content', ...path.split('/')))
+    if (captured.bytes.byteLength > MAX_ANALYZER_SLICE_BYTES) {
+      throw new SubjectFreezeError('resource_limit', 'Node package manifest exceeds the Analyzer slice limit')
+    }
+    totalBytes += captured.bytes.byteLength
+    if (totalBytes > MAX_ANALYZER_SOURCE_BYTES) {
+      throw new SubjectFreezeError('resource_limit', 'Node package manifests exceed the Analyzer input budget')
+    }
+    const observed = binaryDigest('application/octet-stream', captured.bytes)
+    if (canonicalJson(digest) !== canonicalJson(observed)) {
+      throw new SubjectFreezeError('integrity_failure', 'Analyzer source slice failed digest verification')
+    }
+    slices.push({ path, digest: observed, text: decodeUtf8(captured.bytes) })
+  }
+  return slices
 }
