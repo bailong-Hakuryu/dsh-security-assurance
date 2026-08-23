@@ -949,6 +949,7 @@ export class SecurityAssuranceService extends Service {
       const externalAnalyses = await Promise.all(running.contract.analyzerPortfolio.map(
         async portfolioEntry => ({
           portfolioEntry,
+          subjectSlices: sourceSlices,
           contribution: await this.analyzerRegistry.execute(portfolioEntry.descriptor, {
             schemaVersion: 1,
             assessmentId,

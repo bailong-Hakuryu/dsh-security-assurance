@@ -17,6 +17,7 @@ import {
   SECURITY_ASSURANCE_PRODUCT_VERSION,
 } from '../contracts.ts'
 import { canonicalJson, sha256Hex, structuredDigest } from './canonical.ts'
+import { validateExternalAnalyzerCandidates } from './candidate-validation.ts'
 import {
   BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR,
   BUILTIN_NODE_PACKAGE_LIFECYCLE_QUALIFICATION,
@@ -28,6 +29,7 @@ import type {
   EvidencePublicationInputV1,
   EvidencePublicationReceiptV1,
 } from './evidence-persistence.ts'
+import type { VerifiedSubjectTextSliceV1 } from './subject-freeze.ts'
 
 const POLICY_MEDIA_TYPE = 'application/vnd.dsh.security.policy+json'
 const COVERAGE_MEDIA_TYPE = 'application/vnd.dsh.security.coverage+json'
@@ -64,6 +66,7 @@ export interface AdmittedAnalyzerInputV1 {
 export interface AdmittedExternalAnalyzerInputV1 {
   readonly portfolioEntry: AnalyzerPortfolioEntryV1
   readonly contribution: AnalyzerContributionV1
+  readonly subjectSlices: readonly VerifiedSubjectTextSliceV1[]
 }
 
 function coverageSnapshot(
@@ -336,7 +339,6 @@ function externalCompleteCoverageClaimIsEligible(
     portfolioEntry.eligibility.decision !== 'ELIGIBLE'
     || portfolioEntry.qualification === null
     || contribution.completionDisposition !== 'COMPLETE'
-    || contribution.candidateFindings.length > 0
     || contribution.coverageClaims.length !== 1
   ) return false
   const claim = contribution.coverageClaims[0]
@@ -358,16 +360,77 @@ export function evaluateDeterministicAssessment(
     if (externalAnalyses.length > 0) {
       const obligationId = 'application-security-analysis'
       const providerComposition = externalProviderComposition(contract.analyzerPortfolio)
-      const evidence = externalAnalyzerEvidence(contract, externalAnalyses, obligationId)
-      const unresolvedCandidates = externalAnalyses.some(
-        analysis => analysis.contribution.candidateFindings.length > 0,
-      )
-      if (
-        !unresolvedCandidates
-        && externalAnalyses.some(analysis => (
-          externalCompleteCoverageClaimIsEligible(analysis, obligationId)
-        ))
-      ) {
+      const candidateValidation = validateExternalAnalyzerCandidates(externalAnalyses.map(analysis => ({
+        portfolioEntry: analysis.portfolioEntry,
+        contribution: analysis.contribution,
+        subjectSlices: analysis.subjectSlices,
+        policyId: contract.policy.policyId,
+        policyDigest: contract.policy.digest,
+      })))
+      const evidence = [
+        ...externalAnalyzerEvidence(contract, externalAnalyses, obligationId),
+        ...candidateValidation.evidence,
+      ]
+      const completeCoverage = externalAnalyses.some(analysis => (
+        externalCompleteCoverageClaimIsEligible(analysis, obligationId)
+      ))
+      if (candidateValidation.findings.length > 0) {
+        const coverageComplete = completeCoverage
+          && candidateValidation.unresolvedCandidateIds.length === 0
+        const coverage = coverageComplete
+          ? coverageSnapshot({
+              status: 'COMPLETE',
+              mandatoryObligations: 1,
+              satisfiedObligations: 1,
+              gapObligations: 0,
+              resolutions: [{
+                obligationId,
+                state: 'SATISFIED',
+                reason: 'ELIGIBLE_EVIDENCE',
+              }],
+            })
+          : coverageSnapshot({
+              status: 'GAP',
+              mandatoryObligations: 1,
+              satisfiedObligations: 0,
+              gapObligations: 1,
+              resolutions: [{
+                obligationId,
+                state: 'GAP',
+                reason: 'EVIDENCE_INELIGIBLE',
+              }],
+            })
+        return {
+          coverage,
+          findings: [...candidateValidation.findings],
+          verdict: 'FAILED',
+          evaluationTrace: json({
+            schemaVersion: 1,
+            evaluatorVersion: 'dsh-security-policy-evaluator-v1',
+            evaluationInstant,
+            policyDigest: contract.policy.digest,
+            rules: [
+              { ruleId: 'blocking-policy-violation', matched: true, outcome: 'FAILED' },
+              { ruleId: 'mandatory-coverage-gap', matched: !coverageComplete, outcome: null },
+              { ruleId: 'complete-mandatory-coverage', matched: coverageComplete, outcome: 'FAILED' },
+            ],
+            diagnostics: [],
+          }),
+          providerComposition,
+          evidence,
+        }
+      }
+      if (candidateValidation.unresolvedCandidateIds.length > 0) {
+        return indeterminateOutcome(
+          contract,
+          evaluationInstant,
+          obligationId,
+          'EVIDENCE_INELIGIBLE',
+          providerComposition,
+          evidence,
+        )
+      }
+      if (completeCoverage) {
         return {
           coverage: coverageSnapshot({
             status: 'COMPLETE',

@@ -143,6 +143,7 @@ const analyzer = await import('dsh-security-assurance/analyzer')
 if (
   typeof analyzer.parseAnalyzerDescriptorV1 !== 'function'
   || typeof analyzer.analyzerContributionV1Schema?.parse !== 'function'
+  || typeof analyzer.analyzerCandidateFindingV1Schema?.parse !== 'function'
   || typeof analyzer.analyzerQualificationRecordV1Schema?.parse !== 'function'
 ) {
   throw new Error('packed Analyzer Contract Entry is incomplete')

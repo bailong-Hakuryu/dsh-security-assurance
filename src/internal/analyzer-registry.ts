@@ -278,6 +278,10 @@ export class AnalyzerRegistry {
         || !normalizedInput.coverageObligationIds.includes(claim.obligationId)
       ))
       || contribution.evidence.some(evidence => !descriptor.evidenceSchemaIds.includes(evidence.schemaId))
+      || contribution.candidateFindings.some(candidate => !normalizedInput.subject.textSlices.some(slice => (
+        slice.path === candidate.sourceAnchor.path
+        && canonicalJson(slice.digest) === canonicalJson(candidate.sourceAnchor.fileDigest)
+      )))
     ) {
       throw new AnalyzerRegistryError(
         'invalid_contribution',

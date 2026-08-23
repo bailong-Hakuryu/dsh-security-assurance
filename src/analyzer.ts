@@ -172,6 +172,55 @@ const analyzerEvidenceDraftV1Schema: z.ZodType<AnalyzerEvidenceDraftV1> = z.stri
   value: securitySubmissionJsonV1Schema,
 })
 
+export interface AnalyzerCandidateFindingV1 {
+  readonly schemaVersion: 1
+  readonly candidateId: string
+  readonly weaknessClassification: {
+    readonly schemaVersion: 1
+    readonly primary: string
+    readonly secondary: readonly string[]
+  }
+  readonly affectedControlId: string
+  readonly securityClaim: string
+  readonly sourceAnchor: {
+    readonly path: string
+    readonly fileDigest: DigestEnvelopeV1
+    readonly locator: {
+      readonly kind: 'JSON_POINTER'
+      readonly value: string
+    }
+  }
+  readonly evidenceArtifactIds: readonly string[]
+}
+
+export const analyzerCandidateFindingV1Schema: z.ZodType<AnalyzerCandidateFindingV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  candidateId: z.string().regex(/^candidate-[0-9a-f]{64}$/),
+  weaknessClassification: z.strictObject({
+    schemaVersion: z.literal(1),
+    primary: namespacedIdSchema,
+    secondary: z.array(namespacedIdSchema).max(16),
+  }),
+  affectedControlId: namespacedIdSchema,
+  securityClaim: z.string().min(1).max(2048),
+  sourceAnchor: z.strictObject({
+    path: subjectRelativePathSchema,
+    fileDigest: digestEnvelopeV1Schema,
+    locator: z.strictObject({
+      kind: z.literal('JSON_POINTER'),
+      value: z.string().min(1).max(1024).regex(/^\/(?:[^~/]|~0|~1)+(?:\/(?:[^~/]|~0|~1)+)*$/),
+    }),
+  }),
+  evidenceArtifactIds: z.array(artifactIdSchema).min(1).max(32),
+}).superRefine((candidate, context) => {
+  if (!unique(candidate.weaknessClassification.secondary)) {
+    context.addIssue({ code: 'custom', message: 'Candidate secondary weaknesses must be unique' })
+  }
+  if (!unique(candidate.evidenceArtifactIds)) {
+    context.addIssue({ code: 'custom', message: 'Candidate Evidence references must be unique' })
+  }
+})
+
 export interface AnalyzerContributionV1 {
   readonly schemaVersion: 1
   readonly analyzerIdentity: AnalyzerIdentityV1
@@ -182,7 +231,7 @@ export interface AnalyzerContributionV1 {
     readonly completion: 'COMPLETE'
     readonly evidenceArtifactId: string
   }[]
-  readonly candidateFindings: readonly SecuritySubmissionJsonV1[]
+  readonly candidateFindings: readonly AnalyzerCandidateFindingV1[]
   readonly evidence: readonly AnalyzerEvidenceDraftV1[]
   readonly diagnostics: readonly string[]
   readonly resourceUse: {
@@ -201,7 +250,7 @@ export const analyzerContributionV1Schema: z.ZodType<AnalyzerContributionV1> = z
     completion: z.literal('COMPLETE'),
     evidenceArtifactId: artifactIdSchema,
   })).max(128),
-  candidateFindings: z.array(securitySubmissionJsonV1Schema).max(768),
+  candidateFindings: z.array(analyzerCandidateFindingV1Schema).max(768),
   evidence: z.array(analyzerEvidenceDraftV1Schema).max(128),
   diagnostics: z.array(z.string().min(1).max(128).regex(/^[A-Z0-9_:-]+$/)).max(256),
   resourceUse: z.strictObject({
@@ -216,6 +265,15 @@ export const analyzerContributionV1Schema: z.ZodType<AnalyzerContributionV1> = z
   const artifacts = new Set(artifactIds)
   if (contribution.coverageClaims.some(claim => !artifacts.has(claim.evidenceArtifactId))) {
     context.addIssue({ code: 'custom', message: 'Analyzer Coverage Claims must reference contributed Evidence' })
+  }
+  const candidateIds = contribution.candidateFindings.map(candidate => candidate.candidateId)
+  if (!unique(candidateIds)) {
+    context.addIssue({ code: 'custom', message: 'Analyzer Candidate identities must be unique' })
+  }
+  if (contribution.candidateFindings.some(candidate => (
+    candidate.evidenceArtifactIds.some(artifactId => !artifacts.has(artifactId))
+  ))) {
+    context.addIssue({ code: 'custom', message: 'Analyzer Candidates must reference contributed Evidence' })
   }
 })
 

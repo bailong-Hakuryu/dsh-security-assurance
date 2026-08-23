@@ -54,6 +54,17 @@ This repository is under active vertical-slice development, not at the
 - frozen per-Assessment Eligibility Decisions: a precisely qualified complete
   Reference Analyzer may satisfy its one declared obligation, while missing,
   scope-incompatible, not-yet-valid, or expired Qualification remains Advisory;
+- versioned external Candidate Finding contracts with bounded weakness,
+  Security Claim, Source Anchor, JSON Pointer, and contributed-Evidence links;
+- one exact deterministic Conformance Validation Contract that independently
+  verifies immutable Subject and file digests, unique JSON security keys, the
+  declared JSON Pointer, and an explicit reference-control violation marker;
+- separate Candidate Admission, Validation Contract Resolution, validation
+  Evidence Eligibility, Validation Outcome, Technical Severity, Evidence
+  Confidence, and Policy Significance records; and
+- blocking-Finding precedence proving a qualified validated Reference Candidate
+  seals as `FAILED` with complete Coverage without allowing the Analyzer to set
+  Finding, Severity, Significance, or Verdict directly;
 - staged, content-addressed publication of Analyzer Contribution, redacted Node
   package-manifest Evidence, and Evidence Eligibility Decision before sealing;
 - deterministic tri-state results for that scoped Policy: complete eligible
@@ -99,8 +110,11 @@ Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
 tools, and Workbench are deliberately not claimed as implemented yet. This
 repository ships no production external Qualification or external Analyzer
-effectiveness claim. The built-in Analyzer's development Qualification applies
-only to the exact Node package install-lifecycle key-presence contract; a
+effectiveness claim. Its external Candidate Validation path is deliberately
+limited to the exact `dsh/conformance/reference-control-validation-v1`
+Conformance contract and is not a general weakness validator. The built-in
+Analyzer's development Qualification applies only to the exact Node package
+install-lifecycle key-presence contract; a
 `SATISFIED` Verdict under that Policy is not a claim that the Subject is broadly
 secure.
 
