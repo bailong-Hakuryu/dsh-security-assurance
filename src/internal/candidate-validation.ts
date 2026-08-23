@@ -37,7 +37,7 @@ const referenceValidationEvidenceV1Schema = z.strictObject({
   candidateId: z.string().regex(/^candidate-[0-9a-f]{64}$/),
   subjectDigest: digestEnvelopeV1Schema,
   sourceAnchor: sourceAnchorSchema,
-  observedValue: z.literal('VIOLATED'),
+  observedValue: z.enum(['VIOLATED', 'SATISFIED']),
 })
 
 export interface CandidateValidationInputV1 {
@@ -60,19 +60,22 @@ function json(value: unknown): NonNullable<SecuritySubmissionJsonV1> {
   return normalized
 }
 
-function exactReferenceMarker(slice: VerifiedSubjectTextSliceV1): boolean {
-  if ((slice.text.match(/"dshSecurity"\s*:/gu) ?? []).length !== 1) return false
-  if ((slice.text.match(/"referenceControl"\s*:/gu) ?? []).length !== 1) return false
+function referenceControlState(
+  slice: VerifiedSubjectTextSliceV1,
+): 'VIOLATED' | 'SATISFIED' | undefined {
+  if ((slice.text.match(/"dshSecurity"\s*:/gu) ?? []).length !== 1) return undefined
+  if ((slice.text.match(/"referenceControl"\s*:/gu) ?? []).length !== 1) return undefined
   try {
     const parsed: unknown = JSON.parse(slice.text)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return false
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
     const dshSecurity = (parsed as Record<string, unknown>).dshSecurity
-    return typeof dshSecurity === 'object'
-      && dshSecurity !== null
-      && !Array.isArray(dshSecurity)
-      && (dshSecurity as Record<string, unknown>).referenceControl === 'VIOLATED'
+    if (typeof dshSecurity !== 'object' || dshSecurity === null || Array.isArray(dshSecurity)) {
+      return undefined
+    }
+    const value = (dshSecurity as Record<string, unknown>).referenceControl
+    return value === 'VIOLATED' || value === 'SATISFIED' ? value : undefined
   } catch {
-    return false
+    return undefined
   }
 }
 
@@ -112,25 +115,39 @@ function validateCandidate(
       ))
     : undefined
   const parsedEvidence = referenceValidationEvidenceV1Schema.safeParse(referencedEvidence?.value)
+  const observedReferenceControl = sourceSlice === undefined
+    ? undefined
+    : referenceControlState(sourceSlice)
   const evidenceBound = parsedEvidence.success
     && parsedEvidence.data.candidateId === candidate.candidateId
     && canonicalJson(parsedEvidence.data.subjectDigest) === canonicalJson(input.contribution.subjectDigest)
     && canonicalJson(parsedEvidence.data.sourceAnchor) === canonicalJson(candidate.sourceAnchor)
+  const observedEvidenceValue = parsedEvidence.success ? parsedEvidence.data.observedValue : undefined
+  const evidencePurpose = observedEvidenceValue === 'SATISFIED'
+    ? 'COUNTER_EVIDENCE'
+    : 'VALIDATION_EVIDENCE'
+  const evidenceContradictsSubject = evidenceBound
+    && observedEvidenceValue !== undefined
+    && observedReferenceControl !== undefined
+    && observedEvidenceValue !== observedReferenceControl
   const evidenceEligible = input.portfolioEntry.eligibility.decision === 'ELIGIBLE'
     && contractResolved
     && sourceSlice !== undefined
-    && exactReferenceMarker(sourceSlice)
+    && observedReferenceControl !== undefined
     && evidenceBound
+    && observedEvidenceValue === observedReferenceControl
   const unresolvedReason = input.portfolioEntry.eligibility.reason
     ?? (!contractResolved
       ? 'VALIDATION_CONTRACT_UNAVAILABLE'
       : sourceSlice === undefined
         ? 'SOURCE_ANCHOR_UNBOUND'
-        : !exactReferenceMarker(sourceSlice)
+        : observedReferenceControl === undefined
           ? 'NEGATIVE_CONTROL_FAILED'
-          : !evidenceBound
-            ? 'VALIDATION_EVIDENCE_INELIGIBLE'
-            : null)
+          : evidenceContradictsSubject
+            ? 'VALIDATION_EVIDENCE_CONTRADICTS_SUBJECT'
+            : !evidenceBound
+              ? 'VALIDATION_EVIDENCE_INELIGIBLE'
+              : null)
   const commonEvidence: EvidencePublicationInputV1[] = [{
     artifactId: admissionArtifactId,
     schemaId: 'dsh/security-candidate-admission',
@@ -168,6 +185,7 @@ function validateCandidate(
       schemaVersion: 1,
       decision: evidenceEligible ? 'ELIGIBLE' : 'INELIGIBLE',
       reason: evidenceEligible ? null : unresolvedReason,
+      purpose: evidencePurpose,
       candidateId: candidate.candidateId,
       securityClaim: candidate.securityClaim,
       contractId: contractResolved ? VALIDATION_CONTRACT_ID : null,
@@ -179,7 +197,8 @@ function validateCandidate(
         'exact-source-file-digest',
         'unique-json-security-keys',
         'exact-json-pointer',
-        'exact-violation-marker',
+        'exact-reference-control-marker',
+        'observed-value-matches-subject',
       ],
     }),
   }]
@@ -202,6 +221,36 @@ function validateCandidate(
     }
   }
 
+  if (observedEvidenceValue === 'SATISFIED') {
+    return {
+      unresolved: false,
+      evidence: [...commonEvidence, {
+        artifactId: outcomeArtifactId,
+        schemaId: 'dsh/security-validation-outcome',
+        mediaType: 'application/vnd.dsh.security.validation-outcome+json',
+        value: json({
+          schemaVersion: 1,
+          candidateId: candidate.candidateId,
+          state: 'REJECTED',
+          contractId: VALIDATION_CONTRACT_ID,
+          contractVersion: 1,
+          evidenceEligibilityArtifactId: eligibilityArtifactId,
+          rejectionCondition: 'EXACT_REFERENCE_CONTROL_SATISFIED',
+          counterEvidenceArtifactIds: candidate.evidenceArtifactIds,
+          proofGaps: [],
+          negativeControls: [
+            'verified-subject-digest',
+            'exact-source-file-digest',
+            'unique-json-security-keys',
+            'exact-json-pointer',
+            'exact-reference-control-marker',
+            'observed-value-matches-subject',
+          ],
+        }),
+      }],
+    }
+  }
+
   const validationOutcome = {
     schemaVersion: 1,
     candidateId: candidate.candidateId,
@@ -216,7 +265,8 @@ function validateCandidate(
       'exact-source-file-digest',
       'unique-json-security-keys',
       'exact-json-pointer',
-      'exact-violation-marker',
+      'exact-reference-control-marker',
+      'observed-value-matches-subject',
     ],
   }
   const finding = json({

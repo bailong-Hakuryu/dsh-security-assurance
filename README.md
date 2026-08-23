@@ -58,10 +58,16 @@ This repository is under active vertical-slice development, not at the
   Security Claim, Source Anchor, JSON Pointer, and contributed-Evidence links;
 - one exact deterministic Conformance Validation Contract that independently
   verifies immutable Subject and file digests, unique JSON security keys, the
-  declared JSON Pointer, and an explicit reference-control violation marker;
+  declared JSON Pointer, and the exact reference-control state against matching
+  validation Evidence or Counter-Evidence;
 - separate Candidate Admission, Validation Contract Resolution, validation
   Evidence Eligibility, Validation Outcome, Technical Severity, Evidence
   Confidence, and Policy Significance records; and
+- immutable Candidate tri-state resolution under that Contract: eligible proof
+  of `VIOLATED` produces `VALIDATED` and a blocking Finding, eligible
+  Counter-Evidence proving `SATISFIED` produces `REJECTED` without a Finding,
+  and contradictory or otherwise ineligible Evidence produces `UNRESOLVED`
+  with an explicit Proof Gap and `INDETERMINATE` Verdict;
 - blocking-Finding precedence proving a qualified validated Reference Candidate
   seals as `FAILED` with complete Coverage without allowing the Analyzer to set
   Finding, Severity, Significance, or Verdict directly;
