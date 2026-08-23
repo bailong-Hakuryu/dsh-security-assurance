@@ -23,6 +23,16 @@ export default defineConfig([
     clean: false,
   },
   {
+    entry: ['lib/types/analyzer.js'],
+    outDir: 'lib',
+    format: ['esm'],
+    platform: 'neutral',
+    target: 'es2024',
+    fixedExtension: false,
+    dts: false,
+    clean: false,
+  },
+  {
     entry: ['lib/types/control-plane-provider.js'],
     outDir: 'lib',
     format: ['esm'],

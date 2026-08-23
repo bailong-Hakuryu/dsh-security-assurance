@@ -57,6 +57,11 @@ import type {
   UpdateRepositoryRequest,
   WaitForAssessmentRevisionRequest,
 } from './contracts.ts'
+import type {
+  AnalyzerDescriptorV1,
+  AnalyzerFactoryV1,
+  AnalyzerRegistrationDisposer,
+} from './analyzer.ts'
 import {
   RESOLVE_TRUSTED_INVOCATION,
   SecurityAuthorityResolver,
@@ -70,6 +75,7 @@ import {
   type ControlPlaneRepositoryBindingMatcher,
 } from './internal/control-plane-repository-binding.ts'
 import type { TrustedCallerChannel } from './internal/authority.ts'
+import { AnalyzerRegistry } from './internal/analyzer-registry.ts'
 import { deepFreeze } from './internal/freeze.ts'
 import { publicAssessmentSnapshot } from './internal/assessment-record.ts'
 import { analyzeNodePackageInstallLifecycle } from './internal/builtin-node-package-lifecycle-analyzer.ts'
@@ -96,6 +102,7 @@ import {
 } from './internal/subject-freeze.ts'
 
 export * from './contracts.ts'
+export * from './analyzer.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -218,6 +225,7 @@ export interface Config {
  */
 export class SecurityAssuranceService extends Service {
   private readonly authorityResolver = new SecurityAuthorityResolver()
+  private readonly analyzerRegistry = new AnalyzerRegistry()
   private readonly ready: Promise<SecurityPersistence | undefined>
   private readonly securityRoot: string
   private readonly runningAssessments = new Map<AssessmentId, {
@@ -314,6 +322,15 @@ export class SecurityAssuranceService extends Service {
     if (await this.ready === undefined) {
       throw new Error('Security Assurance entered read-only-safe mode during startup')
     }
+  }
+
+  /** Register one local Host-approved Analyzer contribution during startup composition. */
+  registerAnalyzer(
+    descriptor: AnalyzerDescriptorV1,
+    factory: AnalyzerFactoryV1,
+  ): AnalyzerRegistrationDisposer {
+    if (this.disposed) throw new TypeError('Security Assurance is disposed')
+    return this.analyzerRegistry.register(descriptor, factory)
   }
 
   /** Return a bounded authorized Runtime Health Snapshot. */
@@ -570,6 +587,11 @@ export class SecurityAssuranceService extends Service {
         return deepFreeze({ ok: true, value: replay })
       }
 
+      const analyzerPortfolio = this.analyzerRegistry.freezeSelection(
+        repository.snapshot.bindings.policyId,
+        parsed.data.assessmentMode,
+      )
+
       const frozen = await freezeSubject({
         repositoryRoot: repository.canonicalRoot,
         securityRoot: this.securityRoot,
@@ -584,6 +606,7 @@ export class SecurityAssuranceService extends Service {
         assessmentProfileId: parsed.data.assessmentProfileId,
         target: parsed.data.target,
         requestedStrongerControlIds: parsed.data.requestedStrongerControlIds,
+        analyzerPortfolio,
       })
       const receipt = persistence.createAssessment({
         principalId: authority.principalId,
@@ -892,20 +915,55 @@ export class SecurityAssuranceService extends Service {
       runningRevision = running.assessmentRevision
       if (signal.aborted) throw new Error('assessment execution canceled')
       const sealedAt = new Date().toISOString()
+      const needsSourceSlices = running.contract.policy.policyId === 'security/node-package-lifecycle'
+        || running.contract.analyzerPortfolio.length > 0
+      const sourceSlices = needsSourceSlices
+        ? await readVerifiedNodePackageManifestSlices(
+            this.securityRoot,
+            running.subject.digest,
+            signal,
+          )
+        : []
       const analysis = running.contract.policy.policyId === 'security/node-package-lifecycle'
         ? {
             expectedSubjectDigest: running.subject.digest,
             contribution: analyzeNodePackageInstallLifecycle({
               subjectDigest: running.subject.digest,
-              slices: await readVerifiedNodePackageManifestSlices(
-                this.securityRoot,
-                running.subject.digest,
-                signal,
-              ),
+              slices: sourceSlices,
             }),
           }
         : undefined
-      const outcome = evaluateDeterministicAssessment(running.contract, sealedAt, analysis)
+      const externalAnalyses = await Promise.all(running.contract.analyzerPortfolio.map(
+        async descriptor => ({
+          descriptor,
+          contribution: await this.analyzerRegistry.execute(descriptor, {
+            schemaVersion: 1,
+            assessmentId,
+            attemptId: `${assessmentId}:${descriptor.analyzerId}:${runningRevision}`,
+            assessmentMode: running.contract.assessmentMode,
+            subject: {
+              digest: running.subject.digest,
+              textSlices: sourceSlices.map(slice => ({
+                path: slice.path,
+                mediaType: 'application/json',
+                digest: slice.digest,
+                text: slice.text,
+              })),
+            },
+            policy: {
+              policyId: running.contract.policy.policyId,
+              digest: running.contract.policy.digest,
+            },
+            coverageObligationIds: descriptor.coverageObligationIds,
+          }, { signal }),
+        }),
+      ))
+      const outcome = evaluateDeterministicAssessment(
+        running.contract,
+        sealedAt,
+        analysis,
+        externalAnalyses,
+      )
       const publishedEvidence = await publishEvidenceSet(
         this.securityRoot,
         assessmentId,

@@ -139,6 +139,13 @@ const contracts = await import('dsh-security-assurance/contracts')
 if ('SecurityAuthorityResolver' in contracts || 'resolveTrustedInvocation' in contracts) {
   throw new Error('contracts export leaked authority minting')
 }
+const analyzer = await import('dsh-security-assurance/analyzer')
+if (
+  typeof analyzer.parseAnalyzerDescriptorV1 !== 'function'
+  || typeof analyzer.analyzerContributionV1Schema?.parse !== 'function'
+) {
+  throw new Error('packed Analyzer Contract Entry is incomplete')
+}
 const root = await import('dsh-security-assurance')
 if ('SecurityPersistence' in root || 'freezeSubject' in root || 'SecurityAuthorityResolver' in root) {
   throw new Error('root export leaked a package-private implementation boundary')
@@ -248,6 +255,7 @@ if (ctx.reflect.get('securityAssurance') !== undefined) {
 }
 process.stdout.write(JSON.stringify({
   packedImport: 'PASS',
+  analyzerContract: 'PASS',
   lifecycle: 'PASS',
   hostRepositoryProvider: 'PASS',
   repositoryId: firstBinding.repositoryId,
@@ -261,7 +269,11 @@ process.stdout.write(JSON.stringify({
     windowsHide: true,
   })
   const result = JSON.parse(probe.stdout)
-  if (result.packedImport !== 'PASS' || result.lifecycle !== 'PASS') {
+  if (
+    result.packedImport !== 'PASS'
+    || result.analyzerContract !== 'PASS'
+    || result.lifecycle !== 'PASS'
+  ) {
     throw new Error('packed smoke probe returned an invalid result')
   }
 
@@ -1053,6 +1065,7 @@ process.stdout.write(JSON.stringify({
     controlPlaneArtifact: controlPlaneFilename,
     packageVersion: installedManifest.version,
     packedImport: result.packedImport,
+    analyzerContract: result.analyzerContract,
     lifecycle: result.lifecycle,
     hostRepositoryProvider: result.hostRepositoryProvider,
     ...adapterResult,

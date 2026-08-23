@@ -7,6 +7,10 @@ import type {
   SecuritySubmissionJsonV1,
   SecurityVerdict,
 } from '../contracts.ts'
+import type {
+  AnalyzerContributionV1,
+  AnalyzerDescriptorV1,
+} from '../analyzer.ts'
 import {
   securitySubmissionJsonV1Schema,
   SECURITY_ASSURANCE_PRODUCT_NAME,
@@ -39,6 +43,7 @@ export interface PreparedAssessmentContractV1 {
     readonly digest: DigestEnvelopeV1
     readonly value: SecuritySubmissionJsonV1
   }
+  readonly analyzerPortfolio: readonly AnalyzerDescriptorV1[]
   readonly coverage: AssessmentCoverageSnapshotV1
 }
 
@@ -54,6 +59,11 @@ export interface DeterministicAssessmentOutcomeV1 {
 export interface AdmittedAnalyzerInputV1 {
   readonly expectedSubjectDigest: DigestEnvelopeV1
   readonly contribution: NodePackageLifecycleAnalyzerContributionV1
+}
+
+export interface AdmittedExternalAnalyzerInputV1 {
+  readonly descriptor: AnalyzerDescriptorV1
+  readonly contribution: AnalyzerContributionV1
 }
 
 function coverageSnapshot(
@@ -80,6 +90,53 @@ function emptyProviderComposition(): NonNullable<SecuritySubmissionJsonV1> {
   })
 }
 
+function externalProviderComposition(
+  descriptors: readonly AnalyzerDescriptorV1[],
+): NonNullable<SecuritySubmissionJsonV1> {
+  return json({
+    schemaVersion: 1,
+    providerId: SECURITY_ASSURANCE_PRODUCT_NAME,
+    providerVersion: SECURITY_ASSURANCE_PRODUCT_VERSION,
+    analyzers: descriptors.map(descriptor => ({
+      analyzerId: descriptor.analyzerId,
+      analyzerVersion: descriptor.analyzerVersion,
+      descriptorSchemaVersion: descriptor.descriptorSchemaVersion,
+      buildDigest: descriptor.buildDigest,
+      executionClass: descriptor.executionClass,
+      qualificationId: null,
+      qualificationDigest: null,
+      verdictEligible: false,
+    })),
+  })
+}
+
+function externalAnalyzerEvidence(
+  analyses: readonly AdmittedExternalAnalyzerInputV1[],
+): readonly EvidencePublicationInputV1[] {
+  const evidence: EvidencePublicationInputV1[] = []
+  const artifactIds = new Set<string>()
+  for (const analysis of analyses) {
+    for (const item of analysis.contribution.evidence) {
+      if (artifactIds.has(item.artifactId)) throw new TypeError('External Analyzer Evidence identity collides')
+      artifactIds.add(item.artifactId)
+      evidence.push(item)
+    }
+    const contributionArtifactId = `analyzer-contribution-${sha256Hex(canonicalJson({
+      analyzerId: analysis.descriptor.analyzerId,
+      analyzerVersion: analysis.descriptor.analyzerVersion,
+    })).slice(0, 16)}`
+    if (artifactIds.has(contributionArtifactId)) throw new TypeError('Analyzer Contribution identity collides')
+    artifactIds.add(contributionArtifactId)
+    evidence.push({
+      artifactId: contributionArtifactId,
+      schemaId: 'dsh/security-analyzer-contribution',
+      mediaType: 'application/vnd.dsh.security.analyzer-contribution+json',
+      value: json(analysis.contribution),
+    })
+  }
+  return evidence
+}
+
 /** Purely freeze the minimum v1 Policy and Coverage Plan admitted by this development slice. */
 export function prepareAssessmentContract(input: {
   readonly policyId: string
@@ -87,6 +144,7 @@ export function prepareAssessmentContract(input: {
   readonly assessmentProfileId: AssessmentProfileId
   readonly target: AssessmentTargetSelectorV1
   readonly requestedStrongerControlIds: readonly string[]
+  readonly analyzerPortfolio?: readonly AnalyzerDescriptorV1[]
 }): PreparedAssessmentContractV1 {
   const nodePackageLifecyclePolicy = input.policyId === 'security/node-package-lifecycle'
   const policyValue = securitySubmissionJsonV1Schema.parse({
@@ -117,6 +175,7 @@ export function prepareAssessmentContract(input: {
       digest: structuredDigest(POLICY_MEDIA_TYPE, policyValue),
       value: policyValue,
     },
+    analyzerPortfolio: input.analyzerPortfolio ?? [],
     coverage: coverageSnapshot({
       status: 'PENDING',
       mandatoryObligations: 1,
@@ -240,8 +299,25 @@ export function evaluateDeterministicAssessment(
   contract: PreparedAssessmentContractV1,
   evaluationInstant: string,
   analysis?: AdmittedAnalyzerInputV1,
+  externalAnalyses: readonly AdmittedExternalAnalyzerInputV1[] = [],
 ): DeterministicAssessmentOutcomeV1 {
   if (contract.policy.policyId !== 'security/node-package-lifecycle') {
+    if (externalAnalyses.length > 0) {
+      const dispositions = new Set(externalAnalyses.map(item => item.contribution.completionDisposition))
+      const reason = dispositions.has('INCOMPLETE')
+        ? 'ANALYZER_INCOMPLETE'
+        : dispositions.size === 1 && dispositions.has('UNSUPPORTED')
+          ? 'UNSUPPORTED_SUBJECT'
+          : 'EVIDENCE_INELIGIBLE'
+      return indeterminateOutcome(
+        contract,
+        evaluationInstant,
+        'application-security-analysis',
+        reason,
+        externalProviderComposition(contract.analyzerPortfolio),
+        externalAnalyzerEvidence(externalAnalyses),
+      )
+    }
     return indeterminateOutcome(
       contract,
       evaluationInstant,

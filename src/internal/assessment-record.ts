@@ -20,6 +20,7 @@ import {
 import type {
   AssessmentSnapshotV1,
 } from '../contracts.ts'
+import { analyzerDescriptorV1Schema } from '../analyzer.ts'
 
 const preparedContractV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -32,6 +33,7 @@ const preparedContractV1Schema = z.strictObject({
     digest: digestEnvelopeV1Schema,
     value: securitySubmissionJsonV1Schema,
   }),
+  analyzerPortfolio: z.array(analyzerDescriptorV1Schema).max(64).default([]),
   coverage: assessmentCoverageSnapshotV1Schema,
 })
 

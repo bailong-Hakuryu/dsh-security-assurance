@@ -17,6 +17,10 @@
       "types": "./lib/types/contracts.d.ts",
       "default": "./lib/contracts.js"
     },
+    "./analyzer": {
+      "types": "./lib/types/analyzer.d.ts",
+      "default": "./lib/analyzer.js"
+    },
     "./control-plane-provider": {
       "types": "./lib/types/control-plane-provider.d.ts",
       "default": "./lib/control-plane-provider.js"
@@ -31,12 +35,15 @@
   "files": [
     "lib/index.js",
     "lib/contracts.js",
+    "lib/analyzer.js",
     "lib/control-plane-provider.js",
     "lib/host-repository-provider.js",
     "lib/types/index.d.ts",
     "lib/types/index.d.ts.map",
     "lib/types/contracts.d.ts",
     "lib/types/contracts.d.ts.map",
+    "lib/types/analyzer.d.ts",
+    "lib/types/analyzer.d.ts.map",
     "lib/types/control-plane-provider.d.ts",
     "lib/types/control-plane-provider.d.ts.map",
     "lib/types/host-repository-provider.d.ts",
