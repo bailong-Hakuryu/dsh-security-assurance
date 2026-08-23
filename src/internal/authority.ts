@@ -11,7 +11,9 @@ export type SecurityPermission =
 export type SecurityCallerChannelKind = 'harness-session' | 'host-operator' | 'control-plane'
 
 /** Package-private method key that Cordis traceable Service proxies can forward. */
-export const RESOLVE_TRUSTED_INVOCATION = Symbol('dsh-security-assurance.resolve-trusted-invocation')
+export const RESOLVE_TRUSTED_INVOCATION = Symbol.for(
+  'dsh-security-assurance/internal/resolve-trusted-invocation/v1',
+)
 
 /**
  * Identity already authenticated by a package-owned trusted channel adapter.
@@ -74,9 +76,7 @@ export class SecurityAuthorityResolver {
   }
 }
 
-interface TrustedInvocationIssuer {
-  [RESOLVE_TRUSTED_INVOCATION](channel: TrustedCallerChannel): SecurityInvocation
-}
+type TrustedInvocationIssuer = (channel: TrustedCallerChannel) => SecurityInvocation
 
 /** Resolve a capability through the same internal path used by product adapters. */
 export function resolveTrustedInvocation(
@@ -85,5 +85,5 @@ export function resolveTrustedInvocation(
 ): SecurityInvocation {
   const issue = Reflect.get(owner, RESOLVE_TRUSTED_INVOCATION) as unknown
   if (typeof issue !== 'function') throw new TypeError('security authority resolver is not installed')
-  return (issue as TrustedInvocationIssuer[typeof RESOLVE_TRUSTED_INVOCATION])(channel)
+  return (issue as TrustedInvocationIssuer)(channel)
 }

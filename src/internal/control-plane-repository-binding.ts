@@ -6,17 +6,15 @@ export interface ControlPlaneRepositoryBindingMatcher {
   readonly matchesCanonicalRepository: (candidateCanonicalRoot: string) => boolean
 }
 
-export const VERIFY_CONTROL_PLANE_REPOSITORY_BINDING = Symbol(
-  'dsh-security-assurance.verify-control-plane-repository-binding',
+export const VERIFY_CONTROL_PLANE_REPOSITORY_BINDING = Symbol.for(
+  'dsh-security-assurance/internal/verify-control-plane-repository-binding/v1',
 )
 
-interface ControlPlaneRepositoryBindingOwner {
-  [VERIFY_CONTROL_PLANE_REPOSITORY_BINDING](
-    invocation: SecurityInvocation,
-    repositoryId: RepositoryId,
-    matcher: ControlPlaneRepositoryBindingMatcher,
-  ): Promise<boolean>
-}
+type ControlPlaneRepositoryBindingVerifier = (
+  invocation: SecurityInvocation,
+  repositoryId: RepositoryId,
+  matcher: ControlPlaneRepositoryBindingMatcher,
+) => Promise<boolean>
 
 /** Compare inside the Security Service so its private canonical root is never returned to the Adapter. */
 export function verifyControlPlaneRepositoryBinding(
@@ -35,7 +33,7 @@ export function verifyControlPlaneRepositoryBinding(
   if (typeof verify !== 'function') {
     throw new TypeError('control-plane Repository binding verifier is not installed')
   }
-  return (verify as ControlPlaneRepositoryBindingOwner[typeof VERIFY_CONTROL_PLANE_REPOSITORY_BINDING])(
+  return (verify as ControlPlaneRepositoryBindingVerifier)(
     invocation,
     repositoryId,
     matcher,

@@ -7,3 +7,6 @@
     - id: dsh-security-assurance-control-plane-provider
       name: dsh-security-assurance/control-plane-provider
       disabled: true
+    - id: dsh-security-assurance-host-repository-provider
+      name: dsh-security-assurance/host-repository-provider
+      disabled: true

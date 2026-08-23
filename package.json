@@ -21,6 +21,10 @@
       "types": "./lib/types/control-plane-provider.d.ts",
       "default": "./lib/control-plane-provider.js"
     },
+    "./host-repository-provider": {
+      "types": "./lib/types/host-repository-provider.d.ts",
+      "default": "./lib/host-repository-provider.js"
+    },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -28,12 +32,15 @@
     "lib/index.js",
     "lib/contracts.js",
     "lib/control-plane-provider.js",
+    "lib/host-repository-provider.js",
     "lib/types/index.d.ts",
     "lib/types/index.d.ts.map",
     "lib/types/contracts.d.ts",
     "lib/types/contracts.d.ts.map",
     "lib/types/control-plane-provider.d.ts",
     "lib/types/control-plane-provider.d.ts.map",
+    "lib/types/host-repository-provider.d.ts",
+    "lib/types/host-repository-provider.d.ts.map",
     "cordis.patch.yml",
     "README.md"
   ],

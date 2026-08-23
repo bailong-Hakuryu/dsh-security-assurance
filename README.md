@@ -22,6 +22,9 @@ This repository is under active vertical-slice development, not at the
   Receipts, exact Revision CAS, fail-closed startup validation, and restart
   recovery;
 - explicit register, get, list, update, and non-destructive disable behavior;
+- a trusted `dsh-security-assurance/host-repository-provider` composition entry
+  that registers Host configuration through the root Service and resolves only
+  immutable path-free Repository bindings;
 - exact Git revision, Change, and Workspace Snapshot Subject selectors;
 - bounded content-addressed Subject materialization below
   `$DSH_HOME/security-assurance/subjects`, with canonical manifests and no
@@ -68,7 +71,10 @@ This repository is under active vertical-slice development, not at the
 - real dual-plugin cancellation coverage proving explicit Mission cancellation
   records the external Assessment identity and leaves that same Assessment
   `CANCELED` without Verdict or Seal, including restart reconciliation when the
-  Security commit precedes Control Plane Invocation termination.
+  Security commit precedes Control Plane Invocation termination; and
+- fresh packed Harness `0.1.1-rc.2` profile proof for `disabled`, absent
+  `when-available`, absent `required`, valid required integration, Adapter
+  unload, and full profile restart.
 
 External Analyzer registration, process or agent Analyzers, general Node and
 application-security coverage, the complete protected Evidence Store, tools,
@@ -115,6 +121,37 @@ reason. `cancelAssessment` first returns the durable cancellation-request
 Receipt after the Service has quiesced local work and finalized the Assessment;
 that Receipt identifies the request revision and does not misrepresent it as
 the later terminal revision.
+
+## Host Repository composition
+
+The optional `dsh-security-assurance/host-repository-provider` entry is a
+trusted Host Adapter for deployment-owned Repository configuration. It injects
+`ctx.securityAssurance`, validates every configured registration before the
+first mutation, and invokes the root Service with package-owned Host authority:
+
+```yaml
+repositories:
+  - schemaVersion: 1
+    bindingId: mission-repository
+    idempotencyKey: host-repository-provider:mission-repository:v1
+    root: /absolute/host/repository
+    displayName: Mission Repository
+    bindings:
+      policyId: security/node-package-lifecycle
+      assessmentProfileId: security/standard
+      evidenceProtectionId: evidence/local-protected
+      dataEgressPolicyId: egress/deny-by-default
+      platform: linux
+      deliveryDestinationIds: []
+```
+
+After activation, trusted Host composition may call
+`ctx.securityAssuranceHostRepositories.resolve(bindingId)` to obtain the
+immutable `repositoryId`, revision, and state. The result contains no root,
+credential, Store handle, or Security Invocation. Disposing the Provider removes
+only its Cordis Service; durable Repository Registry history remains owned by
+the root Security Service, so an equal restart resolves the same Repository ID.
+Conflicting replay fails loudly instead of updating Host policy implicitly.
 
 ## Optional Control Plane integration
 
@@ -201,9 +238,9 @@ pnpm pack:dry-run
 pnpm pack:smoke
 ```
 
-Both bundle rows in `cordis.patch.yml` are disabled by default. Installation
-alone does not activate a security authority or the optional Control Plane
-Provider.
+All three bundle rows in `cordis.patch.yml` are disabled by default.
+Installation alone does not activate a security authority, Host Repository
+Provider, or optional Control Plane Provider.
 
 ## Design authority
 

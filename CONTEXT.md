@@ -530,6 +530,10 @@ _Avoid_: Request-body authorization, repository configuration, model judgment
 The Host-owned mapping from stable Repository IDs to canonical roots and their Policy, Evidence, Egress, Profile, and platform bindings.
 _Avoid_: Filesystem discovery, caller path, package manifest
 
+**Host Repository Provider**:
+A trusted Host composition capability that applies declarative Repository registrations through the Security Service and exposes only path-free binding identities to other Host plugins.
+_Avoid_: Security Invocation factory, Registry writer, model tool
+
 **Repository Registration**:
 A separately authorized administrative change that adds or revises one Repository Registry entry and its security bindings.
 _Avoid_: Assessment start, opening a folder, Subject snapshot

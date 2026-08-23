@@ -17,16 +17,14 @@ export const controlPlaneAssessmentIdentitySchema: z.ZodType<ControlPlaneAssessm
 })
 
 /** Package-private lookup used only by the optional Control Plane Adapter. */
-export const LOOKUP_CONTROL_PLANE_ASSESSMENT = Symbol(
-  'dsh-security-assurance.lookup-control-plane-assessment',
+export const LOOKUP_CONTROL_PLANE_ASSESSMENT = Symbol.for(
+  'dsh-security-assurance/internal/lookup-control-plane-assessment/v1',
 )
 
-interface ControlPlaneAssessmentLookupOwner {
-  [LOOKUP_CONTROL_PLANE_ASSESSMENT](
-    invocation: SecurityInvocation,
-    identity: ControlPlaneAssessmentIdentity,
-  ): Promise<AssessmentReceiptV1 | undefined>
-}
+type ControlPlaneAssessmentLookup = (
+  invocation: SecurityInvocation,
+  identity: ControlPlaneAssessmentIdentity,
+) => Promise<AssessmentReceiptV1 | undefined>
 
 /** Resolve an existing start identity without admitting or launching an Assessment. */
 export function lookupControlPlaneAssessment(
@@ -36,7 +34,7 @@ export function lookupControlPlaneAssessment(
 ): Promise<AssessmentReceiptV1 | undefined> {
   const lookup = Reflect.get(owner, LOOKUP_CONTROL_PLANE_ASSESSMENT) as unknown
   if (typeof lookup !== 'function') throw new TypeError('control-plane Assessment lookup is not installed')
-  return (lookup as ControlPlaneAssessmentLookupOwner[typeof LOOKUP_CONTROL_PLANE_ASSESSMENT])(
+  return (lookup as ControlPlaneAssessmentLookup)(
     invocation,
     identity,
   )

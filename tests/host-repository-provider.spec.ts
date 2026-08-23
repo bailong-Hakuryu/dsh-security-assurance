@@ -1,0 +1,122 @@
+import { execFile } from 'node:child_process'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+import { Context } from '@deepseek-ai/cordis'
+import { afterEach, describe, expect, it } from 'vitest'
+import SecurityAssuranceService from '../src/index.ts'
+import SecurityAssuranceHostRepositoryProvider from '../src/host-repository-provider.ts'
+
+const run = promisify(execFile)
+const temporaryRoots: string[] = []
+
+afterEach(async () => {
+  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
+})
+
+async function cleanRepository(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-security-host-repository-'))
+  temporaryRoots.push(root)
+  await run('git', ['init', '-b', 'main'], { cwd: root })
+  await run('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: root })
+  await run('git', ['config', 'user.name', 'Fixture'], { cwd: root })
+  await writeFile(join(root, 'README.md'), '# Host Repository Provider fixture\n', 'utf8')
+  await run('git', ['add', 'README.md'], { cwd: root })
+  await run('git', ['commit', '-m', 'fixture baseline'], { cwd: root })
+  return root
+}
+
+describe('Security Assurance Host Repository Provider', () => {
+  it('registers Host configuration and resolves one immutable path-free binding', async () => {
+    const repository = await cleanRepository()
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-host-repository-home-'))
+    temporaryRoots.push(dshHome)
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+    const ctx = new Context()
+    const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const providerFiber = await ctx.plugin(SecurityAssuranceHostRepositoryProvider, {
+      repositories: [{
+        schemaVersion: 1,
+        bindingId: 'mission-repository',
+        idempotencyKey: 'host-repository-provider:mission-repository:v1',
+        root: repository,
+        displayName: 'Mission Repository',
+        bindings: {
+          policyId: 'security/node-package-lifecycle',
+          assessmentProfileId: 'security/standard',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform,
+          deliveryDestinationIds: [],
+        },
+      }],
+    })
+
+    try {
+      const binding = await ctx.securityAssuranceHostRepositories.resolve('mission-repository')
+      expect(binding).toMatchObject({
+        schemaVersion: 1,
+        bindingId: 'mission-repository',
+        repositoryId: expect.stringMatching(/^repo-[0-9a-f-]{36}$/u),
+        repositoryRevision: 1,
+        state: 'ENABLED',
+      })
+      expect(JSON.stringify(binding)).not.toContain(repository)
+      expect(Object.isFrozen(binding)).toBe(true)
+    } finally {
+      await providerFiber.dispose()
+      await securityFiber.dispose()
+    }
+  })
+
+  it('rejects duplicate Host binding identities', async () => {
+    const repository = await cleanRepository()
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-host-repository-home-'))
+    temporaryRoots.push(dshHome)
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+    const ctx = new Context()
+    const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const registration = {
+      schemaVersion: 1 as const,
+      bindingId: 'duplicated-repository',
+      idempotencyKey: 'host-repository-provider:duplicated:v1',
+      root: repository,
+      displayName: 'Duplicated Repository',
+      bindings: {
+        policyId: 'security/node-package-lifecycle',
+        assessmentProfileId: 'security/standard',
+        evidenceProtectionId: 'evidence/local-protected',
+        dataEgressPolicyId: 'egress/deny-by-default',
+        platform,
+        deliveryDestinationIds: [],
+      },
+    }
+
+    let providerFiber: Awaited<ReturnType<Context['plugin']>> | undefined
+    try {
+      providerFiber = await ctx.plugin(SecurityAssuranceHostRepositoryProvider, {
+        repositories: [registration, {
+          ...registration,
+          idempotencyKey: 'host-repository-provider:duplicated:v2',
+        }],
+      })
+      let registrationFailure = ''
+      try {
+        await ctx.securityAssuranceHostRepositories.resolve('duplicated-repository')
+      } catch (error) {
+        registrationFailure = String(error)
+      }
+      expect(registrationFailure).toContain("Host Repository binding 'duplicated-repository' is duplicated")
+    } finally {
+      await providerFiber?.dispose()
+      await securityFiber.dispose()
+    }
+  })
+})
