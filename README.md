@@ -74,7 +74,11 @@ This repository is under active vertical-slice development, not at the
   Security commit precedes Control Plane Invocation termination; and
 - fresh packed Harness `0.1.1-rc.2` profile proof for `disabled`, absent
   `when-available`, absent `required`, valid required integration, Adapter
-  unload, and full profile restart.
+  unload, and full profile restart; and
+- packed fail-closed Gate proof for a real Security `FAILED → REWORK_REQUIRED`,
+  a real Security `INDETERMINATE → BLOCKED`, a digest-tampered Submission that
+  is rejected before Evidence import, and a frozen Provider that disappears
+  mid-Attempt without falling back to another registered version.
 
 External Analyzer registration, process or agent Analyzers, general Node and
 application-security coverage, the complete protected Evidence Store, tools,

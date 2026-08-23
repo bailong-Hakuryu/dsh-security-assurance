@@ -13,6 +13,8 @@ const artifactRoot = join(temporaryRoot, 'artifacts')
 const consumerRoot = join(temporaryRoot, 'consumer')
 const npmCache = join(temporaryRoot, 'npm-cache')
 const repositoryRoot = join(temporaryRoot, 'repository')
+const failedRepositoryRoot = join(temporaryRoot, 'failed-repository')
+const indeterminateRepositoryRoot = join(temporaryRoot, 'indeterminate-repository')
 const securityHome = join(temporaryRoot, 'dsh-home')
 
 function executeNpm(args, options) {
@@ -23,30 +25,43 @@ function executeNpm(args, options) {
   return execute('npm', args, options)
 }
 
-try {
-  await mkdir(artifactRoot)
-  await mkdir(consumerRoot)
-  await mkdir(repositoryRoot)
-  await writeFile(join(repositoryRoot, 'package.json'), `${JSON.stringify({
-    name: 'dsh-packed-integration-fixture',
-    version: '1.0.0',
-    type: 'module',
-  }, null, 2)}\n`, 'utf8')
-  await writeFile(join(repositoryRoot, 'index.js'), 'export const answer = 42\n', 'utf8')
-  await execute('git', ['init', '-b', 'main'], { cwd: repositoryRoot, windowsHide: true })
+async function createFixtureRepository(root, manifest, commitMessage) {
+  await mkdir(root)
+  await writeFile(join(root, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+  await writeFile(join(root, 'index.js'), 'export const answer = 42\n', 'utf8')
+  await execute('git', ['init', '-b', 'main'], { cwd: root, windowsHide: true })
   await execute('git', ['config', 'user.email', 'fixture@example.invalid'], {
-    cwd: repositoryRoot,
+    cwd: root,
     windowsHide: true,
   })
   await execute('git', ['config', 'user.name', 'Fixture'], {
-    cwd: repositoryRoot,
+    cwd: root,
     windowsHide: true,
   })
-  await execute('git', ['add', '.'], { cwd: repositoryRoot, windowsHide: true })
-  await execute('git', ['commit', '-m', 'packed integration baseline'], {
-    cwd: repositoryRoot,
-    windowsHide: true,
-  })
+  await execute('git', ['add', '.'], { cwd: root, windowsHide: true })
+  await execute('git', ['commit', '-m', commitMessage], { cwd: root, windowsHide: true })
+}
+
+try {
+  await mkdir(artifactRoot)
+  await mkdir(consumerRoot)
+  await createFixtureRepository(repositoryRoot, {
+    name: 'dsh-packed-integration-fixture',
+    version: '1.0.0',
+    type: 'module',
+  }, 'packed integration baseline')
+  await createFixtureRepository(failedRepositoryRoot, {
+    name: 'dsh-packed-failed-fixture',
+    version: '1.0.0',
+    type: 'module',
+    scripts: { postinstall: 'node setup.js' },
+  }, 'packed failed baseline')
+  await createFixtureRepository(indeterminateRepositoryRoot, {
+    name: 'dsh-packed-indeterminate-fixture',
+    version: '1.0.0',
+    type: 'module',
+    scripts: { postinstall: 42 },
+  }, 'packed indeterminate baseline')
 
   const packed = await executeNpm([
     '--cache', npmCache,
@@ -157,16 +172,54 @@ const repositoryConfig = {
       platform: ${JSON.stringify(process.platform)},
       deliveryDestinationIds: [],
     },
+  }, {
+    schemaVersion: 1,
+    bindingId: 'packed-failed-repository',
+    idempotencyKey: 'packed-host-repository-provider:failed:v1',
+    root: ${JSON.stringify(failedRepositoryRoot)},
+    displayName: 'Packed Failed Repository',
+    bindings: {
+      policyId: 'security/node-package-lifecycle',
+      assessmentProfileId: 'security/standard',
+      evidenceProtectionId: 'evidence/local-protected',
+      dataEgressPolicyId: 'egress/deny-by-default',
+      platform: ${JSON.stringify(process.platform)},
+      deliveryDestinationIds: [],
+    },
+  }, {
+    schemaVersion: 1,
+    bindingId: 'packed-indeterminate-repository',
+    idempotencyKey: 'packed-host-repository-provider:indeterminate:v1',
+    root: ${JSON.stringify(indeterminateRepositoryRoot)},
+    displayName: 'Packed Indeterminate Repository',
+    bindings: {
+      policyId: 'security/node-package-lifecycle',
+      assessmentProfileId: 'security/standard',
+      evidenceProtectionId: 'evidence/local-protected',
+      dataEgressPolicyId: 'egress/deny-by-default',
+      platform: ${JSON.stringify(process.platform)},
+      deliveryDestinationIds: [],
+    },
   }],
 }
 const hostFiber = ctx.plugin(hostRepositories.default, repositoryConfig)
 await hostFiber
 const firstBinding = await ctx.securityAssuranceHostRepositories.resolve('packed-mission-repository')
+const failedBinding = await ctx.securityAssuranceHostRepositories.resolve('packed-failed-repository')
+const indeterminateBinding = await ctx.securityAssuranceHostRepositories.resolve(
+  'packed-indeterminate-repository',
+)
 if (!/^repo-[0-9a-f-]{36}$/.test(firstBinding?.repositoryId ?? '')) {
   throw new Error('Host Repository Provider did not expose a path-free Repository binding')
 }
 if (JSON.stringify(firstBinding).includes(${JSON.stringify(repositoryRoot)})) {
   throw new Error('Host Repository Provider exposed its configured root')
+}
+if (!/^repo-[0-9a-f-]{36}$/.test(failedBinding?.repositoryId ?? '')) {
+  throw new Error('Host Repository Provider did not expose the failed Repository binding')
+}
+if (!/^repo-[0-9a-f-]{36}$/.test(indeterminateBinding?.repositoryId ?? '')) {
+  throw new Error('Host Repository Provider did not expose the indeterminate Repository binding')
 }
 await hostFiber.dispose()
 if (ctx.reflect.get('securityAssuranceHostRepositories') !== undefined) {
@@ -175,8 +228,18 @@ if (ctx.reflect.get('securityAssuranceHostRepositories') !== undefined) {
 const restartedHostFiber = ctx.plugin(hostRepositories.default, repositoryConfig)
 await restartedHostFiber
 const restartedBinding = await ctx.securityAssuranceHostRepositories.resolve('packed-mission-repository')
+const restartedFailedBinding = await ctx.securityAssuranceHostRepositories.resolve('packed-failed-repository')
+const restartedIndeterminateBinding = await ctx.securityAssuranceHostRepositories.resolve(
+  'packed-indeterminate-repository',
+)
 if (restartedBinding?.repositoryId !== firstBinding.repositoryId) {
   throw new Error('Host Repository Provider restart did not preserve the registered Repository')
+}
+if (restartedFailedBinding?.repositoryId !== failedBinding.repositoryId) {
+  throw new Error('Host Repository Provider restart did not preserve the failed Repository')
+}
+if (restartedIndeterminateBinding?.repositoryId !== indeterminateBinding.repositoryId) {
+  throw new Error('Host Repository Provider restart did not preserve the indeterminate Repository')
 }
 await restartedHostFiber.dispose()
 await fiber.dispose()
@@ -188,6 +251,8 @@ process.stdout.write(JSON.stringify({
   lifecycle: 'PASS',
   hostRepositoryProvider: 'PASS',
   repositoryId: firstBinding.repositoryId,
+  failedRepositoryId: failedBinding.repositoryId,
+  indeterminateRepositoryId: indeterminateBinding.repositoryId,
 }))
 `, 'utf8')
 
@@ -226,6 +291,7 @@ if (importContext.reflect.get('securityAssurance') !== undefined
 }
 const SecurityAssuranceService = (await import('dsh-security-assurance')).default
 const EngineeringControlPlane = (await import('dsh-engineering-control-plane')).default
+const { sealAssuranceSubmissionV1 } = await import('dsh-engineering-control-plane/assurance-provider')
 const SubagentRuntime = (await import('@deepseek-ai/dsh-subagent')).default
 const LocalSubprocessRuntime = (await import('@deepseek-ai/dsh-subprocess-local')).default
 
@@ -259,6 +325,89 @@ const outputs = {
   },
 }
 const notApplicable = { mode: 'not_applicable', reason: 'Not required by packed integration.' }
+const malformedDescriptor = {
+  schemaVersion: 1,
+  providerId: 'fixture/packed-malformed-provider',
+  providerVersion: '1.0.0-fixture.1',
+}
+
+function sealedReferenceSubmission(context, descriptor) {
+  const evidence = [{
+    artifactId: 'packed-reference-evidence-1',
+    schemaId: 'fixture/provider-evidence',
+    schemaVersion: 1,
+    value: { check: 'fixture/check', outcome: 'passed' },
+  }]
+  const artifact = (artifactId, schemaId, value) => ({
+    artifactId,
+    schemaId,
+    schemaVersion: 1,
+    value,
+  })
+  const draft = {
+    schemaVersion: 1,
+    binding: {
+      invocationId: context.invocationId,
+      missionId: context.missionId,
+      attempt: context.attempt,
+      provider: descriptor,
+      subject: context.subject,
+      effectivePolicyDigest: context.effectivePolicyDigest,
+    },
+    externalAssessment: {
+      state: 'sealed',
+      assessmentId: 'packed-reference-assessment-1',
+      claimedOutcome: 'satisfied',
+    },
+    providerComposition: artifact(
+      'packed-reference-composition-1',
+      'dsh/assurance-provider-composition',
+      {
+        schemaVersion: 1,
+        provider: descriptor,
+        components: [{ componentId: 'fixture/packed-reference', componentVersion: '1.0.0' }],
+      },
+    ),
+    providerPolicy: artifact(
+      'packed-reference-policy-1',
+      'dsh/assurance-provider-policy',
+      { schemaVersion: 1, effectivePolicyDigest: context.effectivePolicyDigest },
+    ),
+    coverage: artifact(
+      'packed-reference-coverage-1',
+      'dsh/assurance-provider-coverage',
+      {
+        schemaVersion: 1,
+        status: 'complete',
+        dimensions: [{ dimensionId: 'fixture/check', status: 'covered' }],
+      },
+    ),
+    provenance: artifact(
+      'packed-reference-provenance-1',
+      'dsh/assurance-provider-provenance',
+      {
+        schemaVersion: 1,
+        assessor: { kind: 'machine_provider', provider: descriptor },
+      },
+    ),
+    evidence,
+  }
+  const sourceSeal = evidenceDigests => artifact(
+    'packed-reference-source-seal-1',
+    'dsh/assurance-provider-source-seal',
+    {
+      schemaVersion: 1,
+      state: 'sealed',
+      subject: context.subject,
+      evidenceDigests,
+    },
+  )
+  const provisional = sealAssuranceSubmissionV1({ ...draft, sourceSeal: sourceSeal([]) })
+  return sealAssuranceSubmissionV1({
+    ...draft,
+    sourceSeal: sourceSeal(provisional.payload.evidence.map(item => item.digest.value)),
+  })
+}
 
 function registerScriptedProvider(ctx, prefix) {
   let sequence = 0
@@ -281,7 +430,42 @@ function registerScriptedProvider(ctx, prefix) {
   })
 }
 
-function controlPlaneConfig(dshHome, activation) {
+function registerPausableDeveloperProvider(ctx, prefix) {
+  let sequence = 0
+  let notifyDeveloperStarted
+  let releaseDeveloperResult
+  const developerStarted = new Promise(resolve => { notifyDeveloperStarted = resolve })
+  const developerReleased = new Promise(resolve => { releaseDeveloperResult = resolve })
+  const dispose = ctx.subagents.registerProvider({
+    name: 'spawn',
+    capabilities: { outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
+    inheritsParentContext: false,
+    async start(request) {
+      const role = request.label?.split(' · ')[0]
+      if (typeof role !== 'string' || !(role in outputs)) {
+        throw new Error('Packed pausable Provider received an unknown Role')
+      }
+      if (role === 'developer') notifyDeveloperStarted()
+      const complete = () => ({ output: [], structured: outputs[role], stopReason: 'completed' })
+      return {
+        id: prefix + '-' + (++sequence),
+        localAgent: undefined,
+        result: role === 'developer' ? developerReleased.then(complete) : Promise.resolve(complete()),
+        dispose: () => Promise.resolve(),
+      }
+    },
+  })
+  return {
+    dispose,
+    developerStarted,
+    releaseDeveloper: () => releaseDeveloperResult(),
+  }
+}
+
+function controlPlaneConfig(dshHome, activation, repository = {
+  root: ${JSON.stringify(repositoryRoot)},
+  repositoryId: ${JSON.stringify(result.repositoryId)},
+}) {
   return {
     dshHome,
     subagentProvider: 'spawn',
@@ -293,13 +477,13 @@ function controlPlaneConfig(dshHome, activation) {
       reviewer: { allowTools: [], denyTools: [] },
     },
     repositories: [{
-      root: ${JSON.stringify(repositoryRoot)},
+      root: repository.root,
       verificationProfile: 'packed-integration',
       assuranceProviders: [{
         providerId: adapter.SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR.providerId,
         providerVersion: adapter.SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR.providerVersion,
         activation,
-        configuration: { repositoryId: ${JSON.stringify(result.repositoryId)} },
+        configuration: { repositoryId: repository.repositoryId },
       }],
     }],
     verificationProfiles: [{
@@ -310,6 +494,21 @@ function controlPlaneConfig(dshHome, activation) {
         regression: notApplicable,
         security: notApplicable,
       },
+    }],
+  }
+}
+
+function referenceControlPlaneConfig(dshHome, descriptor) {
+  const config = controlPlaneConfig(dshHome, 'required')
+  return {
+    ...config,
+    repositories: [{
+      ...config.repositories[0],
+      assuranceProviders: [{
+        providerId: descriptor.providerId,
+        providerVersion: descriptor.providerVersion,
+        activation: 'required',
+      }],
     }],
   }
 }
@@ -331,6 +530,23 @@ async function waitForTerminalMission(ctx, agent, missionId) {
     )
   }
   return snapshot
+}
+
+async function waitForProviderInvocationState(ctx, agent, missionId, states) {
+  const deadline = Date.now() + 20000
+  let observed = []
+  while (Date.now() < deadline) {
+    const snapshot = await ctx.engineeringControlPlane.status(
+      agent,
+      missionId,
+      new AbortController().signal,
+    )
+    observed = (snapshot.assuranceProviderInvocations ?? []).map(item => item.state)
+    if (observed.some(state => states.includes(state))) return snapshot
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  throw new Error('Packed Provider invocation did not reach ' + states.join(' or ')
+    + '; observed ' + observed.join(', '))
 }
 
 async function runUnavailablePolicy(activation, dshHome) {
@@ -443,6 +659,321 @@ try {
 }
 if (approvedMissionId === undefined) throw new Error('Packed integrated Mission identity was not recorded')
 
+const failedContext = new Context()
+const failedSubprocessFiber = await failedContext.plugin(LocalSubprocessRuntime)
+const failedSubagentFiber = await failedContext.plugin(SubagentRuntime)
+const disposeFailedProvider = registerScriptedProvider(failedContext, 'packed-failed')
+const failedSecurityFiber = await failedContext.plugin(
+  SecurityAssuranceService,
+  { dshHome: ${JSON.stringify(securityHome)} },
+)
+await failedContext.securityAssurance.whenReady()
+const failedControlPlaneFiber = await failedContext.plugin(
+  EngineeringControlPlane,
+  controlPlaneConfig(${JSON.stringify(join(temporaryRoot, 'failed-home'))}, 'required', {
+    root: ${JSON.stringify(failedRepositoryRoot)},
+    repositoryId: ${JSON.stringify(result.failedRepositoryId)},
+  }),
+)
+await failedContext.engineeringControlPlane.whenReady()
+const failedAdapterFiber = await failedContext.plugin(adapter.default)
+try {
+  const failedAgent = {
+    id: 'packed-failed-agent',
+    session: { header: { cwd: ${JSON.stringify(failedRepositoryRoot)} } },
+  }
+  const failedReceipt = await failedContext.engineeringControlPlane.start(failedAgent, {
+    idempotencyKey: 'packed-failed:start:1',
+    objective: 'Reject a package install lifecycle script through the real packed Security Provider',
+  }, new AbortController().signal)
+  const failedSnapshot = await waitForTerminalMission(
+    failedContext,
+    failedAgent,
+    failedReceipt.missionId,
+  )
+  if (failedSnapshot.status !== 'REWORK_REQUIRED'
+    || failedSnapshot.gate?.kind !== 'rework_required'
+    || failedSnapshot.assuranceResults?.[0]?.outcome !== 'failed'
+    || failedSnapshot.gate.reasons?.[0]?.code !== 'assurance_failed') {
+    throw new Error('Packed failed Security verdict did not close the Control Plane Gate: '
+      + JSON.stringify({
+        status: failedSnapshot.status,
+        gate: failedSnapshot.gate,
+        results: failedSnapshot.assuranceResults,
+      }))
+  }
+} finally {
+  await failedAdapterFiber.dispose()
+  await failedControlPlaneFiber.dispose()
+  await failedSecurityFiber.dispose()
+  disposeFailedProvider()
+  await failedSubagentFiber.dispose()
+  await failedSubprocessFiber.dispose()
+}
+
+const indeterminateContext = new Context()
+const indeterminateSubprocessFiber = await indeterminateContext.plugin(LocalSubprocessRuntime)
+const indeterminateSubagentFiber = await indeterminateContext.plugin(SubagentRuntime)
+const disposeIndeterminateProvider = registerScriptedProvider(
+  indeterminateContext,
+  'packed-indeterminate',
+)
+const indeterminateSecurityFiber = await indeterminateContext.plugin(
+  SecurityAssuranceService,
+  { dshHome: ${JSON.stringify(securityHome)} },
+)
+await indeterminateContext.securityAssurance.whenReady()
+const indeterminateControlPlaneFiber = await indeterminateContext.plugin(
+  EngineeringControlPlane,
+  controlPlaneConfig(${JSON.stringify(join(temporaryRoot, 'indeterminate-home'))}, 'required', {
+    root: ${JSON.stringify(indeterminateRepositoryRoot)},
+    repositoryId: ${JSON.stringify(result.indeterminateRepositoryId)},
+  }),
+)
+await indeterminateContext.engineeringControlPlane.whenReady()
+const indeterminateAdapterFiber = await indeterminateContext.plugin(adapter.default)
+try {
+  const indeterminateAgent = {
+    id: 'packed-indeterminate-agent',
+    session: { header: { cwd: ${JSON.stringify(indeterminateRepositoryRoot)} } },
+  }
+  const indeterminateReceipt = await indeterminateContext.engineeringControlPlane.start(
+    indeterminateAgent,
+    {
+      idempotencyKey: 'packed-indeterminate:start:1',
+      objective: 'Block when the real packed Security Provider cannot determine a verdict',
+    },
+    new AbortController().signal,
+  )
+  const indeterminateSnapshot = await waitForTerminalMission(
+    indeterminateContext,
+    indeterminateAgent,
+    indeterminateReceipt.missionId,
+  )
+  if (indeterminateSnapshot.status !== 'BLOCKED'
+    || indeterminateSnapshot.gate?.kind !== 'blocked'
+    || indeterminateSnapshot.assuranceResults?.[0]?.outcome !== 'indeterminate'
+    || indeterminateSnapshot.gate.reasons?.[0]?.code !== 'assurance_indeterminate') {
+    throw new Error('Packed indeterminate Security verdict did not block the Control Plane Gate: '
+      + JSON.stringify({
+        status: indeterminateSnapshot.status,
+        gate: indeterminateSnapshot.gate,
+        results: indeterminateSnapshot.assuranceResults,
+      }))
+  }
+} finally {
+  await indeterminateAdapterFiber.dispose()
+  await indeterminateControlPlaneFiber.dispose()
+  await indeterminateSecurityFiber.dispose()
+  disposeIndeterminateProvider()
+  await indeterminateSubagentFiber.dispose()
+  await indeterminateSubprocessFiber.dispose()
+}
+
+const malformedContext = new Context()
+const malformedSubprocessFiber = await malformedContext.plugin(LocalSubprocessRuntime)
+const malformedSubagentFiber = await malformedContext.plugin(SubagentRuntime)
+const disposeMalformedRoleProvider = registerScriptedProvider(
+  malformedContext,
+  'packed-malformed',
+)
+const malformedControlPlaneFiber = await malformedContext.plugin(
+  EngineeringControlPlane,
+  referenceControlPlaneConfig(
+    ${JSON.stringify(join(temporaryRoot, 'malformed-home'))},
+    malformedDescriptor,
+  ),
+)
+await malformedContext.engineeringControlPlane.whenReady()
+const malformedContributorFiber = await malformedContext.plugin({
+  name: 'packed-malformed-reference-provider',
+  inject: ['engineeringControlPlane'],
+  apply(contributorContext) {
+    return contributorContext.engineeringControlPlane.registerAssuranceProvider(
+      malformedDescriptor,
+      descriptor => ({
+        descriptor,
+        async assess(context) {
+          const candidate = JSON.parse(JSON.stringify(
+            sealedReferenceSubmission(context, descriptor),
+          ))
+          candidate.payload.externalAssessment.claimedOutcome = 'failed'
+          return { kind: 'sealed_submission', submission: candidate }
+        },
+      }),
+    )
+  },
+})
+try {
+  const malformedAgent = {
+    id: 'packed-malformed-agent',
+    session: { header: { cwd: ${JSON.stringify(repositoryRoot)} } },
+  }
+  const malformedReceipt = await malformedContext.engineeringControlPlane.start(
+    malformedAgent,
+    {
+      idempotencyKey: 'packed-malformed:start:1',
+      objective: 'Reject a digest-tampered packed Provider Submission',
+    },
+    new AbortController().signal,
+  )
+  const malformedSnapshot = await waitForProviderInvocationState(
+    malformedContext,
+    malformedAgent,
+    malformedReceipt.missionId,
+    ['rejected'],
+  )
+  const malformedInvocation = malformedSnapshot.assuranceProviderInvocations?.[0]
+  if (malformedInvocation?.state !== 'rejected'
+    || malformedInvocation.failureCode !== 'digest_mismatch'
+    || malformedSnapshot.evidence.records.some(
+      record => record.kind === 'assurance-provider-submission',
+    )) {
+    throw new Error('Packed malformed Submission was not rejected before Evidence import: '
+      + JSON.stringify({
+        status: malformedSnapshot.status,
+        invocation: malformedInvocation,
+        evidence: malformedSnapshot.evidence.records,
+      }))
+  }
+  const malformedTerminal = await waitForTerminalMission(
+    malformedContext,
+    malformedAgent,
+    malformedReceipt.missionId,
+  )
+  if (malformedTerminal.status !== 'BLOCKED') {
+    throw new Error('Packed malformed Submission did not fail the Mission closed')
+  }
+} finally {
+  await malformedContributorFiber.dispose()
+  await malformedControlPlaneFiber.dispose()
+  disposeMalformedRoleProvider()
+  await malformedSubagentFiber.dispose()
+  await malformedSubprocessFiber.dispose()
+}
+
+const providerLossContext = new Context()
+const providerLossSubprocessFiber = await providerLossContext.plugin(LocalSubprocessRuntime)
+const providerLossSubagentFiber = await providerLossContext.plugin(SubagentRuntime)
+const pausableRoleProvider = registerPausableDeveloperProvider(
+  providerLossContext,
+  'packed-provider-loss',
+)
+const providerLossSecurityFiber = await providerLossContext.plugin(
+  SecurityAssuranceService,
+  { dshHome: ${JSON.stringify(securityHome)} },
+)
+await providerLossContext.securityAssurance.whenReady()
+const providerLossControlPlaneFiber = await providerLossContext.plugin(
+  EngineeringControlPlane,
+  controlPlaneConfig(${JSON.stringify(join(temporaryRoot, 'provider-loss-home'))}, 'required'),
+)
+await providerLossContext.engineeringControlPlane.whenReady()
+const providerLossAdapterFiber = await providerLossContext.plugin(adapter.default)
+let providerLossAdapterDisposed = false
+let replacementContributorFiber
+let replacementFactoryCalls = 0
+let replacementAssessCalls = 0
+const replacementDescriptor = {
+  ...adapter.SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
+  providerVersion: '99.0.0-fixture.1',
+}
+replacementContributorFiber = await providerLossContext.plugin({
+  name: 'packed-provider-loss-wrong-version',
+  inject: ['engineeringControlPlane'],
+  apply(contributorContext) {
+    return contributorContext.engineeringControlPlane.registerAssuranceProvider(
+      replacementDescriptor,
+      descriptor => {
+        replacementFactoryCalls++
+        return {
+          descriptor,
+          async assess() {
+            replacementAssessCalls++
+            throw new Error('A different Provider version must never replace the frozen version')
+          },
+        }
+      },
+    )
+  },
+})
+try {
+  const providerLossAgent = {
+    id: 'packed-provider-loss-agent',
+    session: { header: { cwd: ${JSON.stringify(repositoryRoot)} } },
+  }
+  const providerLossReceipt = await providerLossContext.engineeringControlPlane.start(
+    providerLossAgent,
+    {
+      idempotencyKey: 'packed-provider-loss:start:1',
+      objective: 'Fail closed when the exact frozen Security Provider disappears mid-Attempt',
+    },
+    new AbortController().signal,
+  )
+  await Promise.race([
+    pausableRoleProvider.developerStarted,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error('Packed Developer did not reach the Provider-loss pause')),
+      20000,
+    )),
+  ])
+  const frozenSnapshot = await providerLossContext.engineeringControlPlane.status(
+    providerLossAgent,
+    providerLossReceipt.missionId,
+    new AbortController().signal,
+  )
+  if (frozenSnapshot.assuranceProviderInvocations?.[0]?.state !== 'prepared') {
+    throw new Error('Packed Security Provider was not frozen before Adapter disposal')
+  }
+  await providerLossAdapterFiber.dispose()
+  providerLossAdapterDisposed = true
+  pausableRoleProvider.releaseDeveloper()
+  const unavailableSnapshot = await waitForProviderInvocationState(
+    providerLossContext,
+    providerLossAgent,
+    providerLossReceipt.missionId,
+    ['unavailable'],
+  )
+  const unavailableInvocation = unavailableSnapshot.assuranceProviderInvocations?.[0]
+  if (unavailableInvocation?.state !== 'unavailable'
+    || unavailableInvocation.failureCode !== 'registration_missing'
+    || replacementFactoryCalls !== 0
+    || replacementAssessCalls !== 0) {
+    throw new Error('Packed frozen Provider loss was skipped or substituted: '
+      + JSON.stringify({
+        invocation: unavailableInvocation,
+        replacementFactoryCalls,
+        replacementAssessCalls,
+      }))
+  }
+  const providerLossTerminal = await waitForTerminalMission(
+    providerLossContext,
+    providerLossAgent,
+    providerLossReceipt.missionId,
+  )
+  if (providerLossTerminal.status !== 'BLOCKED'
+    || providerLossTerminal.gate?.kind !== 'blocked'
+    || providerLossTerminal.assuranceResults?.[0]?.outcome !== 'indeterminate'
+    || providerLossTerminal.assuranceResults[0].reasonCodes?.[0] !== 'provider_unavailable'
+    || providerLossTerminal.gate.reasons?.[0]?.code !== 'assurance_indeterminate') {
+    throw new Error('Packed frozen Provider loss did not block the Gate: '
+      + JSON.stringify({
+        status: providerLossTerminal.status,
+        gate: providerLossTerminal.gate,
+        results: providerLossTerminal.assuranceResults,
+      }))
+  }
+} finally {
+  pausableRoleProvider.releaseDeveloper()
+  if (replacementContributorFiber !== undefined) await replacementContributorFiber.dispose()
+  if (!providerLossAdapterDisposed) await providerLossAdapterFiber.dispose()
+  await providerLossControlPlaneFiber.dispose()
+  await providerLossSecurityFiber.dispose()
+  pausableRoleProvider.dispose()
+  await providerLossSubagentFiber.dispose()
+  await providerLossSubprocessFiber.dispose()
+}
+
 const restartedContext = new Context()
 const restartedSubprocessFiber = await restartedContext.plugin(LocalSubprocessRuntime)
 const restartedSubagentFiber = await restartedContext.plugin(SubagentRuntime)
@@ -497,6 +1028,10 @@ process.stdout.write(JSON.stringify({
   sideEffectFree: 'PASS',
   hostPolicyMatrix: 'PASS',
   requiredIntegration: 'PASS',
+  failedGate: 'PASS',
+  indeterminateGate: 'PASS',
+  malformedSubmission: 'PASS',
+  frozenProviderLoss: 'PASS',
   unloadAndRestart: 'PASS',
 }))
 `, 'utf8')
