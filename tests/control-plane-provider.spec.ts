@@ -473,4 +473,135 @@ describe('Security Assurance Control Plane Provider', () => {
       await restartedSubprocessFiber.dispose()
     }
   }, 30_000)
+
+  it('propagates explicit Mission cancellation to the active Security Assessment', async () => {
+    const repository = await nodeRepositoryFixture({
+      name: 'cancel-active-control-plane-fixture',
+      version: '1.0.0',
+      type: 'module',
+    }, 750)
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-control-plane-cancel-home-'))
+    temporaryRoots.push(dshHome)
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+    const ctx = new Context()
+    const subprocessFiber = await ctx.plugin(LocalSubprocessRuntime)
+    const subagentFiber = await ctx.plugin(SubagentRuntime)
+    const disposeScriptedProvider = registerScriptedEngineeringProvider(ctx)
+    const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.securityAssurance.whenReady()
+    const invocation = referenceHostInvocation(ctx.securityAssurance)
+    const registered = await ctx.securityAssurance.registerRepository(invocation, {
+      schemaVersion: 1,
+      idempotencyKey: 'control-plane-cancel-register-1',
+      root: repository,
+      displayName: 'Control Plane cancellation fixture',
+      bindings: {
+        policyId: 'security/node-package-lifecycle',
+        assessmentProfileId: 'security/standard',
+        evidenceProtectionId: 'evidence/local-protected',
+        dataEgressPolicyId: 'egress/deny-by-default',
+        platform,
+        deliveryDestinationIds: [],
+      },
+    })
+    if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+    const controlPlaneFiber = await ctx.plugin(
+      EngineeringControlPlane,
+      controlPlaneConfig(repository, dshHome, registered.value.repositoryId),
+    )
+    await ctx.engineeringControlPlane.whenReady()
+    const adapterFiber = await ctx.plugin(SecurityAssuranceControlPlaneProvider)
+
+    try {
+      const agent = {
+        id: 'agent-security-control-plane-cancel-fixture',
+        session: { header: { cwd: repository } },
+      } as unknown as Agent
+      const receipt = await ctx.engineeringControlPlane.start(agent, {
+        idempotencyKey: 'security-control-plane-provider:cancel:1',
+        objective: 'Cancel the active external Security Assessment with the Mission',
+      }, new AbortController().signal)
+      await waitForProviderInvocation(ctx, agent, receipt.missionId, ['begun'])
+      await new Promise(resolve => setTimeout(resolve, 2_500))
+      const active = await ctx.engineeringControlPlane.status(
+        agent,
+        receipt.missionId,
+        new AbortController().signal,
+      )
+      expect(active.assuranceProviderInvocations?.[0]?.state).toBe('begun')
+
+      const rebound = await ctx.securityAssurance.updateRepository(invocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'control-plane-cancel-rebind-1',
+        repositoryId: registered.value.repositoryId,
+        expectedRepositoryRevision: 1,
+        bindings: {
+          policyId: 'security/node-package-lifecycle',
+          assessmentProfileId: 'security/strict-after-start',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform,
+          deliveryDestinationIds: [],
+        },
+      })
+      expect(rebound).toMatchObject({
+        ok: true,
+        value: { repositoryRevision: 2 },
+      })
+
+      try {
+        await ctx.engineeringControlPlane.cancel(agent, {
+          missionId: active.missionId,
+          expectedRevision: active.revision,
+          reason: 'The owning user explicitly canceled the Mission.',
+        }, new AbortController().signal)
+      } catch (error) {
+        const failed = await ctx.engineeringControlPlane.status(
+          agent,
+          active.missionId,
+          new AbortController().signal,
+        )
+        throw new Error(`Mission cancellation failed from ${JSON.stringify(failed.blocked)}: ${String(error)}`)
+      }
+      const canceledMission = await ctx.engineeringControlPlane.status(
+        agent,
+        active.missionId,
+        new AbortController().signal,
+      )
+      expect(canceledMission.status).toBe('CANCELLED')
+      const terminated = canceledMission.assuranceProviderInvocations?.[0]
+      expect(terminated).toMatchObject({
+        state: 'terminated',
+        outcome: {
+          kind: 'external_assessment_canceled',
+          externalAssessmentId: expect.any(String),
+        },
+      })
+      if (terminated?.state !== 'terminated' || !('externalAssessmentId' in terminated.outcome)) {
+        throw new Error('Control Plane did not retain the canceled external Assessment identity')
+      }
+      await expect(ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: terminated.outcome.externalAssessmentId as never,
+      })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          assessmentId: terminated.outcome.externalAssessmentId,
+          state: 'CANCELED',
+          verdict: null,
+          seal: null,
+        },
+      })
+    } finally {
+      await adapterFiber.dispose()
+      await controlPlaneFiber.dispose()
+      await securityFiber.dispose()
+      disposeScriptedProvider()
+      await subagentFiber.dispose()
+      await subprocessFiber.dispose()
+    }
+  }, 40_000)
 })

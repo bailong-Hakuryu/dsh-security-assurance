@@ -608,6 +608,29 @@ export class SecurityPersistence {
     return assessmentReceiptV1Schema.parse(JSON.parse(replay.receipt_json))
   }
 
+  /** Package-internal lookup by the stable owning identity, without replaying a mutable request. */
+  findAssessmentStartIdentity(input: Pick<
+    AssessmentStartPersistenceInput,
+    'principalId' | 'authorityKind' | 'idempotencyKey' | 'repositoryId'
+  >): AssessmentReceiptV1 | undefined {
+    this.requireOpen()
+    const replay = this.db.prepare(`
+      SELECT receipt_json
+      FROM idempotency_records
+      WHERE principal_id = ? AND authority_kind = ? AND operation = ?
+        AND target_key = ? AND idempotency_key = ?
+    `).get(
+      input.principalId,
+      input.authorityKind,
+      'start_assessment',
+      input.repositoryId,
+      input.idempotencyKey,
+    ) as Pick<IdempotencyRow, 'receipt_json'> | undefined
+    return replay === undefined
+      ? undefined
+      : assessmentReceiptV1Schema.parse(JSON.parse(replay.receipt_json))
+  }
+
   createAssessment(input: AssessmentStartPersistenceInput): AssessmentReceiptV1 {
     this.requireOpen()
     const requestDigest = digest(input.canonicalRequest)

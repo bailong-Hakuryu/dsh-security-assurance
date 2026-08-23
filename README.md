@@ -64,7 +64,10 @@ This repository is under active vertical-slice development, not at the
   Submission by value; and
 - real dual-plugin Gate coverage proving `SATISFIED → requirement satisfied`,
   `FAILED → REWORK_REQUIRED`, `INDETERMINATE → BLOCKED`, and a missing Repository
-  binding → fail-closed `BLOCKED`.
+  binding → fail-closed `BLOCKED`; and
+- real dual-plugin cancellation coverage proving explicit Mission cancellation
+  records the external Assessment identity and leaves that same Assessment
+  `CANCELED` without Verdict or Seal.
 
 External Analyzer registration, process or agent Analyzers, general Node and
 application-security coverage, the complete protected Evidence Store, tools,
@@ -137,10 +140,18 @@ value plus source digest in the provider-neutral Control Plane Submission. If a
 durably begun Control Plane invocation is explicitly resumed after both hosts
 restart, the Adapter reuses the exact Assessment start identity, explicitly
 resumes that Assessment when it is `BLOCKED`, and returns the same sealed value
-through `recover()` without replaying Provider `assess()`. The Control Plane copies and
-revalidates that value and remains the sole owner of Mission Assurance Results
-and the Quality Gate. The two plugins never share SQLite files, writable
-Evidence paths, transactions, or Kernel objects.
+through `recover()` without replaying Provider `assess()`. The Control Plane
+copies and revalidates that value and remains the sole owner of Mission
+Assurance Results and the Quality Gate. The two plugins never share SQLite
+files, writable Evidence paths, transactions, or Kernel objects.
+
+On explicit Mission cancellation, the Adapter's separate `cancel()` operation
+uses a package-private, authority-checked lookup for the existing
+`startAssessment` idempotency record. It never creates an Assessment merely to
+cancel it. If the Assessment exists and is not terminal, the Adapter invokes
+the public revision-bound `cancelAssessment`, verifies `CANCELED`, and returns
+the external Assessment ID for Control Plane audit. Host disposal does not call
+this operation, so restart recovery remains distinct from cancellation.
 
 ## Development
 

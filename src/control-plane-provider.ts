@@ -6,6 +6,7 @@ import {
   type AssuranceClaimedOutcomeV1,
   type AssuranceExecutionContext,
   type AssuranceProviderDescriptorV1,
+  type AssuranceProviderCancellationOutcomeV1,
   type AssuranceProviderOutcomeV1,
   type AssuranceProviderV1,
   type AssuranceRequestV1,
@@ -17,12 +18,15 @@ import {
   repositoryIdSchema,
   SECURITY_ASSURANCE_PRODUCT_VERSION,
   type AssessmentSnapshotV1,
+  type RepositoryId,
   type SecurityAssuranceSubmissionV1,
   type SecurityInvocation,
+  type StartAssessmentRequest,
 } from './contracts.ts'
 import type { SecurityAssuranceService } from './index.ts'
 import { resolveTrustedInvocation } from './internal/authority.ts'
 import { canonicalJson } from './internal/canonical.ts'
+import { lookupControlPlaneAssessment } from './internal/control-plane-assessment.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -57,7 +61,7 @@ function invocationOptions(options?: ProviderInvocationOptions) {
   return options?.signal === undefined ? {} : { signal: options.signal }
 }
 
-function configuredRepositoryId(request: AssuranceRequestV1): string | undefined {
+function configuredRepositoryId(request: AssuranceRequestV1): RepositoryId | undefined {
   const configuration = request.configuration
   if (
     configuration === undefined
@@ -80,6 +84,30 @@ function assessmentResumeIdempotencyKey(context: AssuranceExecutionContext): str
     .update(`resume\0${context.invocationId}\0${context.missionId}\0${context.attempt}`)
     .digest('hex')
   return `control-plane-resume-${digest}`
+}
+
+function assessmentCancellationIdempotencyKey(context: AssuranceExecutionContext): string {
+  const digest = createHash('sha256')
+    .update(`cancel\0${context.invocationId}\0${context.missionId}\0${context.attempt}`)
+    .digest('hex')
+  return `control-plane-cancel-${digest}`
+}
+
+function startRequest(
+  context: AssuranceExecutionContext,
+  repositoryId: RepositoryId,
+  assessmentProfileId: string,
+): StartAssessmentRequest {
+  return {
+    schemaVersion: 1,
+    idempotencyKey: assessmentIdempotencyKey(context),
+    repositoryId,
+    subject: { kind: 'workspace_snapshot' },
+    assessmentMode: 'REPOSITORY',
+    assessmentProfileId,
+    target: { kind: 'repository' },
+    requestedStrongerControlIds: [],
+  }
 }
 
 function claimedOutcome(verdict: AssessmentSnapshotV1['verdict']): AssuranceClaimedOutcomeV1 {
@@ -243,16 +271,11 @@ class SecurityAssuranceProvider implements AssuranceProviderV1 {
     if (!repository.ok) return securityError(repository.error.code)
     if (repository.value.state !== 'ENABLED') return externalFailure('blocked', 'repository_disabled')
 
-    const started = await this.service.startAssessment(this.invocation, {
-      schemaVersion: 1,
-      idempotencyKey: assessmentIdempotencyKey(context),
-      repositoryId,
-      subject: { kind: 'workspace_snapshot' },
-      assessmentMode: 'REPOSITORY',
-      assessmentProfileId: repository.value.bindings.assessmentProfileId,
-      target: { kind: 'repository' },
-      requestedStrongerControlIds: [],
-    }, callOptions)
+    const started = await this.service.startAssessment(
+      this.invocation,
+      startRequest(context, repositoryId, repository.value.bindings.assessmentProfileId),
+      callOptions,
+    )
     if (!started.ok) return securityError(started.error.code)
 
     let revision: number = started.value.assessmentRevision
@@ -309,6 +332,71 @@ class SecurityAssuranceProvider implements AssuranceProviderV1 {
       revision = changed.value.assessmentRevision
     }
   }
+
+  async cancel(
+    context: AssuranceExecutionContext,
+    request: AssuranceRequestV1,
+    options?: ProviderInvocationOptions,
+  ): Promise<AssuranceProviderCancellationOutcomeV1> {
+    const repositoryId = configuredRepositoryId(request)
+    if (repositoryId === undefined) throw new Error('Security Provider configuration is invalid')
+    const callOptions = invocationOptions(options)
+    const started = await lookupControlPlaneAssessment(this.service, this.invocation, {
+      idempotencyKey: assessmentIdempotencyKey(context),
+      repositoryId,
+    })
+    if (started === undefined) return { kind: 'external_assessment_not_started' }
+
+    for (let reconciliation = 0; reconciliation < 4; reconciliation += 1) {
+      const assessment = await this.service.getAssessment(
+        this.invocation,
+        { schemaVersion: 1, assessmentId: started.assessmentId },
+        callOptions,
+      )
+      if (!assessment.ok) throw new Error(`Security Assessment lookup failed (${assessment.error.code})`)
+      if (assessment.value.state === 'SEALED') {
+        return {
+          kind: 'external_assessment_terminal',
+          externalAssessmentId: assessment.value.assessmentId,
+          terminalState: 'sealed',
+        }
+      }
+      if (assessment.value.state === 'CANCELED') {
+        return {
+          kind: 'external_assessment_terminal',
+          externalAssessmentId: assessment.value.assessmentId,
+          terminalState: 'canceled',
+        }
+      }
+      const canceled = await this.service.cancelAssessment(this.invocation, {
+        schemaVersion: 1,
+        assessmentId: assessment.value.assessmentId,
+        expectedAssessmentRevision: assessment.value.assessmentRevision,
+        idempotencyKey: assessmentCancellationIdempotencyKey(context),
+        reason: {
+          code: 'CONTROL_PLANE_MISSION_CANCELED',
+          summary: 'Cancel the external Assessment because its owning Mission was explicitly canceled.',
+        },
+      }, callOptions)
+      if (!canceled.ok) {
+        if (canceled.error.code === 'CONFLICT') continue
+        throw new Error(`Security Assessment cancellation failed (${canceled.error.code})`)
+      }
+      const terminal = await this.service.getAssessment(
+        this.invocation,
+        { schemaVersion: 1, assessmentId: assessment.value.assessmentId },
+        callOptions,
+      )
+      if (!terminal.ok || terminal.value.state !== 'CANCELED') {
+        throw new Error('Security Assessment cancellation did not reach CANCELED')
+      }
+      return {
+        kind: 'external_assessment_canceled',
+        externalAssessmentId: terminal.value.assessmentId,
+      }
+    }
+    throw new Error('Security Assessment changed repeatedly during cancellation')
+  }
 }
 
 /** Optional Cordis contributor. Both root Services remain independently installable. */
@@ -319,7 +407,13 @@ const SecurityAssuranceControlPlaneProvider = {
     const invocation = resolveTrustedInvocation(ctx.securityAssurance, {
       kind: 'control-plane',
       principalId: 'engineering-control-plane-assurance-provider',
-      permissions: ['repository:read', 'assessment:start', 'assessment:read', 'assessment:resume'],
+      permissions: [
+        'repository:read',
+        'assessment:start',
+        'assessment:read',
+        'assessment:resume',
+        'assessment:cancel',
+      ],
     })
     return ctx.engineeringControlPlane.registerAssuranceProvider(
       SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,

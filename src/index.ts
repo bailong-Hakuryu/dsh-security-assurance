@@ -60,6 +60,10 @@ import {
   RESOLVE_TRUSTED_INVOCATION,
   SecurityAuthorityResolver,
 } from './internal/authority.ts'
+import {
+  controlPlaneAssessmentIdentitySchema,
+  LOOKUP_CONTROL_PLANE_ASSESSMENT,
+} from './internal/control-plane-assessment.ts'
 import type { TrustedCallerChannel } from './internal/authority.ts'
 import { deepFreeze } from './internal/freeze.ts'
 import { publicAssessmentSnapshot } from './internal/assessment-record.ts'
@@ -227,6 +231,30 @@ export class SecurityAssuranceService extends Service {
       value: (channel: TrustedCallerChannel) => this.authorityResolver.resolve(channel),
     })
     this.ready = this.initialize(config)
+    Object.defineProperty(this, LOOKUP_CONTROL_PLANE_ASSESSMENT, {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: async (invocation: SecurityInvocation, identity: unknown) => {
+        const authority = this.authorityResolver.authority(invocation)
+        if (
+          authority?.kind !== 'control-plane'
+          || !authority.permissions.has('assessment:read')
+        ) throw new TypeError('control-plane Assessment lookup is unauthorized')
+        const parsed = controlPlaneAssessmentIdentitySchema.safeParse(identity)
+        if (!parsed.success) throw new TypeError('control-plane Assessment identity is invalid')
+        const persistence = await this.ready
+        if (persistence === undefined || this.disposed) {
+          throw new SecurityPersistenceError('corrupt_database', 'Assessment store is unavailable')
+        }
+        return persistence.findAssessmentStartIdentity({
+          principalId: authority.principalId,
+          authorityKind: authority.kind,
+          idempotencyKey: parsed.data.idempotencyKey,
+          repositoryId: parsed.data.repositoryId,
+        })
+      },
+    })
     void this.ready.catch(() => {})
     void this.ready.then(persistence => {
       if (persistence === undefined || this.disposed) return
