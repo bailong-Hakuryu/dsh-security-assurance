@@ -173,7 +173,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
     }
   })
 
-  it('seals FAILED when eligible Evidence proves a blocking lifecycle script despite another manifest Coverage Gap', async () => {
+  it('seals and lists a blocking lifecycle Finding despite another manifest Coverage Gap', async () => {
     const repository = await nodeRepositoryFixture({
       name: 'unsafe-node-fixture',
       version: '1.0.0',
@@ -278,6 +278,29 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
       })
       expect(JSON.stringify(submission)).not.toContain('node setup.js')
       expect(JSON.stringify(submission)).not.toContain(repository)
+      await expect(ctx.securityAssurance.listFindings(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+        limit: 10,
+      })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          findings: [{
+            recordKind: 'FINDING',
+            validationState: 'VALIDATED',
+            validationContractId: 'dsh-node-package-install-lifecycle-validation-v1',
+            weaknessClassification: {
+              primary: 'DSH-NODE-POLICY-001',
+              secondary: [],
+            },
+            technicalSeverity: 'MEDIUM',
+            evidenceConfidence: 'HIGH',
+            policySignificance: 'BLOCKING',
+            hasProtectedDetail: true,
+          }],
+          nextCursor: null,
+        },
+      })
     } finally {
       await fiber.dispose()
     }

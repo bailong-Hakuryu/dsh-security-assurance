@@ -11,6 +11,7 @@ import {
   getBundleManifestRequestSchema,
   getRepositoryRequestSchema,
   getHealthRequestSchema,
+  listFindingsRequestSchema,
   listRepositoriesRequestSchema,
   repositoryIdSchema,
   registerRepositoryRequestSchema,
@@ -42,6 +43,8 @@ import type {
   GetHealthRequest,
   GetRepositoryRequest,
   InvocationOptions,
+  FindingListPageV1,
+  ListFindingsRequest,
   ListRepositoriesRequest,
   PublicSecurityErrorCode,
   RegisterRepositoryRequest,
@@ -79,6 +82,7 @@ import {
 import type { TrustedCallerChannel } from './internal/authority.ts'
 import { AnalyzerRegistry } from './internal/analyzer-registry.ts'
 import { deepFreeze } from './internal/freeze.ts'
+import { FindingQueryCursorError, FindingQueryModule } from './internal/finding-query.ts'
 import { publicAssessmentSnapshot } from './internal/assessment-record.ts'
 import { analyzeNodePackageInstallLifecycle } from './internal/builtin-node-package-lifecycle-analyzer.ts'
 import {
@@ -228,6 +232,7 @@ export interface Config {
 export class SecurityAssuranceService extends Service {
   private readonly authorityResolver = new SecurityAuthorityResolver()
   private readonly analyzerRegistry = new AnalyzerRegistry()
+  private readonly findingQueries = new FindingQueryModule()
   private readonly ready: Promise<SecurityPersistence | undefined>
   private readonly securityRoot: string
   private readonly runningAssessments = new Map<AssessmentId, {
@@ -786,6 +791,46 @@ export class SecurityAssuranceService extends Service {
       return deepFreeze({ ok: true, value: publicAssessmentSnapshot(record) })
     } catch (error) {
       return this.assessmentReadFailure(error)
+    }
+  }
+
+  /** List bounded redacted Finding Summaries from one verified sealed Assessment. */
+  async listFindings(
+    invocation: SecurityInvocation,
+    request: ListFindingsRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<FindingListPageV1>> {
+    try {
+      const authority = this.authorityResolver.authority(invocation)
+      if (authority === undefined || !authority.permissions.has('assessment:read')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to read Findings.')
+      }
+      const interrupted = interruption<FindingListPageV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = listFindingsRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match listFindings schema version 1.')
+      }
+      const sealed = await this.verifiedSealedRecord(parsed.data.assessmentId)
+      if (sealed === undefined) {
+        const persistence = await this.ready
+        if (persistence?.getAssessmentRecord(parsed.data.assessmentId) === undefined) {
+          return failure('NOT_FOUND', 'The Assessment does not exist.')
+        }
+        return failure('CONFLICT', 'The Assessment has not produced sealed Finding records.')
+      }
+      return deepFreeze({
+        ok: true,
+        value: this.findingQueries.list(sealed.submission, parsed.data, {
+          kind: authority.kind,
+          principalId: authority.principalId,
+        }),
+      })
+    } catch (error) {
+      if (error instanceof FindingQueryCursorError) {
+        return failure('INVALID_REQUEST', 'The Finding query cursor is invalid for this request.')
+      }
+      return this.assessmentReadFailure(error, true)
     }
   }
 

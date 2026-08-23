@@ -584,6 +584,117 @@ export const getAssessmentRequestSchema: z.ZodType<GetAssessmentRequest> = z.str
   assessmentId: assessmentIdSchema,
 })
 
+export const findingValidationStateSchema = z.enum(['VALIDATED', 'REJECTED', 'UNRESOLVED'])
+export type FindingValidationState = z.infer<typeof findingValidationStateSchema>
+
+export const findingRecordKindSchema = z.enum([
+  'FINDING',
+  'REJECTED_CANDIDATE',
+  'UNRESOLVED_CANDIDATE',
+])
+export type FindingRecordKind = z.infer<typeof findingRecordKindSchema>
+
+export const technicalSeveritySchema = z.enum([
+  'CRITICAL',
+  'HIGH',
+  'MEDIUM',
+  'LOW',
+  'INFORMATIONAL',
+])
+export type TechnicalSeverity = z.infer<typeof technicalSeveritySchema>
+
+export const evidenceConfidenceSchema = z.enum(['HIGH', 'MEDIUM', 'LOW'])
+export type EvidenceConfidence = z.infer<typeof evidenceConfidenceSchema>
+
+export const policySignificanceSchema = z.enum(['BLOCKING', 'NON_BLOCKING', 'ADVISORY'])
+export type PolicySignificance = z.infer<typeof policySignificanceSchema>
+
+export interface FindingWeaknessClassificationV1 {
+  readonly primary: string
+  readonly secondary: readonly string[]
+}
+
+export const findingWeaknessClassificationV1Schema: z.ZodType<FindingWeaknessClassificationV1> =
+  z.strictObject({
+    primary: boundedBindingId,
+    secondary: z.array(boundedBindingId).max(16),
+  })
+
+export interface ListFindingsRequest {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly limit: number
+  readonly cursor?: string | undefined
+  readonly validationStates?: readonly FindingValidationState[] | undefined
+}
+
+export const listFindingsRequestSchema: z.ZodType<ListFindingsRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  limit: z.number().int().min(1).max(100),
+  cursor: z.string().min(1).max(2048).regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/).optional(),
+  validationStates: z.array(findingValidationStateSchema)
+    .min(1)
+    .max(3)
+    .refine(states => new Set(states).size === states.length, {
+      message: 'validationStates must be unique',
+    })
+    .optional(),
+})
+
+export interface FindingSummaryV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly recordKind: FindingRecordKind
+  readonly recordId: string
+  readonly candidateId: string
+  readonly recordRevision: number
+  readonly validationState: FindingValidationState
+  readonly validationContractId: string | null
+  readonly weaknessClassification: FindingWeaknessClassificationV1
+  readonly technicalSeverity: TechnicalSeverity | null
+  readonly evidenceConfidence: EvidenceConfidence | null
+  readonly policySignificance: PolicySignificance | null
+  readonly hasProtectedDetail: boolean
+}
+
+const candidateIdSchema = z.string().regex(/^candidate-[0-9a-f]{64}$/)
+const findingRecordIdSchema = z.string().regex(/^(?:finding-[0-9a-f]{64}|candidate-[0-9a-f]{64})$/)
+
+export const findingSummaryV1Schema: z.ZodType<FindingSummaryV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  recordKind: findingRecordKindSchema,
+  recordId: findingRecordIdSchema,
+  candidateId: candidateIdSchema,
+  recordRevision: z.number().int().positive(),
+  validationState: findingValidationStateSchema,
+  validationContractId: boundedBindingId.nullable(),
+  weaknessClassification: findingWeaknessClassificationV1Schema,
+  technicalSeverity: technicalSeveritySchema.nullable(),
+  evidenceConfidence: evidenceConfidenceSchema.nullable(),
+  policySignificance: policySignificanceSchema.nullable(),
+  hasProtectedDetail: z.boolean(),
+})
+
+export interface FindingListPageV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly findings: readonly FindingSummaryV1[]
+  readonly nextCursor: string | null
+}
+
+export const findingListPageV1Schema: z.ZodType<FindingListPageV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  findings: z.array(findingSummaryV1Schema).max(100),
+  nextCursor: z.string().min(1).max(2048).nullable(),
+})
+
 export interface WaitForAssessmentRevisionRequest {
   readonly schemaVersion: 1
   readonly assessmentId: AssessmentId
@@ -859,6 +970,12 @@ export const securityAssuranceSubmissionV1Schema: z.ZodType<SecurityAssuranceSub
 export const assessmentSnapshotResultSchema: z.ZodType<SecurityResult<AssessmentSnapshotV1>> =
   z.discriminatedUnion('ok', [
     z.strictObject({ ok: z.literal(true), value: assessmentSnapshotV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
+
+export const findingListResultSchema: z.ZodType<SecurityResult<FindingListPageV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: findingListPageV1Schema }),
     z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
   ])
 

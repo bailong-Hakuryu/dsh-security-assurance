@@ -139,6 +139,12 @@ const contracts = await import('dsh-security-assurance/contracts')
 if ('SecurityAuthorityResolver' in contracts || 'resolveTrustedInvocation' in contracts) {
   throw new Error('contracts export leaked authority minting')
 }
+if (
+  typeof contracts.listFindingsRequestSchema?.parse !== 'function'
+  || typeof contracts.findingListResultSchema?.parse !== 'function'
+) {
+  throw new Error('packed Finding query contracts are incomplete')
+}
 const analyzer = await import('dsh-security-assurance/analyzer')
 if (
   typeof analyzer.parseAnalyzerDescriptorV1 !== 'function'

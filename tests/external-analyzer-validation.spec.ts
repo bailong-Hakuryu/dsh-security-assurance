@@ -42,11 +42,18 @@ async function validationRepositoryFixture(
   return root
 }
 
-interface ReferenceValidationScenario {
+interface ReferenceValidationScenario<Observation = undefined> {
   readonly id: string
   readonly referenceControl: 'VIOLATED' | 'SATISFIED'
   readonly observedValue: 'VIOLATED' | 'SATISFIED'
   readonly candidateHex: string
+  readonly additionalCandidateHexes?: readonly string[]
+  readonly additionalObservedValues?: readonly ('VIOLATED' | 'SATISFIED')[]
+  readonly inspect?: (
+    service: SecurityAssuranceService,
+    invocation: SecurityInvocation,
+    assessmentId: AssessmentId,
+  ) => Promise<Observation>
 }
 
 async function waitUntilSealed(
@@ -72,7 +79,9 @@ async function waitUntilSealed(
   throw new Error('Assessment did not reach SEALED')
 }
 
-async function runReferenceValidationScenario(scenario: ReferenceValidationScenario) {
+async function runReferenceValidationScenario<Observation = undefined>(
+  scenario: ReferenceValidationScenario<Observation>,
+) {
   const repository = await validationRepositoryFixture(scenario.referenceControl)
   const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-external-validation-home-'))
   temporaryRoots.push(dshHome)
@@ -139,7 +148,16 @@ async function runReferenceValidationScenario(scenario: ReferenceValidationScena
       value: 'b3a8db649fdeb8269abb8e8624b8df66ae68c7be05c09bda029df0d0e6a57357',
     },
   }
-  const candidateId = `candidate-${scenario.candidateHex.repeat(64)}`
+  const candidateIds = [scenario.candidateHex, ...(scenario.additionalCandidateHexes ?? [])]
+    .map(value => `candidate-${value.repeat(64)}`)
+  const additionalObservedValues = scenario.additionalObservedValues
+    ?? (scenario.additionalCandidateHexes ?? []).map(() => scenario.observedValue)
+  const observedValues = [scenario.observedValue, ...additionalObservedValues]
+  if (observedValues.length !== candidateIds.length) {
+    throw new Error('Reference validation scenario Evidence count does not match its Candidates')
+  }
+  const candidateId = candidateIds[0]
+  if (candidateId === undefined) throw new Error('Reference validation scenario has no Candidate')
   const disposeAnalyzer = ctx.securityAssurance.registerAnalyzer(
     descriptor,
     normalizedDescriptor => ({
@@ -167,7 +185,7 @@ async function runReferenceValidationScenario(scenario: ReferenceValidationScena
             completion: 'COMPLETE',
             evidenceArtifactId: 'reference-validation-evidence',
           }],
-          candidateFindings: [{
+          candidateFindings: candidateIds.map((candidateId, index) => ({
             schemaVersion: 1,
             candidateId,
             weaknessClassification: {
@@ -178,10 +196,14 @@ async function runReferenceValidationScenario(scenario: ReferenceValidationScena
             affectedControlId: 'dsh/conformance/reference-control',
             securityClaim: 'The conformance reference security control is explicitly violated.',
             sourceAnchor,
-            evidenceArtifactIds: ['reference-validation-evidence'],
-          }],
-          evidence: [{
-            artifactId: 'reference-validation-evidence',
+            evidenceArtifactIds: [index === 0
+              ? 'reference-validation-evidence'
+              : `reference-validation-evidence-${index + 1}`],
+          })),
+          evidence: candidateIds.map((candidateId, index) => ({
+            artifactId: index === 0
+              ? 'reference-validation-evidence'
+              : `reference-validation-evidence-${index + 1}`,
             schemaId: 'fixture/reference-validation-evidence',
             mediaType: 'application/json',
             value: securitySubmissionJsonV1Schema.parse({
@@ -189,9 +211,9 @@ async function runReferenceValidationScenario(scenario: ReferenceValidationScena
               candidateId,
               subjectDigest: input.subject.digest,
               sourceAnchor,
-              observedValue: scenario.observedValue,
+              observedValue: observedValues[index],
             }),
-          }],
+          })),
           diagnostics: [],
           resourceUse: { filesRead: 1, bytesRead: manifest.text.length },
         }
@@ -244,7 +266,10 @@ async function runReferenceValidationScenario(scenario: ReferenceValidationScena
       assessmentId: started.value.assessmentId,
     })
     if (!submission.ok) throw new Error(`submission failed: ${submission.error.code}`)
-    return { assessment: assessment.value, candidateId, submission: submission.value }
+    const observation = scenario.inspect === undefined
+      ? undefined
+      : await scenario.inspect(ctx.securityAssurance, invocation, started.value.assessmentId)
+    return { assessment: assessment.value, candidateId, observation, submission: submission.value }
   } finally {
     disposeQualification()
     disposeAnalyzer()
@@ -344,6 +369,202 @@ describe('external Analyzer Candidate validation', () => {
     })
   })
 
+  it('lists a redacted VALIDATED Finding Summary from a sealed Assessment', async () => {
+    const { assessment, candidateId, observation } = await runReferenceValidationScenario({
+      id: 'list-validated-finding',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: 'a',
+      inspect: (service, invocation, assessmentId) => service.listFindings(invocation, {
+        schemaVersion: 1,
+        assessmentId,
+        limit: 10,
+      }),
+    })
+
+    expect(observation).toMatchObject({
+      ok: true,
+      value: {
+        schemaVersion: 1,
+        assessmentId: assessment.assessmentId,
+        assessmentRevision: assessment.assessmentRevision,
+        findings: [{
+          schemaVersion: 1,
+          assessmentId: assessment.assessmentId,
+          assessmentRevision: assessment.assessmentRevision,
+          recordKind: 'FINDING',
+          recordId: expect.stringMatching(/^finding-[0-9a-f]{64}$/),
+          candidateId,
+          recordRevision: 1,
+          validationState: 'VALIDATED',
+          validationContractId: 'dsh/conformance/reference-control-validation-v1',
+          weaknessClassification: {
+            primary: 'dsh/conformance/reference-control-violation',
+            secondary: [],
+          },
+          technicalSeverity: 'HIGH',
+          evidenceConfidence: 'HIGH',
+          policySignificance: 'BLOCKING',
+          hasProtectedDetail: true,
+        }],
+        nextCursor: null,
+      },
+    })
+    expect(observation).not.toHaveProperty('value.findings.0.sourceAnchor')
+    expect(observation).not.toHaveProperty('value.findings.0.securityClaim')
+    expect(observation).not.toHaveProperty('value.findings.0.evidence')
+  })
+
+  it('paginates Finding Summaries with a stable opaque cursor', async () => {
+    const firstCandidateId = `candidate-${'1'.repeat(64)}`
+    const secondCandidateId = `candidate-${'2'.repeat(64)}`
+    const { observation } = await runReferenceValidationScenario({
+      id: 'paginate-validated-findings',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '1',
+      additionalCandidateHexes: ['2'],
+      inspect: async (service, invocation, assessmentId) => {
+        const first = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 1,
+        })
+        if (!first.ok || first.value.nextCursor === null) return { first, second: null }
+        const second = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 1,
+          cursor: first.value.nextCursor,
+        })
+        return { first, second }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      first: {
+        ok: true,
+        value: {
+          findings: [{ candidateId: firstCandidateId }],
+          nextCursor: expect.stringMatching(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/),
+        },
+      },
+      second: {
+        ok: true,
+        value: {
+          findings: [{ candidateId: secondCandidateId }],
+          nextCursor: null,
+        },
+      },
+    })
+  })
+
+  it('filters Finding Summaries by Validation state before pagination', async () => {
+    const unresolvedCandidateId = `candidate-${'6'.repeat(64)}`
+    const { observation } = await runReferenceValidationScenario({
+      id: 'filter-finding-validation-state',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '5',
+      additionalCandidateHexes: ['6'],
+      additionalObservedValues: ['SATISFIED'],
+      inspect: (service, invocation, assessmentId) => service.listFindings(invocation, {
+        schemaVersion: 1,
+        assessmentId,
+        limit: 10,
+        validationStates: ['UNRESOLVED'],
+      }),
+    })
+
+    expect(observation).toMatchObject({
+      ok: true,
+      value: {
+        findings: [{
+          candidateId: unresolvedCandidateId,
+          recordKind: 'UNRESOLVED_CANDIDATE',
+          validationState: 'UNRESOLVED',
+        }],
+        nextCursor: null,
+      },
+    })
+  })
+
+  it('rejects a Finding cursor when its Validation filter changes', async () => {
+    const { observation } = await runReferenceValidationScenario({
+      id: 'filter-bound-finding-cursor',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '7',
+      additionalCandidateHexes: ['8', '9'],
+      additionalObservedValues: ['SATISFIED', 'SATISFIED'],
+      inspect: async (service, invocation, assessmentId) => {
+        const first = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 1,
+          validationStates: ['VALIDATED', 'UNRESOLVED'],
+        })
+        if (!first.ok || first.value.nextCursor === null) return { first, replay: null }
+        const replay = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 1,
+          cursor: first.value.nextCursor,
+          validationStates: ['VALIDATED'],
+        })
+        return { first, replay }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      first: { ok: true, value: { nextCursor: expect.any(String) } },
+      replay: {
+        ok: false,
+        error: {
+          code: 'INVALID_REQUEST',
+          retryable: false,
+        },
+      },
+    })
+  })
+
+  it('rejects a Finding cursor replayed by another Security Principal', async () => {
+    const { observation } = await runReferenceValidationScenario({
+      id: 'principal-bound-finding-cursor',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '3',
+      additionalCandidateHexes: ['4'],
+      inspect: async (service, invocation, assessmentId) => {
+        const first = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 1,
+        })
+        if (!first.ok || first.value.nextCursor === null) return { first, replay: null }
+        const otherPrincipal = referenceHostInvocation(service, 'other-reference-host-operator')
+        const replay = await service.listFindings(otherPrincipal, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 1,
+          cursor: first.value.nextCursor,
+        })
+        return { first, replay }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      first: { ok: true, value: { nextCursor: expect.any(String) } },
+      replay: {
+        ok: false,
+        error: {
+          code: 'INVALID_REQUEST',
+          retryable: false,
+        },
+      },
+    })
+  })
+
   it('rejects a Candidate only when eligible Counter-Evidence proves the rejection condition', async () => {
     const { assessment, candidateId, submission } = await runReferenceValidationScenario({
       id: 'counter-evidence',
@@ -386,6 +607,49 @@ describe('external Analyzer Candidate validation', () => {
     })
   })
 
+  it('lists a REJECTED Candidate without presenting it as a Security Finding', async () => {
+    const { assessment, candidateId, observation } = await runReferenceValidationScenario({
+      id: 'list-rejected-candidate',
+      referenceControl: 'SATISFIED',
+      observedValue: 'SATISFIED',
+      candidateHex: 'b',
+      inspect: (service, invocation, assessmentId) => service.listFindings(invocation, {
+        schemaVersion: 1,
+        assessmentId,
+        limit: 10,
+      }),
+    })
+
+    expect(observation).toMatchObject({
+      ok: true,
+      value: {
+        schemaVersion: 1,
+        assessmentId: assessment.assessmentId,
+        assessmentRevision: assessment.assessmentRevision,
+        findings: [{
+          schemaVersion: 1,
+          assessmentId: assessment.assessmentId,
+          assessmentRevision: assessment.assessmentRevision,
+          recordKind: 'REJECTED_CANDIDATE',
+          recordId: candidateId,
+          candidateId,
+          recordRevision: 1,
+          validationState: 'REJECTED',
+          validationContractId: 'dsh/conformance/reference-control-validation-v1',
+          weaknessClassification: {
+            primary: 'dsh/conformance/reference-control-violation',
+            secondary: [],
+          },
+          technicalSeverity: null,
+          evidenceConfidence: null,
+          policySignificance: null,
+          hasProtectedDetail: true,
+        }],
+        nextCursor: null,
+      },
+    })
+  })
+
   it('keeps a Candidate unresolved when proposed Counter-Evidence contradicts the Subject', async () => {
     const { assessment, candidateId, submission } = await runReferenceValidationScenario({
       id: 'contradictory-counter-evidence',
@@ -423,6 +687,49 @@ describe('external Analyzer Candidate validation', () => {
             }),
           }),
         ]),
+      },
+    })
+  })
+
+  it('lists an UNRESOLVED Candidate without assigning severity or Policy Significance', async () => {
+    const { assessment, candidateId, observation } = await runReferenceValidationScenario({
+      id: 'list-unresolved-candidate',
+      referenceControl: 'VIOLATED',
+      observedValue: 'SATISFIED',
+      candidateHex: 'd',
+      inspect: (service, invocation, assessmentId) => service.listFindings(invocation, {
+        schemaVersion: 1,
+        assessmentId,
+        limit: 10,
+      }),
+    })
+
+    expect(observation).toMatchObject({
+      ok: true,
+      value: {
+        schemaVersion: 1,
+        assessmentId: assessment.assessmentId,
+        assessmentRevision: assessment.assessmentRevision,
+        findings: [{
+          schemaVersion: 1,
+          assessmentId: assessment.assessmentId,
+          assessmentRevision: assessment.assessmentRevision,
+          recordKind: 'UNRESOLVED_CANDIDATE',
+          recordId: candidateId,
+          candidateId,
+          recordRevision: 1,
+          validationState: 'UNRESOLVED',
+          validationContractId: 'dsh/conformance/reference-control-validation-v1',
+          weaknessClassification: {
+            primary: 'dsh/conformance/reference-control-violation',
+            secondary: [],
+          },
+          technicalSeverity: null,
+          evidenceConfidence: null,
+          policySignificance: null,
+          hasProtectedDetail: true,
+        }],
+        nextCursor: null,
       },
     })
   })

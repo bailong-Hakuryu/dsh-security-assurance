@@ -13,7 +13,7 @@ This repository is under active vertical-slice development, not at the
 - real Cordis registration at `ctx.securityAssurance`;
 - an opaque, runtime-verified Security Invocation boundary;
 - authorized Runtime Health, Repository Registry, Assessment start/query/wait,
-  Bundle Manifest, and Assurance Submission operations;
+  Finding Summary, Bundle Manifest, and Assurance Submission operations;
 - versioned Zod-validated public contracts;
 - one `SecurityResult<T>` success/failure envelope;
 - redacted authorization, validation, cancellation, deadline, and internal
@@ -68,6 +68,12 @@ This repository is under active vertical-slice development, not at the
   Counter-Evidence proving `SATISFIED` produces `REJECTED` without a Finding,
   and contradictory or otherwise ineligible Evidence produces `UNRESOLVED`
   with an explicit Proof Gap and `INDETERMINATE` Verdict;
+- versioned `listFindings` projections that keep validated Findings, Rejected
+  Candidates, and Unresolved Candidates visibly distinct while omitting Source
+  Anchors, Security Claims, and Evidence payloads; Validation-state filtering
+  occurs before bounded pagination, and HMAC-protected cursors bind the exact
+  Assessment, Repository, sealed revision, page size, filter, and Security
+  Principal;
 - blocking-Finding precedence proving a qualified validated Reference Candidate
   seals as `FAILED` with complete Coverage without allowing the Analyzer to set
   Finding, Severity, Significance, or Verdict directly;
@@ -139,6 +145,7 @@ sole business Interface at `ctx.securityAssurance`. Implemented operations are:
 - `resumeAssessment`
 - `cancelAssessment`
 - `getAssessment`
+- `listFindings`
 - `waitForAssessmentRevision`
 - `getBundleManifest`
 - `getAssuranceSubmission`
@@ -153,6 +160,11 @@ persisted.
 
 Repository roots remain private. Query Snapshots and command Receipts are
 versioned, JSON-safe, recursively immutable, bounded, and path-free.
+
+`listFindings` is available only after the Assessment is sealed. It returns no
+total count and no Source or Evidence content. Its process-local cursor key is
+rotated when the Service restarts, so clients must restart pagination from the
+first page after reconnect instead of treating cursors as durable records.
 
 `startAssessment` returns the durable revision-1 `CREATED` Receipt; it does not
 transfer ownership of the continuing run to the caller. The Engine persists
