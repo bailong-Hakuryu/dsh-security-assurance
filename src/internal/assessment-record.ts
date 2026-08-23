@@ -15,6 +15,7 @@ import {
   assessmentProfileIdSchema,
   assessmentTargetSelectorV1Schema,
   assessmentSealV1Schema,
+  assessmentOperatorReasonV1Schema,
 } from '../contracts.ts'
 import type {
   AssessmentSnapshotV1,
@@ -65,6 +66,17 @@ export const internalAssessmentRecordV1Schema = z.strictObject({
   submission: securityAssuranceSubmissionV1Schema.nullable(),
   publicationDigest: digestEnvelopeV1Schema.nullable(),
   failureCode: z.string().nullable(),
+  operatorActions: z.array(z.strictObject({
+    operation: z.enum(['resume_assessment', 'cancel_assessment']),
+    principalId: z.string().min(1).max(128),
+    authorityKind: z.string().min(1).max(64),
+    reason: assessmentOperatorReasonV1Schema,
+    recordedAt: z.iso.datetime({ offset: true }),
+  })).max(256).default([]),
+  pendingCancellation: z.strictObject({
+    requestRevision: z.number().int().positive(),
+    requestedAt: z.iso.datetime({ offset: true }),
+  }).nullable().default(null),
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
 })

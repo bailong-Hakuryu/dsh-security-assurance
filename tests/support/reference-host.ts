@@ -12,6 +12,8 @@ export function referenceHostInvocation(service: SecurityAssuranceService): Secu
       'repository:admin',
       'assessment:start',
       'assessment:read',
+      'assessment:resume',
+      'assessment:cancel',
     ],
   })
 }

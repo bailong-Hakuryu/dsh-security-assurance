@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -23,7 +23,7 @@ afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
 
-async function nodeRepositoryFixture(packageJson: unknown): Promise<string> {
+async function nodeRepositoryFixture(packageJson: unknown, extraPackages = 0): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-security-control-plane-repo-'))
   temporaryRoots.push(root)
   await run('git', ['init', '-b', 'main'], { cwd: root })
@@ -31,6 +31,14 @@ async function nodeRepositoryFixture(packageJson: unknown): Promise<string> {
   await run('git', ['config', 'user.name', 'Fixture'], { cwd: root })
   await writeFile(join(root, 'package.json'), JSON.stringify(packageJson, null, 2) + '\n', 'utf8')
   await writeFile(join(root, 'index.js'), 'export const answer = 42\n', 'utf8')
+  await Promise.all(Array.from({ length: extraPackages }, async (_value, index) => {
+    const directory = join(root, 'fixtures', `package-${index}`)
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'package.json'), JSON.stringify({
+      name: `recovery-fixture-${index}`,
+      version: '1.0.0',
+    }), 'utf8')
+  }))
   await run('git', ['add', '.'], { cwd: root })
   await run('git', ['commit', '-m', 'safe node fixture'], { cwd: root })
   return root
@@ -96,6 +104,72 @@ async function waitForTerminalMission(ctx: Context, agent: Agent, missionId: str
     last = await ctx.engineeringControlPlane.status(agent, missionId, new AbortController().signal)
   }
   return last
+}
+
+async function waitForProviderInvocation(
+  ctx: Context,
+  agent: Agent,
+  missionId: string,
+  states: readonly string[],
+) {
+  const deadline = Date.now() + 15_000
+  let last = await ctx.engineeringControlPlane.status(agent, missionId, new AbortController().signal)
+  while (!states.includes(last.assuranceProviderInvocations?.[0]?.state ?? 'missing')) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Provider invocation did not reach ${states.join('/')} (last: ${last.assuranceProviderInvocations?.[0]?.state ?? 'missing'})`,
+      )
+    }
+    await new Promise(resolve => setTimeout(resolve, 10))
+    last = await ctx.engineeringControlPlane.status(agent, missionId, new AbortController().signal)
+  }
+  return last
+}
+
+async function waitForApprovedMission(ctx: Context, agent: Agent, missionId: string) {
+  const deadline = Date.now() + 20_000
+  let last = await ctx.engineeringControlPlane.status(agent, missionId, new AbortController().signal)
+  while (last.status !== 'APPROVED') {
+    if (last.status === 'REWORK_REQUIRED' || last.status === 'CANCELLED') return last
+    if (Date.now() >= deadline) throw new Error(`Mission did not approve (last status: ${last.status})`)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    last = await ctx.engineeringControlPlane.status(agent, missionId, new AbortController().signal)
+  }
+  return last
+}
+
+function controlPlaneConfig(repository: string, dshHome: string, repositoryId: string) {
+  const notApplicable = { mode: 'not_applicable' as const, reason: 'Not required by this fixture.' }
+  return {
+    dshHome,
+    subagentProvider: 'spawn' as const,
+    maxSubagentDepth: 1,
+    rolePolicies: {
+      planner: { allowTools: [], denyTools: [] },
+      developer: { allowTools: [], denyTools: [] },
+      tester: { allowTools: [], denyTools: [] },
+      reviewer: { allowTools: [], denyTools: [] },
+    },
+    repositories: [{
+      root: repository,
+      verificationProfile: 'dual-plugin-fixture',
+      assuranceProviders: [{
+        providerId: SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR.providerId,
+        providerVersion: SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR.providerVersion,
+        activation: 'required' as const,
+        configuration: { repositoryId },
+      }],
+    }],
+    verificationProfiles: [{
+      name: 'dual-plugin-fixture',
+      categories: {
+        functional: notApplicable,
+        negative: notApplicable,
+        regression: notApplicable,
+        security: notApplicable,
+      },
+    }],
+  }
 }
 
 describe('Security Assurance Control Plane Provider', () => {
@@ -275,4 +349,128 @@ describe('Security Assurance Control Plane Provider', () => {
       await subprocessFiber.dispose()
     }
   })
+
+  it('reconciles one begun invocation across both plugin restarts only after explicit Mission resume', async () => {
+    const repository = await nodeRepositoryFixture({
+      name: 'safe-recovery-control-plane-fixture',
+      version: '1.0.0',
+      type: 'module',
+    }, 250)
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-control-plane-recovery-home-'))
+    temporaryRoots.push(dshHome)
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+    const agent = {
+      id: 'agent-security-control-plane-recovery-fixture',
+      session: { header: { cwd: repository } },
+    } as unknown as Agent
+    const missionRequest = {
+      idempotencyKey: 'security-control-plane-provider:recovery:1',
+      objective: 'Recover the exact Security Assessment after both plugin hosts restart',
+    }
+
+    const firstContext = new Context()
+    const firstSubprocessFiber = await firstContext.plugin(LocalSubprocessRuntime)
+    const firstSubagentFiber = await firstContext.plugin(SubagentRuntime)
+    const disposeFirstScriptedProvider = registerScriptedEngineeringProvider(firstContext)
+    const firstSecurityFiber = await firstContext.plugin(SecurityAssuranceService, { dshHome })
+    await firstContext.securityAssurance.whenReady()
+    const firstInvocation = referenceHostInvocation(firstContext.securityAssurance)
+    const registered = await firstContext.securityAssurance.registerRepository(firstInvocation, {
+      schemaVersion: 1,
+      idempotencyKey: 'control-plane-recovery-register-1',
+      root: repository,
+      displayName: 'Control Plane recovery fixture',
+      bindings: {
+        policyId: 'security/node-package-lifecycle',
+        assessmentProfileId: 'security/standard',
+        evidenceProtectionId: 'evidence/local-protected',
+        dataEgressPolicyId: 'egress/deny-by-default',
+        platform,
+        deliveryDestinationIds: [],
+      },
+    })
+    if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+    const firstControlPlaneFiber = await firstContext.plugin(
+      EngineeringControlPlane,
+      controlPlaneConfig(repository, dshHome, registered.value.repositoryId),
+    )
+    await firstContext.engineeringControlPlane.whenReady()
+    const firstAdapterFiber = await firstContext.plugin(SecurityAssuranceControlPlaneProvider)
+
+    let missionId: string
+    try {
+      const receipt = await firstContext.engineeringControlPlane.start(
+        agent,
+        missionRequest,
+        new AbortController().signal,
+      )
+      missionId = receipt.missionId
+      const begun = await waitForProviderInvocation(firstContext, agent, missionId, ['begun'])
+      expect(begun.assuranceProviderInvocations).toEqual([expect.objectContaining({
+        descriptor: SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
+        state: 'begun',
+      })])
+    } finally {
+      await firstAdapterFiber.dispose()
+      await firstControlPlaneFiber.dispose()
+      await firstSecurityFiber.dispose()
+      disposeFirstScriptedProvider()
+      await firstSubagentFiber.dispose()
+      await firstSubprocessFiber.dispose()
+    }
+
+    const restartedContext = new Context()
+    const restartedSubprocessFiber = await restartedContext.plugin(LocalSubprocessRuntime)
+    const restartedSubagentFiber = await restartedContext.plugin(SubagentRuntime)
+    const disposeRestartedScriptedProvider = registerScriptedEngineeringProvider(restartedContext)
+    const restartedSecurityFiber = await restartedContext.plugin(SecurityAssuranceService, { dshHome })
+    await restartedContext.securityAssurance.whenReady()
+    const restartedControlPlaneFiber = await restartedContext.plugin(
+      EngineeringControlPlane,
+      controlPlaneConfig(repository, dshHome, registered.value.repositoryId),
+    )
+    await restartedContext.engineeringControlPlane.whenReady()
+    const restartedAdapterFiber = await restartedContext.plugin(SecurityAssuranceControlPlaneProvider)
+
+    try {
+      const recovered = await restartedContext.engineeringControlPlane.status(
+        agent,
+        missionId!,
+        new AbortController().signal,
+      )
+      expect(recovered).toMatchObject({
+        status: 'BLOCKED',
+        blocked: { reason: { code: 'host_restarted' } },
+        assuranceProviderInvocations: [{ state: 'begun' }],
+      })
+
+      await restartedContext.engineeringControlPlane.resume(agent, {
+        missionId: missionId!,
+        expectedRevision: recovered.revision,
+        supplementalContext: 'Explicitly reconcile the exact Security Assessment and Provider invocation.',
+      }, new AbortController().signal)
+      const approved = await waitForApprovedMission(restartedContext, agent, missionId!)
+
+      expect(approved).toMatchObject({
+        status: 'APPROVED',
+        assuranceProviderInvocations: [{
+          state: 'settled',
+          outcome: { kind: 'sealed_submission', claimedOutcome: 'satisfied' },
+        }],
+        assuranceAssessments: [{ outcome: 'satisfied', reasonCodes: ['eligible_submission'] }],
+        assuranceResults: [{ outcome: 'satisfied' }],
+        gate: { kind: 'approved', reasons: [] },
+      })
+    } finally {
+      await restartedAdapterFiber.dispose()
+      await restartedControlPlaneFiber.dispose()
+      await restartedSecurityFiber.dispose()
+      disposeRestartedScriptedProvider()
+      await restartedSubagentFiber.dispose()
+      await restartedSubprocessFiber.dispose()
+    }
+  }, 30_000)
 })

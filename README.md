@@ -48,12 +48,16 @@ This repository is under active vertical-slice development, not at the
   security obligation still has no complete qualified Analyzer portfolio, it
   remains `INDETERMINATE`, never a fabricated success;
 - atomic persistence of Verdict, Assessment Seal, Bundle Manifest, and
-  self-contained Assurance Submission at terminal revision 3;
+  self-contained Assurance Submission at one terminal revision;
 - content-addressed private Bundle publication with verification on every
   official read;
 - fail-closed restart and integrity behavior: interrupted `RUNNING` work becomes
   `BLOCKED`, sealed work is not rerun, and modified publication bytes are not
   served;
+- explicit revision-bound, idempotent `resumeAssessment` and `cancelAssessment`
+  commands: resume admits a replacement execution without changing Subject or
+  Policy, while cancellation persists intent before quiescence and commits
+  `CANCELED` only afterward;
 - an optional `dsh-security-assurance/control-plane-provider` Cordis entry that
   registers exact Provider identity `dsh/security-assurance`, starts and waits
   for the same private Assessment Engine, and returns a Control Plane transport
@@ -82,6 +86,8 @@ sole business Interface at `ctx.securityAssurance`. Implemented operations are:
 - `getRepository`
 - `listRepositories`
 - `startAssessment`
+- `resumeAssessment`
+- `cancelAssessment`
 - `getAssessment`
 - `waitForAssessmentRevision`
 - `getBundleManifest`
@@ -97,6 +103,14 @@ only after all terminal records commit together as `SEALED`. The Bundle
 Manifest is a view. The Assurance Submission carries its required artifacts by
 value so the Control Plane Adapter does not need access to Security Assurance
 storage.
+
+Interrupted evaluation is never restarted during service initialization or by
+replaying `startAssessment`. An authorized caller must submit
+`resumeAssessment` against the exact `BLOCKED` revision with a bounded operator
+reason. `cancelAssessment` first returns the durable cancellation-request
+Receipt after the Service has quiesced local work and finalized the Assessment;
+that Receipt identifies the request revision and does not misrepresent it as
+the later terminal revision.
 
 ## Optional Control Plane integration
 
@@ -118,9 +132,12 @@ assuranceProviders:
 The Adapter receives no repository path, database, Evidence directory, Gate,
 or credentials. It resolves an internal `control-plane` Security Invocation,
 starts a Workspace Snapshot Assessment against that exact Repository ID,
-propagates cancellation while waiting, retrieves the verified sealed Security
-Submission, and embeds its canonical value plus source digest in the
-provider-neutral Control Plane Submission. The Control Plane copies and
+retrieves the verified sealed Security Submission, and embeds its canonical
+value plus source digest in the provider-neutral Control Plane Submission. If a
+durably begun Control Plane invocation is explicitly resumed after both hosts
+restart, the Adapter reuses the exact Assessment start identity, explicitly
+resumes that Assessment when it is `BLOCKED`, and returns the same sealed value
+through `recover()` without replaying Provider `assess()`. The Control Plane copies and
 revalidates that value and remains the sole owner of Mission Assurance Results
 and the Quality Gate. The two plugins never share SQLite files, writable
 Evidence paths, transactions, or Kernel objects.

@@ -5,6 +5,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import {
   disableRepositoryRequestSchema,
+  cancelAssessmentRequestSchema,
   getAssuranceSubmissionRequestSchema,
   getAssessmentRequestSchema,
   getBundleManifestRequestSchema,
@@ -12,6 +13,7 @@ import {
   getHealthRequestSchema,
   listRepositoriesRequestSchema,
   registerRepositoryRequestSchema,
+  resumeAssessmentRequestSchema,
   startAssessmentRequestSchema,
   updateRepositoryRequestSchema,
   REQUIRED_NODE_RANGE,
@@ -24,11 +26,14 @@ import {
 import type {
   AssessmentId,
   AssessmentReceiptV1,
+  AssessmentResumeReceiptV1,
+  AssessmentCancellationReceiptV1,
   AssessmentRevisionSignalV1,
   AssessmentSnapshotV1,
   AssessmentSubjectSourceV1,
   AssessmentTargetSelectorV1,
   BundleManifestV1,
+  CancelAssessmentRequest,
   DisableRepositoryRequest,
   GetAssuranceSubmissionRequest,
   GetAssessmentRequest,
@@ -39,6 +44,7 @@ import type {
   ListRepositoriesRequest,
   PublicSecurityErrorCode,
   RegisterRepositoryRequest,
+  ResumeAssessmentRequest,
   RepositoryCommandReceiptV1,
   RepositoryListSnapshotV1,
   RepositorySnapshotV1,
@@ -552,6 +558,109 @@ export class SecurityAssuranceService extends Service {
     }
   }
 
+  /** Explicitly admit a replacement execution for one exact BLOCKED Assessment revision. */
+  async resumeAssessment(
+    invocation: SecurityInvocation,
+    request: ResumeAssessmentRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<AssessmentResumeReceiptV1>> {
+    try {
+      const authority = this.authorityResolver.authority(invocation)
+      if (authority === undefined || !authority.permissions.has('assessment:resume')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to resume Assessments.')
+      }
+      const interrupted = interruption<AssessmentResumeReceiptV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = resumeAssessmentRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match resumeAssessment schema version 1.')
+      }
+      const persistence = await this.ready
+      if (persistence === undefined || this.disposed) {
+        return failure('UNAVAILABLE', 'Assessment resume is unavailable in read-only-safe mode.', true)
+      }
+      const receipt = persistence.resumeAssessment({
+        principalId: authority.principalId,
+        authorityKind: authority.kind,
+        idempotencyKey: parsed.data.idempotencyKey,
+        assessmentId: parsed.data.assessmentId,
+        expectedAssessmentRevision: parsed.data.expectedAssessmentRevision,
+        reason: parsed.data.reason,
+        canonicalRequest: parsed.data,
+      })
+      this.launchAssessment(persistence, receipt.assessmentId)
+      return deepFreeze({ ok: true, value: receipt })
+    } catch (error) {
+      if (error instanceof SecurityPersistenceError) {
+        if (error.code === 'idempotency_conflict') {
+          return failure('IDEMPOTENCY_CONFLICT', 'The idempotency key is bound to a different request.')
+        }
+        if (error.code === 'assessment_not_found') {
+          return failure('NOT_FOUND', 'The Assessment does not exist.')
+        }
+        if (error.code === 'revision_conflict') {
+          return failure('CONFLICT', 'The Assessment cannot resume from the requested revision or state.')
+        }
+        return failure('UNAVAILABLE', 'The private Security Assurance store is unavailable.', true)
+      }
+      return failure('INTERNAL', 'Security Assurance could not complete the operation.', true)
+    }
+  }
+
+  /** Persist intent, quiesce the local evaluator, then durably finalize CANCELED. */
+  async cancelAssessment(
+    invocation: SecurityInvocation,
+    request: CancelAssessmentRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<AssessmentCancellationReceiptV1>> {
+    try {
+      const authority = this.authorityResolver.authority(invocation)
+      if (authority === undefined || !authority.permissions.has('assessment:cancel')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to cancel Assessments.')
+      }
+      const interrupted = interruption<AssessmentCancellationReceiptV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = cancelAssessmentRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match cancelAssessment schema version 1.')
+      }
+      const persistence = await this.ready
+      if (persistence === undefined || this.disposed) {
+        return failure('UNAVAILABLE', 'Assessment cancellation is unavailable in read-only-safe mode.', true)
+      }
+      const receipt = persistence.requestAssessmentCancellation({
+        principalId: authority.principalId,
+        authorityKind: authority.kind,
+        idempotencyKey: parsed.data.idempotencyKey,
+        assessmentId: parsed.data.assessmentId,
+        expectedAssessmentRevision: parsed.data.expectedAssessmentRevision,
+        reason: parsed.data.reason,
+        canonicalRequest: parsed.data,
+      })
+      const running = this.runningAssessments.get(receipt.assessmentId)
+      if (running !== undefined) {
+        running.controller.abort(new Error('Assessment cancellation requested'))
+        await running.task.catch(() => {})
+      }
+      persistence.completeAssessmentCancellation(receipt.assessmentId, receipt.assessmentRevision)
+      return deepFreeze({ ok: true, value: receipt })
+    } catch (error) {
+      if (error instanceof SecurityPersistenceError) {
+        if (error.code === 'idempotency_conflict') {
+          return failure('IDEMPOTENCY_CONFLICT', 'The idempotency key is bound to a different request.')
+        }
+        if (error.code === 'assessment_not_found') {
+          return failure('NOT_FOUND', 'The Assessment does not exist.')
+        }
+        if (error.code === 'revision_conflict') {
+          return failure('CONFLICT', 'The Assessment cannot be canceled from the requested revision or state.')
+        }
+        return failure('UNAVAILABLE', 'The private Security Assurance store is unavailable.', true)
+      }
+      return failure('INTERNAL', 'Security Assurance could not complete the operation.', true)
+    }
+  }
+
   /** Read one immutable, path-free Assessment projection. */
   async getAssessment(
     invocation: SecurityInvocation,
@@ -749,7 +858,7 @@ export class SecurityAssuranceService extends Service {
       if (signal.aborted) throw new Error('assessment execution canceled')
       persistence.sealAssessment({
         assessmentId,
-        expectedAssessmentRevision: 2,
+        expectedAssessmentRevision: runningRevision,
         coverage: outcome.coverage,
         findings: outcome.findings,
         evaluationTrace: outcome.evaluationTrace,

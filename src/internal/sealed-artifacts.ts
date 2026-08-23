@@ -86,10 +86,10 @@ export function assembleSealedArtifacts(
   outcome: DeterministicAssessmentOutcomeV1,
   identity: SealIdentityV1,
 ): SealedArtifactsV1 {
-  if (assessment.state !== 'RUNNING' || assessment.assessmentRevision !== 2) {
-    throw new TypeError('only RUNNING Assessment revision 2 can be sealed')
+  if (assessment.state !== 'RUNNING') {
+    throw new TypeError('only a RUNNING Assessment can be sealed')
   }
-  const terminalRevision = 3
+  const terminalRevision = assessment.assessmentRevision + 1
   const subject = json({
     schemaVersion: 1,
     source: assessment.subject.source,

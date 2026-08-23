@@ -6,10 +6,15 @@ import {
   repositoryCommandReceiptV1Schema,
   repositorySnapshotV1Schema,
   assessmentReceiptV1Schema,
+  assessmentResumeReceiptV1Schema,
+  assessmentCancellationReceiptV1Schema,
 } from '../contracts.ts'
 import type {
   AssessmentId,
   AssessmentReceiptV1,
+  AssessmentResumeReceiptV1,
+  AssessmentOperatorReasonV1,
+  AssessmentCancellationReceiptV1,
   AssessmentSubjectSourceV1,
   BundleManifestV1,
   DigestEnvelopeV1,
@@ -100,9 +105,29 @@ export interface AssessmentStartPersistenceInput {
   readonly preparedContract: PreparedAssessmentContractV1
 }
 
+export interface AssessmentResumePersistenceInput {
+  readonly principalId: string
+  readonly authorityKind: string
+  readonly idempotencyKey: string
+  readonly assessmentId: AssessmentId
+  readonly expectedAssessmentRevision: number
+  readonly reason: AssessmentOperatorReasonV1
+  readonly canonicalRequest: unknown
+}
+
+export interface AssessmentCancellationPersistenceInput {
+  readonly principalId: string
+  readonly authorityKind: string
+  readonly idempotencyKey: string
+  readonly assessmentId: AssessmentId
+  readonly expectedAssessmentRevision: number
+  readonly reason: AssessmentOperatorReasonV1
+  readonly canonicalRequest: unknown
+}
+
 export interface SealAssessmentPersistenceInput {
   readonly assessmentId: AssessmentId
-  readonly expectedAssessmentRevision: 2
+  readonly expectedAssessmentRevision: number
   readonly coverage: InternalAssessmentRecordV1['coverage']
   readonly findings: InternalAssessmentRecordV1['findings']
   readonly evaluationTrace: NonNullable<InternalAssessmentRecordV1['evaluationTrace']>
@@ -647,6 +672,8 @@ export class SecurityPersistence {
         submission: null,
         publicationDigest: null,
         failureCode: null,
+        operatorActions: [],
+        pendingCancellation: null,
         createdAt: acceptedAt,
         updatedAt: acceptedAt,
       })
@@ -715,20 +742,258 @@ export class SecurityPersistence {
       if (current === undefined) {
         throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
       }
-      if (current.state !== 'CREATED' || current.assessmentRevision !== 1) {
+      if (current.state !== 'CREATED') {
         this.db.exec('COMMIT')
         return undefined
       }
       const committedAt = this.now()
       const running = internalAssessmentRecordV1Schema.parse({
         ...current,
-        assessmentRevision: 2,
+        assessmentRevision: current.assessmentRevision + 1,
         state: 'RUNNING',
         updatedAt: committedAt,
       })
       this.commitAssessmentRevision(running, 'assessment_begun', committedAt)
       this.db.exec('COMMIT')
       return running
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Admit one operator-authorized replacement execution without changing Subject or Policy. */
+  resumeAssessment(input: AssessmentResumePersistenceInput): AssessmentResumeReceiptV1 {
+    this.requireOpen()
+    const requestDigest = digest(input.canonicalRequest)
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const replayRow = this.db.prepare(`
+        SELECT request_digest, receipt_json
+        FROM idempotency_records
+        WHERE principal_id = ? AND authority_kind = ? AND operation = ?
+          AND target_key = ? AND idempotency_key = ?
+      `).get(
+        input.principalId,
+        input.authorityKind,
+        'resume_assessment',
+        input.assessmentId,
+        input.idempotencyKey,
+      ) as IdempotencyRow | undefined
+      if (replayRow !== undefined) {
+        if (replayRow.request_digest !== requestDigest) {
+          throw new SecurityPersistenceError(
+            'idempotency_conflict',
+            'Assessment resume idempotency key conflicts with a different request',
+          )
+        }
+        const replay = assessmentResumeReceiptV1Schema.parse(JSON.parse(replayRow.receipt_json))
+        this.db.exec('COMMIT')
+        return replay
+      }
+
+      const current = this.getAssessmentRecord(input.assessmentId)
+      if (current === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
+      if (
+        current.state !== 'BLOCKED'
+        || current.assessmentRevision !== input.expectedAssessmentRevision
+      ) {
+        throw new SecurityPersistenceError('revision_conflict', 'Assessment is not resumable at this revision')
+      }
+      const acceptedAt = this.now()
+      const resumed = internalAssessmentRecordV1Schema.parse({
+        ...current,
+        assessmentRevision: current.assessmentRevision + 1,
+        state: 'CREATED',
+        coverage: current.contract.coverage,
+        findings: [],
+        evaluationTrace: null,
+        verdict: null,
+        seal: null,
+        bundleManifest: null,
+        submission: null,
+        publicationDigest: null,
+        failureCode: null,
+        pendingCancellation: null,
+        operatorActions: [
+          ...current.operatorActions,
+          {
+            operation: 'resume_assessment',
+            principalId: input.principalId,
+            authorityKind: input.authorityKind,
+            reason: input.reason,
+            recordedAt: acceptedAt,
+          },
+        ],
+        updatedAt: acceptedAt,
+      })
+      const receipt = assessmentResumeReceiptV1Schema.parse({
+        schemaVersion: 1,
+        operation: 'resume_assessment',
+        assessmentId: resumed.assessmentId,
+        assessmentRevision: resumed.assessmentRevision,
+        state: 'CREATED',
+        idempotencyKey: input.idempotencyKey,
+        acceptedAt,
+        correlationId: this.nextCorrelationId(),
+      })
+      this.commitAssessmentRevision(resumed, 'assessment_resume_admitted', acceptedAt)
+      this.recordIdempotency(
+        input.principalId,
+        input.authorityKind,
+        'resume_assessment',
+        input.assessmentId,
+        input.idempotencyKey,
+        requestDigest,
+        receipt,
+        acceptedAt,
+      )
+      this.db.exec('COMMIT')
+      return receipt
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Persist cancellation intent before any process-local execution is interrupted. */
+  requestAssessmentCancellation(
+    input: AssessmentCancellationPersistenceInput,
+  ): AssessmentCancellationReceiptV1 {
+    this.requireOpen()
+    const requestDigest = digest(input.canonicalRequest)
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const replayRow = this.db.prepare(`
+        SELECT request_digest, receipt_json
+        FROM idempotency_records
+        WHERE principal_id = ? AND authority_kind = ? AND operation = ?
+          AND target_key = ? AND idempotency_key = ?
+      `).get(
+        input.principalId,
+        input.authorityKind,
+        'cancel_assessment',
+        input.assessmentId,
+        input.idempotencyKey,
+      ) as IdempotencyRow | undefined
+      if (replayRow !== undefined) {
+        if (replayRow.request_digest !== requestDigest) {
+          throw new SecurityPersistenceError(
+            'idempotency_conflict',
+            'Assessment cancellation idempotency key conflicts with a different request',
+          )
+        }
+        const replay = assessmentCancellationReceiptV1Schema.parse(JSON.parse(replayRow.receipt_json))
+        this.db.exec('COMMIT')
+        return replay
+      }
+
+      const current = this.getAssessmentRecord(input.assessmentId)
+      if (current === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
+      if (
+        (current.state !== 'CREATED' && current.state !== 'RUNNING' && current.state !== 'BLOCKED')
+        || current.assessmentRevision !== input.expectedAssessmentRevision
+        || current.pendingCancellation !== null
+      ) {
+        throw new SecurityPersistenceError('revision_conflict', 'Assessment is not cancelable at this revision')
+      }
+      const acceptedAt = this.now()
+      const requestRevision = current.assessmentRevision + 1
+      const requested = internalAssessmentRecordV1Schema.parse({
+        ...current,
+        assessmentRevision: requestRevision,
+        operatorActions: [
+          ...current.operatorActions,
+          {
+            operation: 'cancel_assessment',
+            principalId: input.principalId,
+            authorityKind: input.authorityKind,
+            reason: input.reason,
+            recordedAt: acceptedAt,
+          },
+        ],
+        pendingCancellation: { requestRevision, requestedAt: acceptedAt },
+        updatedAt: acceptedAt,
+      })
+      const receipt = assessmentCancellationReceiptV1Schema.parse({
+        schemaVersion: 1,
+        operation: 'cancel_assessment',
+        assessmentId: requested.assessmentId,
+        assessmentRevision: requestRevision,
+        acceptedState: current.state,
+        idempotencyKey: input.idempotencyKey,
+        acceptedAt,
+        correlationId: this.nextCorrelationId(),
+      })
+      this.commitAssessmentRevision(requested, 'assessment_cancellation_requested', acceptedAt)
+      this.recordIdempotency(
+        input.principalId,
+        input.authorityKind,
+        'cancel_assessment',
+        input.assessmentId,
+        input.idempotencyKey,
+        requestDigest,
+        receipt,
+        acceptedAt,
+      )
+      this.db.exec('COMMIT')
+      return receipt
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Commit CANCELED only after the owning Service has proved process-local quiescence. */
+  completeAssessmentCancellation(
+    assessmentId: AssessmentId,
+    requestRevision: number,
+  ): InternalAssessmentRecordV1 {
+    this.requireOpen()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const current = this.getAssessmentRecord(assessmentId)
+      if (current === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
+      if (
+        current.state === 'CANCELED'
+        && current.pendingCancellation?.requestRevision === requestRevision
+      ) {
+        this.db.exec('COMMIT')
+        return current
+      }
+      if (
+        current.assessmentRevision !== requestRevision
+        || current.pendingCancellation?.requestRevision !== requestRevision
+        || current.state === 'SEALED'
+        || current.state === 'CANCELED'
+      ) {
+        throw new SecurityPersistenceError('revision_conflict', 'Assessment cancellation cannot complete')
+      }
+      const committedAt = this.now()
+      const canceled = internalAssessmentRecordV1Schema.parse({
+        ...current,
+        assessmentRevision: current.assessmentRevision + 1,
+        state: 'CANCELED',
+        coverage: current.contract.coverage,
+        findings: [],
+        evaluationTrace: null,
+        verdict: null,
+        seal: null,
+        bundleManifest: null,
+        submission: null,
+        publicationDigest: null,
+        failureCode: null,
+        updatedAt: committedAt,
+      })
+      this.commitAssessmentRevision(canceled, 'assessment_canceled', committedAt)
+      this.db.exec('COMMIT')
+      return canceled
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
@@ -753,7 +1018,7 @@ export class SecurityPersistence {
       const committedAt = this.now()
       const sealed = internalAssessmentRecordV1Schema.parse({
         ...current,
-        assessmentRevision: 3,
+        assessmentRevision: current.assessmentRevision + 1,
         state: 'SEALED',
         coverage: input.coverage,
         findings: input.findings,
@@ -812,6 +1077,16 @@ export class SecurityPersistence {
   /** A process restart never silently replays evaluation that had durably begun. */
   recoverInterruptedAssessments(): readonly AssessmentId[] {
     this.requireOpen()
+    const cancellationRows = this.db.prepare(`
+      SELECT snapshot_json FROM assessments
+      WHERE state NOT IN ('SEALED', 'CANCELED') ORDER BY rowid
+    `).all() as unknown as readonly AssessmentRow[]
+    for (const row of cancellationRows) {
+      const record = internalAssessmentRecordV1Schema.parse(JSON.parse(row.snapshot_json))
+      if (record.pendingCancellation !== null) {
+        this.completeAssessmentCancellation(record.assessmentId, record.pendingCancellation.requestRevision)
+      }
+    }
     const rows = this.db.prepare(`
       SELECT assessment_id, current_revision
       FROM assessments WHERE state = 'RUNNING' ORDER BY rowid

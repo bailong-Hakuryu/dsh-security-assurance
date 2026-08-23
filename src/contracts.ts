@@ -472,6 +472,105 @@ export const assessmentReceiptResultSchema: z.ZodType<SecurityResult<AssessmentR
     z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
   ])
 
+export interface AssessmentOperatorReasonV1 {
+  readonly code: string
+  readonly summary: string
+}
+
+export const assessmentOperatorReasonV1Schema: z.ZodType<AssessmentOperatorReasonV1> = z.strictObject({
+  code: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
+  summary: z.string().trim().min(1).max(512),
+})
+
+export interface ResumeAssessmentRequest {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly expectedAssessmentRevision: number
+  readonly idempotencyKey: string
+  readonly reason: AssessmentOperatorReasonV1
+}
+
+export const resumeAssessmentRequestSchema: z.ZodType<ResumeAssessmentRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  expectedAssessmentRevision: z.number().int().positive(),
+  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+  reason: assessmentOperatorReasonV1Schema,
+})
+
+export interface AssessmentResumeReceiptV1 {
+  readonly schemaVersion: 1
+  readonly operation: 'resume_assessment'
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly state: 'CREATED'
+  readonly idempotencyKey: string
+  readonly acceptedAt: string
+  readonly correlationId: string
+}
+
+export const assessmentResumeReceiptV1Schema: z.ZodType<AssessmentResumeReceiptV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  operation: z.literal('resume_assessment'),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  state: z.literal('CREATED'),
+  idempotencyKey: z.string().min(1).max(128),
+  acceptedAt: z.iso.datetime({ offset: true }),
+  correlationId: z.string().regex(/^sec-[0-9a-f-]{36}$/),
+})
+
+export const assessmentResumeResultSchema: z.ZodType<SecurityResult<AssessmentResumeReceiptV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: assessmentResumeReceiptV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
+
+export interface CancelAssessmentRequest {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly expectedAssessmentRevision: number
+  readonly idempotencyKey: string
+  readonly reason: AssessmentOperatorReasonV1
+}
+
+export const cancelAssessmentRequestSchema: z.ZodType<CancelAssessmentRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  expectedAssessmentRevision: z.number().int().positive(),
+  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+  reason: assessmentOperatorReasonV1Schema,
+})
+
+export interface AssessmentCancellationReceiptV1 {
+  readonly schemaVersion: 1
+  readonly operation: 'cancel_assessment'
+  readonly assessmentId: AssessmentId
+  /** Revision that durably records the cancellation request, not the terminal transition. */
+  readonly assessmentRevision: number
+  readonly acceptedState: 'CREATED' | 'RUNNING' | 'BLOCKED'
+  readonly idempotencyKey: string
+  readonly acceptedAt: string
+  readonly correlationId: string
+}
+
+export const assessmentCancellationReceiptV1Schema: z.ZodType<AssessmentCancellationReceiptV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  operation: z.literal('cancel_assessment'),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  acceptedState: z.enum(['CREATED', 'RUNNING', 'BLOCKED']),
+  idempotencyKey: z.string().min(1).max(128),
+  acceptedAt: z.iso.datetime({ offset: true }),
+  correlationId: z.string().regex(/^sec-[0-9a-f-]{36}$/),
+})
+
+export const assessmentCancellationResultSchema: z.ZodType<SecurityResult<AssessmentCancellationReceiptV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: assessmentCancellationReceiptV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
+
 export const securityVerdictSchema = z.enum(['SATISFIED', 'FAILED', 'INDETERMINATE'])
 export type SecurityVerdict = z.infer<typeof securityVerdictSchema>
 

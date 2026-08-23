@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -208,6 +208,218 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       expect(JSON.stringify(submission)).not.toContain(repository)
       expect(Object.isFrozen(submission)).toBe(true)
       if (submission.ok) expect(Object.isFrozen(submission.value.payload.evidence)).toBe(true)
+    } finally {
+      await fiber.dispose()
+    }
+  })
+
+  it('resumes one interrupted Assessment only through an explicit revision-bound command', async () => {
+    const repository = await repositoryFixture()
+    await writeFile(join(repository, 'package.json'), JSON.stringify({
+      name: 'interrupted-assessment-fixture',
+      version: '1.0.0',
+      scripts: { postinstall: 'node ./postinstall.js' },
+    }), 'utf8')
+    await writeFile(join(repository, 'postinstall.js'), 'process.stdout.write("fixture")\n', 'utf8')
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-resume-home-'))
+    temporaryRoots.push(dshHome)
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+
+    const firstContext = new Context()
+    const firstFiber = await firstContext.plugin(SecurityAssuranceService, { dshHome })
+    const firstInvocation = referenceHostInvocation(firstContext.securityAssurance)
+    const registered = await firstContext.securityAssurance.registerRepository(firstInvocation, {
+      schemaVersion: 1,
+      idempotencyKey: 'resume-repository-register-1',
+      root: repository,
+      displayName: 'Resume fixture',
+      bindings: {
+        policyId: 'security/node-package-lifecycle',
+        assessmentProfileId: 'security/standard',
+        evidenceProtectionId: 'evidence/local-protected',
+        dataEgressPolicyId: 'egress/deny-by-default',
+        platform,
+        deliveryDestinationIds: [],
+      },
+    })
+    if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+    const startRequest = {
+      schemaVersion: 1 as const,
+      idempotencyKey: 'resume-assessment-start-1',
+      repositoryId: registered.value.repositoryId,
+      subject: { kind: 'workspace_snapshot' as const },
+      assessmentMode: 'REPOSITORY' as const,
+      assessmentProfileId: 'security/standard',
+      target: { kind: 'repository' as const },
+      requestedStrongerControlIds: [],
+    }
+    const started = await firstContext.securityAssurance.startAssessment(firstInvocation, startRequest)
+    if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
+    await firstFiber.dispose()
+
+    const restartedContext = new Context()
+    const restartedFiber = await restartedContext.plugin(SecurityAssuranceService, { dshHome })
+    try {
+      const invocation = referenceHostInvocation(restartedContext.securityAssurance)
+      await restartedContext.securityAssurance.whenReady()
+      const interrupted = await restartedContext.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })
+      expect(interrupted).toMatchObject({
+        ok: true,
+        value: { state: 'BLOCKED', verdict: null, seal: null },
+      })
+      if (!interrupted.ok) throw new Error(`assessment query failed: ${interrupted.error.code}`)
+
+      const replayedStart = await restartedContext.securityAssurance.startAssessment(invocation, startRequest)
+      expect(replayedStart).toEqual(started)
+      await new Promise(resolve => setTimeout(resolve, 25))
+      await expect(restartedContext.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })).resolves.toMatchObject({ ok: true, value: { state: 'BLOCKED' } })
+
+      const resumeRequest = {
+        schemaVersion: 1 as const,
+        assessmentId: started.value.assessmentId,
+        expectedAssessmentRevision: interrupted.value.assessmentRevision,
+        idempotencyKey: 'resume-assessment-command-1',
+        reason: {
+          code: 'HOST_RESTART_RECONCILIATION',
+          summary: 'Resume the interrupted deterministic assessment for Provider reconciliation.',
+        },
+      }
+      const resumed = await restartedContext.securityAssurance.resumeAssessment(invocation, resumeRequest)
+      expect(resumed).toMatchObject({
+        ok: true,
+        value: {
+          operation: 'resume_assessment',
+          assessmentId: started.value.assessmentId,
+          assessmentRevision: interrupted.value.assessmentRevision + 1,
+          state: 'CREATED',
+          idempotencyKey: resumeRequest.idempotencyKey,
+        },
+      })
+      await waitUntilSealed(restartedContext.securityAssurance, invocation, started.value.assessmentId)
+      const sealed = await restartedContext.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })
+      expect(sealed).toMatchObject({
+        ok: true,
+        value: {
+          state: 'SEALED',
+          assessmentRevision: interrupted.value.assessmentRevision + 3,
+          verdict: expect.any(String),
+          seal: expect.objectContaining({
+            assessmentRevision: interrupted.value.assessmentRevision + 3,
+          }),
+        },
+      })
+      await expect(
+        restartedContext.securityAssurance.resumeAssessment(invocation, resumeRequest),
+      ).resolves.toEqual(resumed)
+    } finally {
+      await restartedFiber.dispose()
+    }
+  })
+
+  it('persists an explicit cancellation request before quiescing and committing CANCELED', async () => {
+    const repository = await repositoryFixture()
+    await Promise.all(Array.from({ length: 250 }, async (_value, index) => {
+      const directory = join(repository, 'fixtures', `cancel-package-${index}`)
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, 'package.json'), JSON.stringify({
+        name: `cancel-fixture-${index}`,
+        version: '1.0.0',
+      }), 'utf8')
+    }))
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-cancel-home-'))
+    temporaryRoots.push(dshHome)
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+    const ctx = new Context()
+    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    try {
+      const invocation = referenceHostInvocation(ctx.securityAssurance)
+      const registered = await ctx.securityAssurance.registerRepository(invocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'cancel-repository-register-1',
+        root: repository,
+        displayName: 'Cancellation fixture',
+        bindings: {
+          policyId: 'security/node-package-lifecycle',
+          assessmentProfileId: 'security/standard',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform,
+          deliveryDestinationIds: [],
+        },
+      })
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+      const started = await ctx.securityAssurance.startAssessment(invocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'cancel-assessment-start-1',
+        repositoryId: registered.value.repositoryId,
+        subject: { kind: 'workspace_snapshot' },
+        assessmentMode: 'REPOSITORY',
+        assessmentProfileId: 'security/standard',
+        target: { kind: 'repository' },
+        requestedStrongerControlIds: [],
+      })
+      if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
+      const running = await ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })
+      expect(running).toMatchObject({ ok: true, value: { state: 'RUNNING' } })
+      if (!running.ok) throw new Error(`assessment query failed: ${running.error.code}`)
+
+      const cancelRequest = {
+        schemaVersion: 1 as const,
+        assessmentId: started.value.assessmentId,
+        expectedAssessmentRevision: running.value.assessmentRevision,
+        idempotencyKey: 'cancel-assessment-command-1',
+        reason: {
+          code: 'OPERATOR_REQUEST',
+          summary: 'Stop this Assessment because its owning operation was explicitly canceled.',
+        },
+      }
+      const canceled = await ctx.securityAssurance.cancelAssessment(invocation, cancelRequest)
+      expect(canceled).toMatchObject({
+        ok: true,
+        value: {
+          operation: 'cancel_assessment',
+          assessmentId: started.value.assessmentId,
+          assessmentRevision: running.value.assessmentRevision + 1,
+          acceptedState: 'RUNNING',
+          idempotencyKey: cancelRequest.idempotencyKey,
+        },
+      })
+      const terminal = await ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })
+      expect(terminal).toMatchObject({
+        ok: true,
+        value: {
+          state: 'CANCELED',
+          assessmentRevision: running.value.assessmentRevision + 2,
+          verdict: null,
+          seal: null,
+        },
+      })
+      await expect(ctx.securityAssurance.cancelAssessment(invocation, cancelRequest)).resolves.toEqual(canceled)
+      await expect(ctx.securityAssurance.cancelAssessment(invocation, {
+        ...cancelRequest,
+        idempotencyKey: 'cancel-assessment-command-stale',
+      })).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } })
     } finally {
       await fiber.dispose()
     }

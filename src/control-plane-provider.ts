@@ -75,6 +75,13 @@ function assessmentIdempotencyKey(context: AssuranceExecutionContext): string {
   return `control-plane-${digest}`
 }
 
+function assessmentResumeIdempotencyKey(context: AssuranceExecutionContext): string {
+  const digest = createHash('sha256')
+    .update(`resume\0${context.invocationId}\0${context.missionId}\0${context.attempt}`)
+    .digest('hex')
+  return `control-plane-resume-${digest}`
+}
+
 function claimedOutcome(verdict: AssessmentSnapshotV1['verdict']): AssuranceClaimedOutcomeV1 {
   if (verdict === 'SATISFIED') return 'satisfied'
   if (verdict === 'FAILED') return 'failed'
@@ -208,6 +215,23 @@ class SecurityAssuranceProvider implements AssuranceProviderV1 {
     request: AssuranceRequestV1,
     options?: ProviderInvocationOptions,
   ): Promise<AssuranceProviderOutcomeV1> {
+    return this.execute(context, request, options, false)
+  }
+
+  async recover(
+    context: AssuranceExecutionContext,
+    request: AssuranceRequestV1,
+    options?: ProviderInvocationOptions,
+  ): Promise<AssuranceProviderOutcomeV1> {
+    return this.execute(context, request, options, true)
+  }
+
+  private async execute(
+    context: AssuranceExecutionContext,
+    request: AssuranceRequestV1,
+    options: ProviderInvocationOptions | undefined,
+    recovering: boolean,
+  ): Promise<AssuranceProviderOutcomeV1> {
     const repositoryId = configuredRepositoryId(request)
     if (repositoryId === undefined) return externalFailure('blocked', 'invalid_provider_configuration')
     const callOptions = invocationOptions(options)
@@ -257,7 +281,22 @@ class SecurityAssuranceProvider implements AssuranceProviderV1 {
           ),
         }
       }
-      if (assessment.value.state === 'BLOCKED') return externalFailure('blocked', 'assessment_blocked')
+      if (assessment.value.state === 'BLOCKED') {
+        if (!recovering) return externalFailure('blocked', 'assessment_blocked')
+        const resumed = await this.service.resumeAssessment(this.invocation, {
+          schemaVersion: 1,
+          assessmentId: assessment.value.assessmentId,
+          expectedAssessmentRevision: assessment.value.assessmentRevision,
+          idempotencyKey: assessmentResumeIdempotencyKey(context),
+          reason: {
+            code: 'CONTROL_PLANE_PROVIDER_RECOVERY',
+            summary: 'Reconcile the durable Control Plane Provider invocation after host restart.',
+          },
+        }, callOptions)
+        if (!resumed.ok) return securityError(resumed.error.code)
+        revision = resumed.value.assessmentRevision
+        continue
+      }
       if (assessment.value.state === 'CANCELED') return externalFailure('canceled', 'assessment_canceled')
 
       const changed = await this.service.waitForAssessmentRevision(this.invocation, {
@@ -280,7 +319,7 @@ const SecurityAssuranceControlPlaneProvider = {
     const invocation = resolveTrustedInvocation(ctx.securityAssurance, {
       kind: 'control-plane',
       principalId: 'engineering-control-plane-assurance-provider',
-      permissions: ['repository:read', 'assessment:start', 'assessment:read'],
+      permissions: ['repository:read', 'assessment:start', 'assessment:read', 'assessment:resume'],
     })
     return ctx.engineeringControlPlane.registerAssuranceProvider(
       SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
