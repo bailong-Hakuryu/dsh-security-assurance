@@ -27,6 +27,7 @@ import type { SecurityAssuranceService } from './index.ts'
 import { resolveTrustedInvocation } from './internal/authority.ts'
 import { canonicalJson } from './internal/canonical.ts'
 import { lookupControlPlaneAssessment } from './internal/control-plane-assessment.ts'
+import { reachControlPlaneCancellationCrashCheckpoint } from './internal/control-plane-cancellation-crash-checkpoint.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -277,6 +278,11 @@ class SecurityAssuranceProvider implements AssuranceProviderV1 {
       callOptions,
     )
     if (!started.ok) return securityError(started.error.code)
+    await reachControlPlaneCancellationCrashCheckpoint(
+      this.service,
+      'after_assessment_started',
+      started.value.assessmentId,
+    )
 
     let revision: number = started.value.assessmentRevision
     while (true) {
@@ -390,6 +396,11 @@ class SecurityAssuranceProvider implements AssuranceProviderV1 {
       if (!terminal.ok || terminal.value.state !== 'CANCELED') {
         throw new Error('Security Assessment cancellation did not reach CANCELED')
       }
+      await reachControlPlaneCancellationCrashCheckpoint(
+        this.service,
+        'after_assessment_canceled_before_provider_outcome',
+        terminal.value.assessmentId,
+      )
       return {
         kind: 'external_assessment_canceled',
         externalAssessmentId: terminal.value.assessmentId,

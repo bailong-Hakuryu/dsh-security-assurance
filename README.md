@@ -67,7 +67,8 @@ This repository is under active vertical-slice development, not at the
   binding → fail-closed `BLOCKED`; and
 - real dual-plugin cancellation coverage proving explicit Mission cancellation
   records the external Assessment identity and leaves that same Assessment
-  `CANCELED` without Verdict or Seal.
+  `CANCELED` without Verdict or Seal, including restart reconciliation when the
+  Security commit precedes Control Plane Invocation termination.
 
 External Analyzer registration, process or agent Analyzers, general Node and
 application-security coverage, the complete protected Evidence Store, tools,
@@ -151,7 +152,11 @@ uses a package-private, authority-checked lookup for the existing
 cancel it. If the Assessment exists and is not terminal, the Adapter invokes
 the public revision-bound `cancelAssessment`, verifies `CANCELED`, and returns
 the external Assessment ID for Control Plane audit. Host disposal does not call
-this operation, so restart recovery remains distinct from cancellation.
+this operation, so restart recovery remains distinct from cancellation. If the
+host stops after Security commits `CANCELED` but before Control Plane records
+its proof, the next explicit Mission cancellation resolves the stable start
+identity, observes the same Assessment as terminal, and returns that same ID;
+it does not create, resume, or replace an Assessment.
 
 ## Development
 

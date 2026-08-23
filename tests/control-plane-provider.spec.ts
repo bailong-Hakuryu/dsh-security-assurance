@@ -14,6 +14,7 @@ import SecurityAssuranceService from '../src/index.ts'
 import SecurityAssuranceControlPlaneProvider, {
   SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
 } from '../src/control-plane-provider.ts'
+import { installControlPlaneCancellationCrashCheckpoint } from '../src/internal/control-plane-cancellation-crash-checkpoint.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
 const run = promisify(execFile)
@@ -124,6 +125,32 @@ async function waitForProviderInvocation(
     last = await ctx.engineeringControlPlane.status(agent, missionId, new AbortController().signal)
   }
   return last
+}
+
+async function cancelMissionAtLatestRevision(
+  ctx: Context,
+  agent: Agent,
+  missionId: string,
+  reason: string,
+) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const current = await ctx.engineeringControlPlane.status(
+      agent,
+      missionId,
+      new AbortController().signal,
+    )
+    try {
+      return await ctx.engineeringControlPlane.cancel(agent, {
+        missionId,
+        expectedRevision: current.revision,
+        reason,
+      }, new AbortController().signal)
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 'revision_conflict') continue
+      throw error
+    }
+  }
+  throw new Error('Mission revision did not stabilize for cancellation')
 }
 
 async function waitForApprovedMission(ctx: Context, agent: Agent, missionId: string) {
@@ -553,11 +580,12 @@ describe('Security Assurance Control Plane Provider', () => {
       })
 
       try {
-        await ctx.engineeringControlPlane.cancel(agent, {
-          missionId: active.missionId,
-          expectedRevision: active.revision,
-          reason: 'The owning user explicitly canceled the Mission.',
-        }, new AbortController().signal)
+        await cancelMissionAtLatestRevision(
+          ctx,
+          agent,
+          active.missionId,
+          'The owning user explicitly canceled the Mission.',
+        )
       } catch (error) {
         const failed = await ctx.engineeringControlPlane.status(
           agent,
@@ -604,4 +632,182 @@ describe('Security Assurance Control Plane Provider', () => {
       await subprocessFiber.dispose()
     }
   }, 40_000)
+
+  it('reconciles the same canceled Security Assessment after interruption before Provider termination', async () => {
+    const repository = await nodeRepositoryFixture({
+      name: 'cancel-recovery-control-plane-fixture',
+      version: '1.0.0',
+      type: 'module',
+    }, 150)
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-control-plane-cancel-recovery-home-'))
+    temporaryRoots.push(dshHome)
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+    const agent = {
+      id: 'agent-security-control-plane-cancel-recovery-fixture',
+      session: { header: { cwd: repository } },
+    } as unknown as Agent
+
+    const firstContext = new Context()
+    const firstSubprocessFiber = await firstContext.plugin(LocalSubprocessRuntime)
+    const firstSubagentFiber = await firstContext.plugin(SubagentRuntime)
+    const disposeFirstScriptedProvider = registerScriptedEngineeringProvider(firstContext)
+    const firstSecurityFiber = await firstContext.plugin(SecurityAssuranceService, { dshHome })
+    await firstContext.securityAssurance.whenReady()
+    const firstInvocation = referenceHostInvocation(firstContext.securityAssurance)
+    const registered = await firstContext.securityAssurance.registerRepository(firstInvocation, {
+      schemaVersion: 1,
+      idempotencyKey: 'control-plane-cancel-recovery-register-1',
+      root: repository,
+      displayName: 'Control Plane cancellation recovery fixture',
+      bindings: {
+        policyId: 'security/node-package-lifecycle',
+        assessmentProfileId: 'security/standard',
+        evidenceProtectionId: 'evidence/local-protected',
+        dataEgressPolicyId: 'egress/deny-by-default',
+        platform,
+        deliveryDestinationIds: [],
+      },
+    })
+    if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+    const firstControlPlaneFiber = await firstContext.plugin(
+      EngineeringControlPlane,
+      controlPlaneConfig(repository, dshHome, registered.value.repositoryId),
+    )
+    await firstContext.engineeringControlPlane.whenReady()
+    const firstAdapterFiber = await firstContext.plugin(SecurityAssuranceControlPlaneProvider)
+    let resolveAssessmentStarted!: (assessmentId: string) => void
+    const assessmentStarted = new Promise<string>(resolve => { resolveAssessmentStarted = resolve })
+    let interruptedAssessmentId: string | undefined
+    const disposeCheckpoint = installControlPlaneCancellationCrashCheckpoint(
+      firstContext.securityAssurance,
+      event => {
+        if (event.name === 'after_assessment_started') {
+          resolveAssessmentStarted(event.assessmentId)
+          return
+        }
+        interruptedAssessmentId = event.assessmentId
+        throw new Error('Simulated host interruption after Security cancellation committed')
+      },
+    )
+
+    let missionId: string
+    try {
+      const receipt = await firstContext.engineeringControlPlane.start(agent, {
+        idempotencyKey: 'security-control-plane-provider:cancel-recovery:1',
+        objective: 'Recover the same canceled Security Assessment after host interruption',
+      }, new AbortController().signal)
+      missionId = receipt.missionId
+      await waitForProviderInvocation(firstContext, agent, missionId, ['begun'])
+      const startedAssessmentId = await Promise.race([
+        assessmentStarted,
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error('Security Assessment did not reach the start checkpoint')), 15_000)
+        }),
+      ])
+
+      await expect(cancelMissionAtLatestRevision(
+        firstContext,
+        agent,
+        missionId,
+        'Interrupt this host after the external cancellation commit.',
+      )).rejects.toThrow(
+        'Simulated host interruption after Security cancellation committed',
+      )
+      const quarantined = await firstContext.engineeringControlPlane.status(
+        agent,
+        missionId,
+        new AbortController().signal,
+      )
+      expect(quarantined).toMatchObject({
+        status: 'BLOCKED',
+        blocked: { reason: { code: 'evidence_incomplete' } },
+        assuranceProviderInvocations: [{ state: 'begun' }],
+      })
+      expect(interruptedAssessmentId).toEqual(expect.any(String))
+      expect(interruptedAssessmentId).toBe(startedAssessmentId)
+      await expect(firstContext.securityAssurance.getAssessment(firstInvocation, {
+        schemaVersion: 1,
+        assessmentId: interruptedAssessmentId as never,
+      })).resolves.toMatchObject({
+        ok: true,
+        value: { state: 'CANCELED', verdict: null, seal: null },
+      })
+    } finally {
+      disposeCheckpoint()
+      await firstAdapterFiber.dispose()
+      await firstControlPlaneFiber.dispose()
+      await firstSecurityFiber.dispose()
+      disposeFirstScriptedProvider()
+      await firstSubagentFiber.dispose()
+      await firstSubprocessFiber.dispose()
+    }
+
+    const restartedContext = new Context()
+    const restartedSubprocessFiber = await restartedContext.plugin(LocalSubprocessRuntime)
+    const restartedSubagentFiber = await restartedContext.plugin(SubagentRuntime)
+    const disposeRestartedScriptedProvider = registerScriptedEngineeringProvider(restartedContext)
+    const restartedSecurityFiber = await restartedContext.plugin(SecurityAssuranceService, { dshHome })
+    await restartedContext.securityAssurance.whenReady()
+    const restartedInvocation = referenceHostInvocation(restartedContext.securityAssurance)
+    const restartedControlPlaneFiber = await restartedContext.plugin(
+      EngineeringControlPlane,
+      controlPlaneConfig(repository, dshHome, registered.value.repositoryId),
+    )
+    await restartedContext.engineeringControlPlane.whenReady()
+    const restartedAdapterFiber = await restartedContext.plugin(SecurityAssuranceControlPlaneProvider)
+
+    try {
+      const recovered = await restartedContext.engineeringControlPlane.status(
+        agent,
+        missionId!,
+        new AbortController().signal,
+      )
+      expect(recovered.assuranceProviderInvocations?.[0]?.state).toBe('begun')
+      await cancelMissionAtLatestRevision(
+        restartedContext,
+        agent,
+        missionId!,
+        'Reconcile the same already canceled Security Assessment.',
+      )
+      const canceledMission = await restartedContext.engineeringControlPlane.status(
+        agent,
+        missionId!,
+        new AbortController().signal,
+      )
+
+      expect(canceledMission).toMatchObject({
+        status: 'CANCELLED',
+        assuranceProviderInvocations: [{
+          state: 'terminated',
+          outcome: {
+            kind: 'external_assessment_terminal',
+            externalAssessmentId: interruptedAssessmentId,
+            terminalState: 'canceled',
+          },
+        }],
+      })
+      await expect(restartedContext.securityAssurance.getAssessment(restartedInvocation, {
+        schemaVersion: 1,
+        assessmentId: interruptedAssessmentId as never,
+      })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          assessmentId: interruptedAssessmentId,
+          state: 'CANCELED',
+          verdict: null,
+          seal: null,
+        },
+      })
+    } finally {
+      await restartedAdapterFiber.dispose()
+      await restartedControlPlaneFiber.dispose()
+      await restartedSecurityFiber.dispose()
+      disposeRestartedScriptedProvider()
+      await restartedSubagentFiber.dispose()
+      await restartedSubprocessFiber.dispose()
+    }
+  }, 50_000)
 })
