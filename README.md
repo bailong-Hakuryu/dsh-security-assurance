@@ -134,8 +134,13 @@ assuranceProviders:
 ```
 
 The Adapter receives no repository path, database, Evidence directory, Gate,
-or credentials. It resolves an internal `control-plane` Security Invocation,
-starts a Workspace Snapshot Assessment against that exact Repository ID,
+or credentials. A Repository ID alone is not binding proof: before Assessment
+start, the root Security Service resolves that ID inside its private Registry
+and invokes the Control Plane Context's process-local repository assertion.
+The canonical root is never returned to the Adapter or serialized. A mismatch
+returns terminal `repository_binding_mismatch` External Assessment Failure and
+starts no Assessment. After binding succeeds, the Adapter resolves an internal
+`control-plane` Security Invocation, starts a Workspace Snapshot Assessment,
 retrieves the verified sealed Security Submission, and embeds its canonical
 value plus source digest in the provider-neutral Control Plane Submission. If a
 sealed Submission cannot be supplied, the Adapter returns the Control Plane's
@@ -152,11 +157,12 @@ Assurance Results and the Quality Gate. The two plugins never share SQLite
 files, writable Evidence paths, transactions, or Kernel objects.
 
 Control Plane Assurance Retry is distinct from that same-Invocation recovery.
-After an `external_failed` outcome blocks the Gate, explicit Mission Resume
-creates a successor Control Plane Invocation. Its new Invocation identity gives
-the Adapter a new idempotent Assessment start identity, so Security Assurance
-creates a distinct Assessment and preserves the blocked, canceled, or failed
-predecessor unchanged. If the repository content is unchanged, Subject Freeze
+After a retryable `blocked` or `canceled` external outcome blocks the Gate,
+explicit Mission Resume creates a successor Control Plane Invocation. Its new
+Invocation identity gives the Adapter a new idempotent Assessment start
+identity, so Security Assurance creates a distinct Assessment and preserves
+the blocked, canceled, or failed predecessor unchanged. If the repository
+content is unchanged, Subject Freeze
 may reuse the existing private content-addressed Snapshot only after complete
 Manifest and file-digest verification; Windows rename collision codes grant no
 authority by themselves. Dual-plugin conformance proves the first Assessment

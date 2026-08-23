@@ -352,7 +352,7 @@ describe('Security Assurance Control Plane Provider', () => {
         assuranceAssessments: [{
           assessor: { kind: 'machine_provider', provider: SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR },
           outcome: assuranceOutcome,
-          reasonCodes: [configurationMissing ? 'external_assessment_blocked' : 'eligible_submission'],
+          reasonCodes: [configurationMissing ? 'external_assessment_failed' : 'eligible_submission'],
         }],
         assuranceResults: [{
           requirementId: `external-provider:${SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR.providerId}@${SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR.providerVersion}`,
@@ -367,7 +367,7 @@ describe('Security Assurance Control Plane Provider', () => {
               state: 'external_failed',
               failure: {
                 schemaVersion: 1,
-                reason: 'blocked',
+                reason: 'failed',
                 code: 'invalid_provider_configuration',
               },
             })
@@ -380,6 +380,95 @@ describe('Security Assurance Control Plane Provider', () => {
               }),
             }),
       ])
+    } finally {
+      await adapterFiber.dispose()
+      await controlPlaneFiber.dispose()
+      await securityFiber.dispose()
+      disposeScriptedProvider()
+      await subagentFiber.dispose()
+      await subprocessFiber.dispose()
+    }
+  })
+
+  it('blocks when the configured Security Repository is not the Control Plane Mission Repository', async () => {
+    const missionRepository = await nodeRepositoryFixture({
+      name: 'control-plane-binding-mission-fixture',
+      version: '1.0.0',
+      type: 'module',
+    })
+    const securityRepository = await nodeRepositoryFixture({
+      name: 'control-plane-binding-wrong-security-fixture',
+      version: '1.0.0',
+      type: 'module',
+    })
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-control-plane-binding-home-'))
+    temporaryRoots.push(dshHome)
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+    const ctx = new Context()
+    const subprocessFiber = await ctx.plugin(LocalSubprocessRuntime)
+    const subagentFiber = await ctx.plugin(SubagentRuntime)
+    const disposeScriptedProvider = registerScriptedEngineeringProvider(ctx)
+    const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.securityAssurance.whenReady()
+    const invocation = referenceHostInvocation(ctx.securityAssurance)
+    const registered = await ctx.securityAssurance.registerRepository(invocation, {
+      schemaVersion: 1,
+      idempotencyKey: 'control-plane-repository-binding-register-1',
+      root: securityRepository,
+      displayName: 'Wrong Security Repository binding fixture',
+      bindings: {
+        policyId: 'security/node-package-lifecycle',
+        assessmentProfileId: 'security/standard',
+        evidenceProtectionId: 'evidence/local-protected',
+        dataEgressPolicyId: 'egress/deny-by-default',
+        platform,
+        deliveryDestinationIds: [],
+      },
+    })
+    if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+    const controlPlaneFiber = await ctx.plugin(
+      EngineeringControlPlane,
+      controlPlaneConfig(missionRepository, dshHome, registered.value.repositoryId),
+    )
+    await ctx.engineeringControlPlane.whenReady()
+    const adapterFiber = await ctx.plugin(SecurityAssuranceControlPlaneProvider)
+
+    try {
+      const agent = {
+        id: 'agent-security-control-plane-repository-binding-fixture',
+        session: { header: { cwd: missionRepository } },
+      } as unknown as Agent
+      const receipt = await ctx.engineeringControlPlane.start(agent, {
+        idempotencyKey: 'security-control-plane-provider:repository-binding:1',
+        objective: 'Reject Security Evidence produced for a different registered Repository',
+      }, new AbortController().signal)
+      const snapshot = await waitForTerminalMission(ctx, agent, receipt.missionId)
+
+      expect(snapshot).toMatchObject({
+        status: 'BLOCKED',
+        assuranceProviderInvocations: [{
+          state: 'external_failed',
+          failure: {
+            schemaVersion: 1,
+            reason: 'failed',
+            code: 'repository_binding_mismatch',
+          },
+        }],
+        assuranceAssessments: [{
+          outcome: 'indeterminate',
+          reasonCodes: ['external_assessment_failed'],
+        }],
+        gate: {
+          kind: 'blocked',
+          reasons: [{
+            code: 'assurance_indeterminate',
+            source: `external-provider:${SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR.providerId}@${SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR.providerVersion}`,
+          }],
+        },
+      })
     } finally {
       await adapterFiber.dispose()
       await controlPlaneFiber.dispose()

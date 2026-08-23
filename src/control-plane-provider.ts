@@ -29,6 +29,7 @@ import { resolveTrustedInvocation } from './internal/authority.ts'
 import { canonicalJson } from './internal/canonical.ts'
 import { lookupControlPlaneAssessment } from './internal/control-plane-assessment.ts'
 import { reachControlPlaneCancellationCrashCheckpoint } from './internal/control-plane-cancellation-crash-checkpoint.ts'
+import { verifyControlPlaneRepositoryBinding } from './internal/control-plane-repository-binding.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -263,7 +264,7 @@ class SecurityAssuranceProvider implements AssuranceProviderV1 {
     recovering: boolean,
   ): Promise<AssuranceProviderOutcomeV1> {
     const repositoryId = configuredRepositoryId(request)
-    if (repositoryId === undefined) return externalFailure('blocked', 'invalid_provider_configuration')
+    if (repositoryId === undefined) return externalFailure('failed', 'invalid_provider_configuration')
     const callOptions = invocationOptions(options)
     const repository = await this.service.getRepository(
       this.invocation,
@@ -272,6 +273,18 @@ class SecurityAssuranceProvider implements AssuranceProviderV1 {
     )
     if (!repository.ok) return securityError(repository.error.code)
     if (repository.value.state !== 'ENABLED') return externalFailure('blocked', 'repository_disabled')
+    let repositoryBindingMatches: boolean
+    try {
+      repositoryBindingMatches = await verifyControlPlaneRepositoryBinding(
+        this.service,
+        this.invocation,
+        repositoryId,
+        context,
+      )
+    } catch {
+      return externalFailure('blocked', 'repository_binding_unavailable')
+    }
+    if (!repositoryBindingMatches) return externalFailure('failed', 'repository_binding_mismatch')
 
     const started = await this.service.startAssessment(
       this.invocation,

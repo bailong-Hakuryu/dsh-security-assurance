@@ -13,7 +13,11 @@ Assurance Provider contract. Neither root entry imports the other product.
 Host Policy binds a selected Provider to one already registered Security
 Repository using the bounded public `repositoryId` carried in the frozen
 Provider request. The Adapter receives no repository path or credential. It
-issues a package-owned `control-plane` Security Invocation, starts a Workspace
+uses a package-private authority-checked operation to present that Registry
+entry to the Kernel-issued process-local Repository Binding Assertion. A
+Repository ID without a successful same-canonical-root assertion is not valid
+binding and starts no Assessment. The Adapter then issues a package-owned
+`control-plane` Security Invocation and starts a Workspace
 Snapshot Assessment, waits by durable revision, and obtains the verified sealed
 Security Submission through the Security Service.
 

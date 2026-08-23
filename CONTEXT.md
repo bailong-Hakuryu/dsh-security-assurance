@@ -1126,6 +1126,10 @@ _Avoid_: Assessment start Receipt, live workspace read, partial staging
 The optional Adapter handling of a successor Control Plane Provider Invocation by starting a distinct Security Assessment against the same frozen Mission Attempt Subject selection while preserving the predecessor Assessment as terminal history.
 _Avoid_: Provider recovery, resumeAssessment, reusing a canceled Assessment
 
+**Control Plane Repository Binding**:
+The process-local proof that a configured Security Repository and the Kernel-issued Mission context resolve to the same canonical repository before a Security Assessment starts.
+_Avoid_: Repository ID alone, serialized path, Submission Subject claim
+
 **Assessment List Item**:
 The low-sensitivity bounded summary of one Assessment returned in a watermarked paginated list without Evidence or aggregate internals.
 _Avoid_: Assessment Snapshot, Finding Summary, list cursor

@@ -11,6 +11,8 @@ is never resumed, reused, or rewritten for Assurance Retry. The new Assessment
 uses the same frozen Mission Attempt Subject selection and independently
 reaches its own terminal state. Adapter `recover()` remains reserved for
 reconciling the same durably begun Provider Invocation after host restart.
+Only external `blocked` and `canceled` outcomes are eligible for this successor;
+`failed` is terminal for the frozen Provider configuration.
 
 An unchanged repository may produce the same content-addressed Subject digest.
 Subject Freeze can reuse that private publication only after revalidating its

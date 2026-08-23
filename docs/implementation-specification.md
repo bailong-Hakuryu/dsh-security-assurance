@@ -394,7 +394,7 @@ complete merely because its internal classes exist.
 ### Phase 6 — adapters and Workbench
 
 - bounded model tools;
-- Control Plane Assurance Provider;
+- Control Plane Assurance Provider with pre-Assessment Repository Binding;
 - Typert Remote and Client Workbench;
 - semantic parity across Service, tools, Remote, and Provider;
 - real-browser authorization and HMR/disposal journeys.

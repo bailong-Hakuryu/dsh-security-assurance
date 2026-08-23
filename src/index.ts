@@ -12,6 +12,7 @@ import {
   getRepositoryRequestSchema,
   getHealthRequestSchema,
   listRepositoriesRequestSchema,
+  repositoryIdSchema,
   registerRepositoryRequestSchema,
   resumeAssessmentRequestSchema,
   startAssessmentRequestSchema,
@@ -64,6 +65,10 @@ import {
   controlPlaneAssessmentIdentitySchema,
   LOOKUP_CONTROL_PLANE_ASSESSMENT,
 } from './internal/control-plane-assessment.ts'
+import {
+  VERIFY_CONTROL_PLANE_REPOSITORY_BINDING,
+  type ControlPlaneRepositoryBindingMatcher,
+} from './internal/control-plane-repository-binding.ts'
 import type { TrustedCallerChannel } from './internal/authority.ts'
 import { deepFreeze } from './internal/freeze.ts'
 import { publicAssessmentSnapshot } from './internal/assessment-record.ts'
@@ -253,6 +258,37 @@ export class SecurityAssuranceService extends Service {
           idempotencyKey: parsed.data.idempotencyKey,
           repositoryId: parsed.data.repositoryId,
         })
+      },
+    })
+    Object.defineProperty(this, VERIFY_CONTROL_PLANE_REPOSITORY_BINDING, {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: async (
+        invocation: SecurityInvocation,
+        repositoryId: unknown,
+        matcher: ControlPlaneRepositoryBindingMatcher,
+      ) => {
+        const authority = this.authorityResolver.authority(invocation)
+        if (
+          authority?.kind !== 'control-plane'
+          || !authority.permissions.has('repository:read')
+        ) throw new TypeError('control-plane Repository binding verification is unauthorized')
+        const parsedRepositoryId = repositoryIdSchema.safeParse(repositoryId)
+        if (!parsedRepositoryId.success || typeof matcher?.matchesCanonicalRepository !== 'function') {
+          throw new TypeError('control-plane Repository binding verification is invalid')
+        }
+        const persistence = await this.ready
+        if (persistence === undefined || this.disposed) {
+          throw new SecurityPersistenceError('corrupt_database', 'Repository store is unavailable')
+        }
+        const repository = persistence.resolveRepository(parsedRepositoryId.data)
+        if (repository === undefined) return false
+        try {
+          return matcher.matchesCanonicalRepository(repository.canonicalRoot) === true
+        } catch {
+          return false
+        }
       },
     })
     void this.ready.catch(() => {})
