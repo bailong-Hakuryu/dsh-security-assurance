@@ -1122,6 +1122,10 @@ _Avoid_: Repository-wide claim, free-form target, absolute path
 The stable-read materialization, manifesting, integrity verification, and atomic publication that must succeed before an Assessment is created.
 _Avoid_: Assessment start Receipt, live workspace read, partial staging
 
+**Control Plane Assurance Retry**:
+The optional Adapter handling of a successor Control Plane Provider Invocation by starting a distinct Security Assessment against the same frozen Mission Attempt Subject selection while preserving the predecessor Assessment as terminal history.
+_Avoid_: Provider recovery, resumeAssessment, reusing a canceled Assessment
+
 **Assessment List Item**:
 The low-sensitivity bounded summary of one Assessment returned in a watermarked paginated list without Evidence or aggregate internals.
 _Avoid_: Assessment Snapshot, Finding Summary, list cursor

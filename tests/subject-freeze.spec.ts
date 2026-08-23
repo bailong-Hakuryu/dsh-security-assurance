@@ -104,6 +104,20 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
         subject: { kind: 'git_revision', commit: '0000000000000000000000000000000000000000' },
       })).resolves.toMatchObject({ ok: false, error: { code: 'IDEMPOTENCY_CONFLICT' } })
 
+      const retried = await ctx.securityAssurance.startAssessment(invocation, {
+        ...request,
+        idempotencyKey: 'assessment-workspace-start-2',
+      })
+      expect(retried).toMatchObject({
+        ok: true,
+        value: {
+          assessmentId: expect.stringMatching(/^asm-[0-9a-f-]{36}$/u),
+          subject: { digest: started.value.subject.digest },
+        },
+      })
+      if (!retried.ok) throw new Error(`retry start failed: ${retried.error.code}`)
+      expect(retried.value.assessmentId).not.toBe(started.value.assessmentId)
+
       const subjectRoot = join(
         dshHome,
         'security-assurance',

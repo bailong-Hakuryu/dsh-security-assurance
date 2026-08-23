@@ -621,7 +621,9 @@ export async function freezeSubject(options: FreezeSubjectOptions): Promise<Froz
       await lockTree(publishedRoot)
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      if (code !== 'EEXIST' && code !== 'ENOTEMPTY') throw error
+      if (code !== 'EEXIST' && code !== 'ENOTEMPTY' && code !== 'EPERM' && code !== 'EACCES') {
+        throw error
+      }
       await verifyPublishedSnapshot(publishedRoot, rootDigest)
       await rm(stagingRoot, { recursive: true, force: true })
       published = true

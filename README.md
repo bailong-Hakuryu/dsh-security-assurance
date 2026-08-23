@@ -151,6 +151,18 @@ copies and revalidates that value and remains the sole owner of Mission
 Assurance Results and the Quality Gate. The two plugins never share SQLite
 files, writable Evidence paths, transactions, or Kernel objects.
 
+Control Plane Assurance Retry is distinct from that same-Invocation recovery.
+After an `external_failed` outcome blocks the Gate, explicit Mission Resume
+creates a successor Control Plane Invocation. Its new Invocation identity gives
+the Adapter a new idempotent Assessment start identity, so Security Assurance
+creates a distinct Assessment and preserves the blocked, canceled, or failed
+predecessor unchanged. If the repository content is unchanged, Subject Freeze
+may reuse the existing private content-addressed Snapshot only after complete
+Manifest and file-digest verification; Windows rename collision codes grant no
+authority by themselves. Dual-plugin conformance proves the first Assessment
+remains `CANCELED`, the successor seals independently, and only the Control
+Plane recomputes its current Assurance Result and Gate.
+
 On explicit Mission cancellation, the Adapter's separate `cancel()` operation
 uses a package-private, authority-checked lookup for the existing
 `startAssessment` idempotency record. It never creates an Assessment merely to

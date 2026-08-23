@@ -158,7 +158,15 @@ async function waitForApprovedMission(ctx: Context, agent: Agent, missionId: str
   let last = await ctx.engineeringControlPlane.status(agent, missionId, new AbortController().signal)
   while (last.status !== 'APPROVED') {
     if (last.status === 'REWORK_REQUIRED' || last.status === 'CANCELLED') return last
-    if (Date.now() >= deadline) throw new Error(`Mission did not approve (last status: ${last.status})`)
+    if (Date.now() >= deadline) {
+      throw new Error(`Mission did not approve: ${JSON.stringify({
+        status: last.status,
+        blocked: last.blocked,
+        invocations: last.assuranceProviderInvocations,
+        results: last.assuranceResults,
+        gate: last.gate,
+      })}`)
+    }
     await new Promise(resolve => setTimeout(resolve, 20))
     last = await ctx.engineeringControlPlane.status(agent, missionId, new AbortController().signal)
   }
@@ -381,6 +389,161 @@ describe('Security Assurance Control Plane Provider', () => {
       await subprocessFiber.dispose()
     }
   })
+
+  it('starts a new Security Assessment only after explicit Assurance Retry', async () => {
+    const repository = await nodeRepositoryFixture({
+      name: 'security-assurance-retry-control-plane-fixture',
+      version: '1.0.0',
+      type: 'module',
+    }, 150)
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-control-plane-assurance-retry-home-'))
+    temporaryRoots.push(dshHome)
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+    const ctx = new Context()
+    const subprocessFiber = await ctx.plugin(LocalSubprocessRuntime)
+    const subagentFiber = await ctx.plugin(SubagentRuntime)
+    const disposeScriptedProvider = registerScriptedEngineeringProvider(ctx)
+    const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.securityAssurance.whenReady()
+    const invocation = referenceHostInvocation(ctx.securityAssurance)
+    const registered = await ctx.securityAssurance.registerRepository(invocation, {
+      schemaVersion: 1,
+      idempotencyKey: 'control-plane-assurance-retry-register-1',
+      root: repository,
+      displayName: 'Control Plane Assurance Retry fixture',
+      bindings: {
+        policyId: 'security/node-package-lifecycle',
+        assessmentProfileId: 'security/standard',
+        evidenceProtectionId: 'evidence/local-protected',
+        dataEgressPolicyId: 'egress/deny-by-default',
+        platform,
+        deliveryDestinationIds: [],
+      },
+    })
+    if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+    const controlPlaneFiber = await ctx.plugin(
+      EngineeringControlPlane,
+      controlPlaneConfig(repository, dshHome, registered.value.repositoryId),
+    )
+    await ctx.engineeringControlPlane.whenReady()
+    const adapterFiber = await ctx.plugin(SecurityAssuranceControlPlaneProvider)
+    const assessmentIds: string[] = []
+    let resolveFirstAssessment!: (assessmentId: string) => void
+    const firstAssessmentStarted = new Promise<string>(resolve => { resolveFirstAssessment = resolve })
+    let releaseFirstAssessment!: () => void
+    const firstAssessmentHold = new Promise<void>(resolve => { releaseFirstAssessment = resolve })
+    const disposeCheckpoint = installControlPlaneCancellationCrashCheckpoint(
+      ctx.securityAssurance,
+      async event => {
+        if (event.name !== 'after_assessment_started') return
+        assessmentIds.push(event.assessmentId)
+        if (assessmentIds.length !== 1) return
+        resolveFirstAssessment(event.assessmentId)
+        await firstAssessmentHold
+      },
+    )
+
+    try {
+      const agent = {
+        id: 'agent-security-control-plane-assurance-retry-fixture',
+        session: { header: { cwd: repository } },
+      } as unknown as Agent
+      const receipt = await ctx.engineeringControlPlane.start(agent, {
+        idempotencyKey: 'security-control-plane-provider:assurance-retry:1',
+        objective: 'Retry one canceled Security Assessment without rewriting its history',
+      }, new AbortController().signal)
+      await waitForProviderInvocation(ctx, agent, receipt.missionId, ['begun'])
+      const firstAssessmentId = await Promise.race([
+        firstAssessmentStarted,
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error('First Security Assessment did not start')), 15_000)
+        }),
+      ])
+      let firstAssessment = await ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: firstAssessmentId as never,
+      })
+      const runningDeadline = Date.now() + 5_000
+      while (firstAssessment.ok && firstAssessment.value.state === 'CREATED' && Date.now() < runningDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 10))
+        firstAssessment = await ctx.securityAssurance.getAssessment(invocation, {
+          schemaVersion: 1,
+          assessmentId: firstAssessmentId as never,
+        })
+      }
+      if (!firstAssessment.ok || firstAssessment.value.state !== 'RUNNING') {
+        throw new Error(`First Security Assessment was not cancellable: ${JSON.stringify(firstAssessment)}`)
+      }
+      const canceled = await ctx.securityAssurance.cancelAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: firstAssessment.value.assessmentId,
+        expectedAssessmentRevision: firstAssessment.value.assessmentRevision,
+        idempotencyKey: 'control-plane-assurance-retry-cancel-1',
+        reason: {
+          code: 'OPERATOR_REQUEST',
+          summary: 'Create a deterministic External Assessment Failure for Assurance Retry conformance.',
+        },
+      })
+      expect(canceled).toMatchObject({ ok: true, value: { acceptedState: 'RUNNING' } })
+      releaseFirstAssessment()
+
+      const blocked = await waitForTerminalMission(ctx, agent, receipt.missionId)
+      expect(blocked).toMatchObject({
+        status: 'BLOCKED',
+        assuranceProviderInvocations: [{
+          state: 'external_failed',
+          failure: { reason: 'canceled', code: 'assessment_canceled' },
+        }],
+        assuranceResults: [{
+          outcome: 'indeterminate',
+          reasonCodes: ['external_assessment_canceled'],
+        }],
+      })
+      const failedInvocationId = blocked.assuranceProviderInvocations?.[0]?.invocationId
+      if (failedInvocationId === undefined) throw new Error('Failed Control Plane Invocation is missing')
+
+      await ctx.engineeringControlPlane.resume(agent, {
+        missionId: blocked.missionId,
+        expectedRevision: blocked.revision,
+        supplementalContext: 'Start a fresh Security Assessment; do not reuse the canceled Assessment.',
+      }, new AbortController().signal)
+      const approved = await waitForApprovedMission(ctx, agent, blocked.missionId)
+      expect(approved.status).toBe('APPROVED')
+      expect(assessmentIds).toHaveLength(2)
+      expect(assessmentIds[1]).not.toBe(assessmentIds[0])
+      expect(approved.assuranceProviderInvocations).toEqual([
+        expect.objectContaining({
+          invocationId: failedInvocationId,
+          state: 'external_failed',
+        }),
+        expect.objectContaining({
+          replacementForInvocationId: failedInvocationId,
+          state: 'settled',
+          outcome: expect.objectContaining({ claimedOutcome: 'satisfied' }),
+        }),
+      ])
+      await expect(ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: assessmentIds[0] as never,
+      })).resolves.toMatchObject({ ok: true, value: { state: 'CANCELED', verdict: null, seal: null } })
+      await expect(ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: assessmentIds[1] as never,
+      })).resolves.toMatchObject({ ok: true, value: { state: 'SEALED', verdict: 'SATISFIED' } })
+    } finally {
+      releaseFirstAssessment()
+      disposeCheckpoint()
+      await adapterFiber.dispose()
+      await controlPlaneFiber.dispose()
+      await securityFiber.dispose()
+      disposeScriptedProvider()
+      await subagentFiber.dispose()
+      await subprocessFiber.dispose()
+    }
+  }, 40_000)
 
   it('reconciles one begun invocation across both plugin restarts only after explicit Mission resume', async () => {
     const repository = await nodeRepositoryFixture({
