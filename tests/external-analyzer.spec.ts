@@ -270,6 +270,389 @@ describe('external Analyzer composition', () => {
     }
   })
 
+  it('seals a precisely qualified Reference Analyzer contribution as Gate-bearing Coverage', async () => {
+    const repository = await repositoryFixture()
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-qualified-analyzer-home-'))
+    temporaryRoots.push(dshHome)
+    const ctx = new Context()
+    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const descriptor: AnalyzerDescriptorV1 = {
+      schemaVersion: 1,
+      analyzerId: 'fixture/reference-qualified',
+      analyzerVersion: '1.0.0',
+      descriptorSchemaVersion: 1,
+      buildDigest: {
+        schemaVersion: 1,
+        algorithm: 'sha256',
+        mediaType: 'application/vnd.fixture.reference-qualified-analyzer+json',
+        byteLength: 1,
+        canonicalization: 'dsh-canonical-json-v1',
+        value: '5'.repeat(64),
+      },
+      executionClass: 'PURE',
+      supportedAssessmentModes: ['REPOSITORY'],
+      supportedPolicyIds: ['security/reference-qualified'],
+      coverageObligationIds: ['application-security-analysis'],
+      evidenceSchemaIds: ['fixture/reference-qualified-evidence'],
+      egress: 'NONE',
+    }
+    const qualification = {
+      schemaVersion: 1 as const,
+      qualificationId: 'fixture/qualification/reference-qualified/v1',
+      analyzerIdentity: {
+        analyzerId: descriptor.analyzerId,
+        analyzerVersion: descriptor.analyzerVersion,
+        descriptorSchemaVersion: descriptor.descriptorSchemaVersion,
+        buildDigest: descriptor.buildDigest,
+      },
+      issuerId: 'fixture/qualification-authority',
+      level: 'HOST_ATTESTED' as const,
+      supportedEcosystemIds: ['fixture/reference'],
+      supportedAssessmentModes: ['REPOSITORY'] as const,
+      supportedPolicyIds: ['security/reference-qualified'],
+      coverageObligationIds: ['application-security-analysis'],
+      evidenceSchemaIds: ['fixture/reference-qualified-evidence'],
+      executionClass: 'PURE' as const,
+      executionBackendId: 'dsh/security-assurance/in-process-pure-v1',
+      providerIds: ['dsh-security-assurance'],
+      egress: 'NONE' as const,
+      platforms: ['win32', 'linux', 'darwin'] as const,
+      issuedAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      evidenceDigests: [{
+        schemaVersion: 1 as const,
+        algorithm: 'sha256' as const,
+        mediaType: 'application/vnd.fixture.qualification-evidence+json',
+        byteLength: 1,
+        canonicalization: 'dsh-canonical-json-v1' as const,
+        value: '6'.repeat(64),
+      }],
+      limitations: ['Conformance reference only.'],
+      qualificationDigest: {
+        schemaVersion: 1 as const,
+        algorithm: 'sha256' as const,
+        mediaType: 'application/vnd.dsh.security.analyzer-qualification+json',
+        byteLength: 1360,
+        canonicalization: 'dsh-canonical-json-v1' as const,
+        value: 'a2fb3a459aa2408b5fdc5b2ffd76094110b49037ba49b9049c39c2ce5be354eb',
+      },
+    }
+    let disposeAnalyzer = () => {}
+    let disposeQualification = () => {}
+
+    try {
+      disposeAnalyzer = ctx.securityAssurance.registerAnalyzer(descriptor, normalizedDescriptor => ({
+        descriptor: normalizedDescriptor,
+        async analyze(input) {
+          return {
+            schemaVersion: 1,
+            analyzerIdentity: {
+              analyzerId: normalizedDescriptor.analyzerId,
+              analyzerVersion: normalizedDescriptor.analyzerVersion,
+              descriptorSchemaVersion: normalizedDescriptor.descriptorSchemaVersion,
+              buildDigest: normalizedDescriptor.buildDigest,
+            },
+            subjectDigest: input.subject.digest,
+            completionDisposition: 'COMPLETE',
+            coverageClaims: [{
+              obligationId: 'application-security-analysis',
+              completion: 'COMPLETE',
+              evidenceArtifactId: 'reference-qualified-evidence',
+            }],
+            candidateFindings: [],
+            evidence: [{
+              artifactId: 'reference-qualified-evidence',
+              schemaId: 'fixture/reference-qualified-evidence',
+              mediaType: 'application/json',
+              value: { schemaVersion: 1, result: 'qualified-clean' },
+            }],
+            diagnostics: [],
+            resourceUse: { filesRead: 1, bytesRead: 0 },
+          }
+        },
+        async dispose() {},
+      }))
+      expect(() => ctx.securityAssurance.registerAnalyzerQualification({
+        ...qualification,
+        analyzerIdentity: {
+          ...qualification.analyzerIdentity,
+          analyzerVersion: '2.0.0',
+        },
+      })).toThrow('Analyzer Qualification digest does not bind its canonical record')
+      disposeQualification = ctx.securityAssurance.registerAnalyzerQualification(qualification)
+      expect(() => ctx.securityAssurance.registerAnalyzerQualification(qualification)).toThrow(
+        `Analyzer Qualification '${qualification.qualificationId}' conflicts with an existing registration`,
+      )
+      expect(Object.isFrozen(qualification)).toBe(false)
+
+      const invocation = referenceHostInvocation(ctx.securityAssurance)
+      const platform = process.platform
+      if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+        throw new Error(`unsupported test platform: ${platform}`)
+      }
+      const registered = await ctx.securityAssurance.registerRepository(invocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'qualified-analyzer-register-1',
+        root: repository,
+        displayName: 'Qualified Analyzer fixture',
+        bindings: {
+          policyId: 'security/reference-qualified',
+          assessmentProfileId: 'security/standard',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform,
+          deliveryDestinationIds: [],
+        },
+      })
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+      const started = await ctx.securityAssurance.startAssessment(invocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'qualified-analyzer-assessment-1',
+        repositoryId: registered.value.repositoryId,
+        subject: { kind: 'workspace_snapshot' },
+        assessmentMode: 'REPOSITORY',
+        assessmentProfileId: 'security/standard',
+        target: { kind: 'repository' },
+        requestedStrongerControlIds: [],
+      })
+      if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
+      await waitUntilState(ctx.securityAssurance, invocation, started.value.assessmentId, 'SEALED')
+
+      await expect(ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          state: 'SEALED',
+          verdict: 'SATISFIED',
+          coverage: {
+            status: 'COMPLETE',
+            resolutions: [{
+              obligationId: 'application-security-analysis',
+              state: 'SATISFIED',
+              reason: 'ELIGIBLE_EVIDENCE',
+            }],
+          },
+        },
+      })
+      const submission = await ctx.securityAssurance.getAssuranceSubmission(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })
+      expect(submission).toMatchObject({
+        ok: true,
+        value: {
+          payload: {
+            assessment: { verdict: 'SATISFIED' },
+            providerComposition: {
+              value: {
+                analyzers: [{
+                  analyzerId: descriptor.analyzerId,
+                  analyzerVersion: descriptor.analyzerVersion,
+                  qualificationId: qualification.qualificationId,
+                  qualificationDigest: qualification.qualificationDigest,
+                  verdictEligible: true,
+                }],
+              },
+            },
+            evidence: expect.arrayContaining([
+              expect.objectContaining({ schemaId: 'fixture/reference-qualified-evidence' }),
+              expect.objectContaining({ schemaId: 'dsh/security-evidence-eligibility-decision' }),
+            ]),
+          },
+        },
+      })
+    } finally {
+      disposeQualification()
+      disposeAnalyzer()
+      await fiber.dispose()
+    }
+  })
+
+  it('keeps an expired exact Qualification advisory and visible in Provider Composition', async () => {
+    const repository = await repositoryFixture()
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-expired-qualification-home-'))
+    temporaryRoots.push(dshHome)
+    const ctx = new Context()
+    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const descriptor: AnalyzerDescriptorV1 = {
+      schemaVersion: 1,
+      analyzerId: 'fixture/reference-expired',
+      analyzerVersion: '1.0.0',
+      descriptorSchemaVersion: 1,
+      buildDigest: {
+        schemaVersion: 1,
+        algorithm: 'sha256',
+        mediaType: 'application/vnd.fixture.reference-expired-analyzer+json',
+        byteLength: 1,
+        canonicalization: 'dsh-canonical-json-v1',
+        value: '8'.repeat(64),
+      },
+      executionClass: 'PURE',
+      supportedAssessmentModes: ['REPOSITORY'],
+      supportedPolicyIds: ['security/reference-expired'],
+      coverageObligationIds: ['application-security-analysis'],
+      evidenceSchemaIds: ['fixture/reference-expired-evidence'],
+      egress: 'NONE',
+    }
+    const qualification = {
+      schemaVersion: 1 as const,
+      qualificationId: 'fixture/qualification/reference-expired/v1',
+      analyzerIdentity: {
+        analyzerId: descriptor.analyzerId,
+        analyzerVersion: descriptor.analyzerVersion,
+        descriptorSchemaVersion: descriptor.descriptorSchemaVersion,
+        buildDigest: descriptor.buildDigest,
+      },
+      issuerId: 'fixture/qualification-authority',
+      level: 'HOST_ATTESTED' as const,
+      supportedEcosystemIds: ['fixture/reference'],
+      supportedAssessmentModes: ['REPOSITORY'] as const,
+      supportedPolicyIds: ['security/reference-expired'],
+      coverageObligationIds: ['application-security-analysis'],
+      evidenceSchemaIds: ['fixture/reference-expired-evidence'],
+      executionClass: 'PURE' as const,
+      executionBackendId: 'dsh/security-assurance/in-process-pure-v1',
+      providerIds: ['dsh-security-assurance'],
+      egress: 'NONE' as const,
+      platforms: ['win32', 'linux', 'darwin'] as const,
+      issuedAt: '2020-01-01T00:00:00.000Z',
+      expiresAt: '2021-01-01T00:00:00.000Z',
+      evidenceDigests: [{
+        schemaVersion: 1 as const,
+        algorithm: 'sha256' as const,
+        mediaType: 'application/vnd.fixture.qualification-evidence+json',
+        byteLength: 1,
+        canonicalization: 'dsh-canonical-json-v1' as const,
+        value: '9'.repeat(64),
+      }],
+      limitations: ['Expired conformance reference.'],
+      qualificationDigest: {
+        schemaVersion: 1 as const,
+        algorithm: 'sha256' as const,
+        mediaType: 'application/vnd.dsh.security.analyzer-qualification+json',
+        byteLength: 1353,
+        canonicalization: 'dsh-canonical-json-v1' as const,
+        value: '87c5a2fdd38e48b49cf87871e0ba786d61635edf8ef9ae0ba536fdd835118f17',
+      },
+    }
+    const disposeAnalyzer = ctx.securityAssurance.registerAnalyzer(
+      descriptor,
+      normalizedDescriptor => ({
+        descriptor: normalizedDescriptor,
+        async analyze(input) {
+          return {
+            schemaVersion: 1,
+            analyzerIdentity: {
+              analyzerId: normalizedDescriptor.analyzerId,
+              analyzerVersion: normalizedDescriptor.analyzerVersion,
+              descriptorSchemaVersion: normalizedDescriptor.descriptorSchemaVersion,
+              buildDigest: normalizedDescriptor.buildDigest,
+            },
+            subjectDigest: input.subject.digest,
+            completionDisposition: 'COMPLETE',
+            coverageClaims: [{
+              obligationId: 'application-security-analysis',
+              completion: 'COMPLETE',
+              evidenceArtifactId: 'reference-expired-evidence',
+            }],
+            candidateFindings: [],
+            evidence: [{
+              artifactId: 'reference-expired-evidence',
+              schemaId: 'fixture/reference-expired-evidence',
+              mediaType: 'application/json',
+              value: { schemaVersion: 1, result: 'expired-clean' },
+            }],
+            diagnostics: [],
+            resourceUse: { filesRead: 1, bytesRead: 0 },
+          }
+        },
+        async dispose() {},
+      }),
+    )
+    const disposeQualification = ctx.securityAssurance.registerAnalyzerQualification(qualification)
+
+    try {
+      const invocation = referenceHostInvocation(ctx.securityAssurance)
+      const platform = process.platform
+      if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+        throw new Error(`unsupported test platform: ${platform}`)
+      }
+      const registered = await ctx.securityAssurance.registerRepository(invocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'expired-qualification-register-1',
+        root: repository,
+        displayName: 'Expired Qualification fixture',
+        bindings: {
+          policyId: 'security/reference-expired',
+          assessmentProfileId: 'security/standard',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform,
+          deliveryDestinationIds: [],
+        },
+      })
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+      const started = await ctx.securityAssurance.startAssessment(invocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'expired-qualification-assessment-1',
+        repositoryId: registered.value.repositoryId,
+        subject: { kind: 'workspace_snapshot' },
+        assessmentMode: 'REPOSITORY',
+        assessmentProfileId: 'security/standard',
+        target: { kind: 'repository' },
+        requestedStrongerControlIds: [],
+      })
+      if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
+      await waitUntilState(ctx.securityAssurance, invocation, started.value.assessmentId, 'SEALED')
+
+      await expect(ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          state: 'SEALED',
+          verdict: 'INDETERMINATE',
+          coverage: { status: 'GAP' },
+        },
+      })
+      await expect(ctx.securityAssurance.getAssuranceSubmission(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          payload: {
+            providerComposition: {
+              value: {
+                analyzers: [{
+                  qualificationId: qualification.qualificationId,
+                  qualificationDigest: qualification.qualificationDigest,
+                  verdictEligible: false,
+                }],
+              },
+            },
+            evidence: expect.arrayContaining([
+              expect.objectContaining({
+                schemaId: 'dsh/security-evidence-eligibility-decision',
+                value: expect.objectContaining({
+                  decision: 'INELIGIBLE',
+                  reason: 'QUALIFICATION_EXPIRED',
+                }),
+              }),
+            ]),
+          },
+        },
+      })
+    } finally {
+      disposeQualification()
+      disposeAnalyzer()
+      await fiber.dispose()
+    }
+  })
+
   it('blocks when an external Analyzer returns a Contribution for another Subject', async () => {
     const repository = await repositoryFixture()
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-external-analyzer-tampered-home-'))

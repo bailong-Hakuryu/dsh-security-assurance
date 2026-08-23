@@ -60,6 +60,8 @@ import type {
 import type {
   AnalyzerDescriptorV1,
   AnalyzerFactoryV1,
+  AnalyzerQualificationRecordV1,
+  AnalyzerQualificationRegistrationDisposer,
   AnalyzerRegistrationDisposer,
 } from './analyzer.ts'
 import {
@@ -333,6 +335,14 @@ export class SecurityAssuranceService extends Service {
     return this.analyzerRegistry.register(descriptor, factory)
   }
 
+  /** Register one Host-trusted Qualification candidate during startup composition. */
+  registerAnalyzerQualification(
+    record: AnalyzerQualificationRecordV1,
+  ): AnalyzerQualificationRegistrationDisposer {
+    if (this.disposed) throw new TypeError('Security Assurance is disposed')
+    return this.analyzerRegistry.registerQualification(record)
+  }
+
   /** Return a bounded authorized Runtime Health Snapshot. */
   async getHealth(
     invocation: SecurityInvocation,
@@ -587,9 +597,12 @@ export class SecurityAssuranceService extends Service {
         return deepFreeze({ ok: true, value: replay })
       }
 
+      const qualificationEvaluationInstant = new Date().toISOString()
       const analyzerPortfolio = this.analyzerRegistry.freezeSelection(
         repository.snapshot.bindings.policyId,
         parsed.data.assessmentMode,
+        repository.snapshot.bindings.platform,
+        qualificationEvaluationInstant,
       )
 
       const frozen = await freezeSubject({
@@ -934,12 +947,12 @@ export class SecurityAssuranceService extends Service {
           }
         : undefined
       const externalAnalyses = await Promise.all(running.contract.analyzerPortfolio.map(
-        async descriptor => ({
-          descriptor,
-          contribution: await this.analyzerRegistry.execute(descriptor, {
+        async portfolioEntry => ({
+          portfolioEntry,
+          contribution: await this.analyzerRegistry.execute(portfolioEntry.descriptor, {
             schemaVersion: 1,
             assessmentId,
-            attemptId: `${assessmentId}:${descriptor.analyzerId}:${runningRevision}`,
+            attemptId: `${assessmentId}:${portfolioEntry.descriptor.analyzerId}:${runningRevision}`,
             assessmentMode: running.contract.assessmentMode,
             subject: {
               digest: running.subject.digest,
@@ -954,7 +967,7 @@ export class SecurityAssuranceService extends Service {
               policyId: running.contract.policy.policyId,
               digest: running.contract.policy.digest,
             },
-            coverageObligationIds: descriptor.coverageObligationIds,
+            coverageObligationIds: portfolioEntry.descriptor.coverageObligationIds,
           }, { signal }),
         }),
       ))

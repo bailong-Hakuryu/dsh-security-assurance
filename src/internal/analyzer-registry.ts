@@ -4,21 +4,33 @@ import type {
   AnalyzerFactoryV1,
   AnalyzerInputV1,
   AnalyzerInvocationOptions,
+  AnalyzerPortfolioEntryV1,
+  AnalyzerQualificationRecordV1,
+  AnalyzerQualificationRegistrationDisposer,
   AnalyzerRegistrationDisposer,
 } from '../analyzer.ts'
 import {
   analyzerContributionV1Schema,
   analyzerInputV1Schema,
   parseAnalyzerDescriptorV1,
+  parseAnalyzerQualificationRecordV1,
 } from '../analyzer.ts'
-import type { AssessmentMode } from '../contracts.ts'
-import { canonicalJson } from './canonical.ts'
+import {
+  SECURITY_ASSURANCE_PRODUCT_NAME,
+} from '../contracts.ts'
+import type {
+  AssessmentMode,
+  RepositoryPlatform,
+} from '../contracts.ts'
+import { canonicalJson, structuredDigest } from './canonical.ts'
 import { deepFreeze } from './freeze.ts'
 
 export type AnalyzerRegistryErrorCode =
   | 'registration_closed'
   | 'duplicate_registration'
+  | 'duplicate_qualification'
   | 'invalid_factory'
+  | 'invalid_qualification'
   | 'registration_missing'
   | 'invalid_instance'
   | 'invalid_contribution'
@@ -53,6 +65,8 @@ function exactDescriptor(
  */
 export class AnalyzerRegistry {
   private readonly registrations = new Map<string, AnalyzerRegistration>()
+  private readonly qualifications = new Map<string, AnalyzerQualificationRecordV1>()
+  private readonly qualificationIds = new Map<string, AnalyzerQualificationRecordV1>()
   private registrationClosed = false
 
   register(candidate: unknown, factory: AnalyzerFactoryV1): AnalyzerRegistrationDisposer {
@@ -85,8 +99,61 @@ export class AnalyzerRegistry {
     }
   }
 
-  /** Freeze exact pure-data identities and close further startup composition. */
-  freezeSelection(policyId: string, assessmentMode: AssessmentMode): readonly AnalyzerDescriptorV1[] {
+  registerQualification(candidate: unknown): AnalyzerQualificationRegistrationDisposer {
+    if (this.registrationClosed) {
+      throw new AnalyzerRegistryError(
+        'registration_closed',
+        'Analyzer Qualification registration is closed after Assessment admission began',
+      )
+    }
+    const qualification = parseAnalyzerQualificationRecordV1(candidate)
+    const { qualificationDigest, ...qualificationCore } = qualification
+    const observedDigest = structuredDigest(
+      qualificationDigest.mediaType,
+      qualificationCore,
+    )
+    if (
+      qualificationDigest.mediaType
+        !== 'application/vnd.dsh.security.analyzer-qualification+json'
+      || canonicalJson(observedDigest) !== canonicalJson(qualificationDigest)
+    ) {
+      throw new AnalyzerRegistryError(
+        'invalid_qualification',
+        'Analyzer Qualification digest does not bind its canonical record',
+      )
+    }
+    const identityKey = canonicalJson(qualification.analyzerIdentity)
+    if (
+      this.qualifications.has(identityKey)
+      || this.qualificationIds.has(qualification.qualificationId)
+    ) {
+      throw new AnalyzerRegistryError(
+        'duplicate_qualification',
+        `Analyzer Qualification '${qualification.qualificationId}' conflicts with an existing registration`,
+      )
+    }
+    this.qualifications.set(identityKey, qualification)
+    this.qualificationIds.set(qualification.qualificationId, qualification)
+    let disposed = false
+    return () => {
+      if (disposed) return
+      disposed = true
+      if (this.qualifications.get(identityKey) === qualification) {
+        this.qualifications.delete(identityKey)
+      }
+      if (this.qualificationIds.get(qualification.qualificationId) === qualification) {
+        this.qualificationIds.delete(qualification.qualificationId)
+      }
+    }
+  }
+
+  /** Freeze exact identities, Qualification candidates and Kernel-owned eligibility decisions. */
+  freezeSelection(
+    policyId: string,
+    assessmentMode: AssessmentMode,
+    platform: RepositoryPlatform,
+    evaluatedAt: string,
+  ): readonly AnalyzerPortfolioEntryV1[] {
     this.registrationClosed = true
     return deepFreeze([...this.registrations.values()]
       .map(registration => registration.descriptor)
@@ -94,7 +161,62 @@ export class AnalyzerRegistry {
         descriptor.supportedPolicyIds.includes(policyId)
         && descriptor.supportedAssessmentModes.includes(assessmentMode)
       ))
-      .sort((left, right) => key(left).localeCompare(key(right))))
+      .sort((left, right) => key(left).localeCompare(key(right)))
+      .map(descriptor => {
+        const analyzerIdentity = {
+          analyzerId: descriptor.analyzerId,
+          analyzerVersion: descriptor.analyzerVersion,
+          descriptorSchemaVersion: descriptor.descriptorSchemaVersion,
+          buildDigest: descriptor.buildDigest,
+        }
+        const qualification = this.qualifications.get(canonicalJson(analyzerIdentity)) ?? null
+        let reason:
+          | 'QUALIFICATION_MISSING'
+          | 'QUALIFICATION_SCOPE_MISMATCH'
+          | 'QUALIFICATION_NOT_YET_VALID'
+          | 'QUALIFICATION_EXPIRED'
+          | null = null
+        if (qualification === null) {
+          reason = 'QUALIFICATION_MISSING'
+        } else if (Date.parse(evaluatedAt) < Date.parse(qualification.issuedAt)) {
+          reason = 'QUALIFICATION_NOT_YET_VALID'
+        } else if (Date.parse(evaluatedAt) >= Date.parse(qualification.expiresAt)) {
+          reason = 'QUALIFICATION_EXPIRED'
+        } else if (
+          qualification.executionClass !== descriptor.executionClass
+          || qualification.egress !== descriptor.egress
+          || qualification.executionBackendId !== 'dsh/security-assurance/in-process-pure-v1'
+          || !qualification.providerIds.includes(SECURITY_ASSURANCE_PRODUCT_NAME)
+          || !qualification.supportedAssessmentModes.includes(assessmentMode)
+          || !qualification.supportedPolicyIds.includes(policyId)
+          || !qualification.platforms.includes(platform)
+          || descriptor.coverageObligationIds.some(
+            obligationId => !qualification.coverageObligationIds.includes(obligationId),
+          )
+          || descriptor.evidenceSchemaIds.some(
+            schemaId => !qualification.evidenceSchemaIds.includes(schemaId),
+          )
+        ) {
+          reason = 'QUALIFICATION_SCOPE_MISMATCH'
+        }
+        const eligible = reason === null
+        return {
+          descriptor,
+          qualification,
+          eligibility: {
+            schemaVersion: 1,
+            decision: eligible ? 'ELIGIBLE' : 'INELIGIBLE',
+            reason,
+            evaluatedAt,
+            analyzerIdentity,
+            qualificationId: qualification?.qualificationId ?? null,
+            qualificationDigest: qualification?.qualificationDigest ?? null,
+            policyId,
+            assessmentMode,
+            platform,
+          },
+        }
+      }))
   }
 
   /** Resolve the exact frozen registration, create one Attempt instance, validate and dispose it. */

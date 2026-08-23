@@ -48,6 +48,12 @@ This repository is under active vertical-slice development, not at the
 - sealed advisory Evidence from unqualified external Pure Analyzers while
   mandatory Coverage remains a visible `EVIDENCE_INELIGIBLE` Gap and the
   Verdict remains `INDETERMINATE`;
+- Host-trusted, canonical-digest-bound external Analyzer Qualification Records
+  covering exact Analyzer build, Policy, Mode, Coverage, Evidence schemas,
+  execution backend, Provider, egress, platform, issuance, and expiry;
+- frozen per-Assessment Eligibility Decisions: a precisely qualified complete
+  Reference Analyzer may satisfy its one declared obligation, while missing,
+  scope-incompatible, not-yet-valid, or expired Qualification remains Advisory;
 - staged, content-addressed publication of Analyzer Contribution, redacted Node
   package-manifest Evidence, and Evidence Eligibility Decision before sealing;
 - deterministic tri-state results for that scoped Policy: complete eligible
@@ -89,11 +95,12 @@ This repository is under active vertical-slice development, not at the
   is rejected before Evidence import, and a frozen Provider that disappears
   mid-Attempt without falling back to another registered version.
 
-Qualified Gate-bearing external Analyzers, process or agent Analyzers, general
+Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
-tools, and Workbench are deliberately not claimed as implemented yet. The
-built-in Analyzer's development Qualification applies only to the exact Node
-package install-lifecycle key-presence contract; a
+tools, and Workbench are deliberately not claimed as implemented yet. This
+repository ships no production external Qualification or external Analyzer
+effectiveness claim. The built-in Analyzer's development Qualification applies
+only to the exact Node package install-lifecycle key-presence contract; a
 `SATISFIED` Verdict under that Policy is not a claim that the Subject is broadly
 secure.
 
@@ -117,10 +124,12 @@ sole business Interface at `ctx.securityAssurance`. Implemented operations are:
 - `getAssuranceSubmission`
 
 Local Host composition additionally has the synchronous
-`registerAnalyzer(descriptor, factory)` method. It is not a model, browser, or
-Remote operation. Registration closes when Assessment admission first freezes
-the startup-composed portfolio; Factories, instances, disposal handles, and
-cancellation handles are never persisted.
+`registerAnalyzer(descriptor, factory)` and
+`registerAnalyzerQualification(record)` methods. They are not model, browser,
+or Remote operations. Registration closes when Assessment admission first
+freezes the startup-composed portfolio and its Eligibility Decisions;
+Factories, instances, disposal handles, and cancellation handles are never
+persisted.
 
 Repository roots remain private. Query Snapshots and command Receipts are
 versioned, JSON-safe, recursively immutable, bounded, and path-free.

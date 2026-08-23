@@ -9,7 +9,7 @@ import type {
 } from '../contracts.ts'
 import type {
   AnalyzerContributionV1,
-  AnalyzerDescriptorV1,
+  AnalyzerPortfolioEntryV1,
 } from '../analyzer.ts'
 import {
   securitySubmissionJsonV1Schema,
@@ -43,7 +43,7 @@ export interface PreparedAssessmentContractV1 {
     readonly digest: DigestEnvelopeV1
     readonly value: SecuritySubmissionJsonV1
   }
-  readonly analyzerPortfolio: readonly AnalyzerDescriptorV1[]
+  readonly analyzerPortfolio: readonly AnalyzerPortfolioEntryV1[]
   readonly coverage: AssessmentCoverageSnapshotV1
 }
 
@@ -62,7 +62,7 @@ export interface AdmittedAnalyzerInputV1 {
 }
 
 export interface AdmittedExternalAnalyzerInputV1 {
-  readonly descriptor: AnalyzerDescriptorV1
+  readonly portfolioEntry: AnalyzerPortfolioEntryV1
   readonly contribution: AnalyzerContributionV1
 }
 
@@ -91,27 +91,29 @@ function emptyProviderComposition(): NonNullable<SecuritySubmissionJsonV1> {
 }
 
 function externalProviderComposition(
-  descriptors: readonly AnalyzerDescriptorV1[],
+  portfolio: readonly AnalyzerPortfolioEntryV1[],
 ): NonNullable<SecuritySubmissionJsonV1> {
   return json({
     schemaVersion: 1,
     providerId: SECURITY_ASSURANCE_PRODUCT_NAME,
     providerVersion: SECURITY_ASSURANCE_PRODUCT_VERSION,
-    analyzers: descriptors.map(descriptor => ({
-      analyzerId: descriptor.analyzerId,
-      analyzerVersion: descriptor.analyzerVersion,
-      descriptorSchemaVersion: descriptor.descriptorSchemaVersion,
-      buildDigest: descriptor.buildDigest,
-      executionClass: descriptor.executionClass,
-      qualificationId: null,
-      qualificationDigest: null,
-      verdictEligible: false,
+    analyzers: portfolio.map(entry => ({
+      analyzerId: entry.descriptor.analyzerId,
+      analyzerVersion: entry.descriptor.analyzerVersion,
+      descriptorSchemaVersion: entry.descriptor.descriptorSchemaVersion,
+      buildDigest: entry.descriptor.buildDigest,
+      executionClass: entry.descriptor.executionClass,
+      qualificationId: entry.qualification?.qualificationId ?? null,
+      qualificationDigest: entry.qualification?.qualificationDigest ?? null,
+      verdictEligible: entry.eligibility.decision === 'ELIGIBLE',
     })),
   })
 }
 
 function externalAnalyzerEvidence(
+  contract: PreparedAssessmentContractV1,
   analyses: readonly AdmittedExternalAnalyzerInputV1[],
+  obligationId: string,
 ): readonly EvidencePublicationInputV1[] {
   const evidence: EvidencePublicationInputV1[] = []
   const artifactIds = new Set<string>()
@@ -122,8 +124,8 @@ function externalAnalyzerEvidence(
       evidence.push(item)
     }
     const contributionArtifactId = `analyzer-contribution-${sha256Hex(canonicalJson({
-      analyzerId: analysis.descriptor.analyzerId,
-      analyzerVersion: analysis.descriptor.analyzerVersion,
+      analyzerId: analysis.portfolioEntry.descriptor.analyzerId,
+      analyzerVersion: analysis.portfolioEntry.descriptor.analyzerVersion,
     })).slice(0, 16)}`
     if (artifactIds.has(contributionArtifactId)) throw new TypeError('Analyzer Contribution identity collides')
     artifactIds.add(contributionArtifactId)
@@ -132,6 +134,37 @@ function externalAnalyzerEvidence(
       schemaId: 'dsh/security-analyzer-contribution',
       mediaType: 'application/vnd.dsh.security.analyzer-contribution+json',
       value: json(analysis.contribution),
+    })
+    const eligibilityArtifactId = `evidence-eligibility-${sha256Hex(canonicalJson({
+      analyzerIdentity: analysis.contribution.analyzerIdentity,
+      qualificationId: analysis.portfolioEntry.eligibility.qualificationId,
+    })).slice(0, 16)}`
+    if (artifactIds.has(eligibilityArtifactId)) throw new TypeError('Eligibility Decision identity collides')
+    artifactIds.add(eligibilityArtifactId)
+    const evidenceEligible = externalCompleteCoverageClaimIsEligible(analysis, obligationId)
+    const eligibilityReason = evidenceEligible
+      ? null
+      : analysis.portfolioEntry.eligibility.reason
+        ?? (analysis.contribution.candidateFindings.length > 0
+          ? 'UNRESOLVED_CANDIDATES'
+          : 'CONTRIBUTION_INELIGIBLE')
+    evidence.push({
+      artifactId: eligibilityArtifactId,
+      schemaId: 'dsh/security-evidence-eligibility-decision',
+      mediaType: 'application/vnd.dsh.security.evidence-eligibility-decision+json',
+      value: json({
+        schemaVersion: 1,
+        decision: evidenceEligible ? 'ELIGIBLE' : 'INELIGIBLE',
+        reason: eligibilityReason,
+        evaluatedAt: analysis.portfolioEntry.eligibility.evaluatedAt,
+        analyzerIdentity: analysis.portfolioEntry.eligibility.analyzerIdentity,
+        qualificationId: analysis.portfolioEntry.eligibility.qualificationId,
+        qualificationDigest: analysis.portfolioEntry.eligibility.qualificationDigest,
+        subjectDigest: analysis.contribution.subjectDigest,
+        policyDigest: contract.policy.digest,
+        obligationId,
+        evidenceArtifactIds: analysis.contribution.evidence.map(item => item.artifactId),
+      }),
     })
   }
   return evidence
@@ -144,7 +177,7 @@ export function prepareAssessmentContract(input: {
   readonly assessmentProfileId: AssessmentProfileId
   readonly target: AssessmentTargetSelectorV1
   readonly requestedStrongerControlIds: readonly string[]
-  readonly analyzerPortfolio?: readonly AnalyzerDescriptorV1[]
+  readonly analyzerPortfolio?: readonly AnalyzerPortfolioEntryV1[]
 }): PreparedAssessmentContractV1 {
   const nodePackageLifecyclePolicy = input.policyId === 'security/node-package-lifecycle'
   const policyValue = securitySubmissionJsonV1Schema.parse({
@@ -294,6 +327,26 @@ function completeCoverageClaimIsEligible(
     && canonicalJson(claim.evidenceDigest) === canonicalJson(contribution.manifestEvidence.digest)
 }
 
+function externalCompleteCoverageClaimIsEligible(
+  analysis: AdmittedExternalAnalyzerInputV1,
+  obligationId: string,
+): boolean {
+  const { portfolioEntry, contribution } = analysis
+  if (
+    portfolioEntry.eligibility.decision !== 'ELIGIBLE'
+    || portfolioEntry.qualification === null
+    || contribution.completionDisposition !== 'COMPLETE'
+    || contribution.candidateFindings.length > 0
+    || contribution.coverageClaims.length !== 1
+  ) return false
+  const claim = contribution.coverageClaims[0]
+  if (claim === undefined || claim.obligationId !== obligationId) return false
+  const evidence = contribution.evidence.find(item => item.artifactId === claim.evidenceArtifactId)
+  return evidence !== undefined
+    && portfolioEntry.qualification.coverageObligationIds.includes(obligationId)
+    && portfolioEntry.qualification.evidenceSchemaIds.includes(evidence.schemaId)
+}
+
 /** Pure Policy evaluation over one frozen qualified Analyzer Contribution. */
 export function evaluateDeterministicAssessment(
   contract: PreparedAssessmentContractV1,
@@ -303,6 +356,48 @@ export function evaluateDeterministicAssessment(
 ): DeterministicAssessmentOutcomeV1 {
   if (contract.policy.policyId !== 'security/node-package-lifecycle') {
     if (externalAnalyses.length > 0) {
+      const obligationId = 'application-security-analysis'
+      const providerComposition = externalProviderComposition(contract.analyzerPortfolio)
+      const evidence = externalAnalyzerEvidence(contract, externalAnalyses, obligationId)
+      const unresolvedCandidates = externalAnalyses.some(
+        analysis => analysis.contribution.candidateFindings.length > 0,
+      )
+      if (
+        !unresolvedCandidates
+        && externalAnalyses.some(analysis => (
+          externalCompleteCoverageClaimIsEligible(analysis, obligationId)
+        ))
+      ) {
+        return {
+          coverage: coverageSnapshot({
+            status: 'COMPLETE',
+            mandatoryObligations: 1,
+            satisfiedObligations: 1,
+            gapObligations: 0,
+            resolutions: [{
+              obligationId,
+              state: 'SATISFIED',
+              reason: 'ELIGIBLE_EVIDENCE',
+            }],
+          }),
+          findings: [],
+          verdict: 'SATISFIED',
+          evaluationTrace: json({
+            schemaVersion: 1,
+            evaluatorVersion: 'dsh-security-policy-evaluator-v1',
+            evaluationInstant,
+            policyDigest: contract.policy.digest,
+            rules: [
+              { ruleId: 'blocking-policy-violation', matched: false },
+              { ruleId: 'mandatory-coverage-gap', matched: false },
+              { ruleId: 'complete-mandatory-coverage', matched: true, outcome: 'SATISFIED' },
+            ],
+            diagnostics: [],
+          }),
+          providerComposition,
+          evidence,
+        }
+      }
       const dispositions = new Set(externalAnalyses.map(item => item.contribution.completionDisposition))
       const reason = dispositions.has('INCOMPLETE')
         ? 'ANALYZER_INCOMPLETE'
@@ -312,10 +407,10 @@ export function evaluateDeterministicAssessment(
       return indeterminateOutcome(
         contract,
         evaluationInstant,
-        'application-security-analysis',
+        obligationId,
         reason,
-        externalProviderComposition(contract.analyzerPortfolio),
-        externalAnalyzerEvidence(externalAnalyses),
+        providerComposition,
+        evidence,
       )
     }
     return indeterminateOutcome(

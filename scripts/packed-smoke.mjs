@@ -143,6 +143,7 @@ const analyzer = await import('dsh-security-assurance/analyzer')
 if (
   typeof analyzer.parseAnalyzerDescriptorV1 !== 'function'
   || typeof analyzer.analyzerContributionV1Schema?.parse !== 'function'
+  || typeof analyzer.analyzerQualificationRecordV1Schema?.parse !== 'function'
 ) {
   throw new Error('packed Analyzer Contract Entry is incomplete')
 }
@@ -163,6 +164,12 @@ const fiber = ctx.plugin(root.default, { dshHome: ${JSON.stringify(securityHome)
 await fiber
 if (ctx.reflect.get('securityAssurance') === undefined) {
   throw new Error('Cordis activation did not mount securityAssurance')
+}
+if (
+  typeof ctx.securityAssurance.registerAnalyzer !== 'function'
+  || typeof ctx.securityAssurance.registerAnalyzerQualification !== 'function'
+) {
+  throw new Error('Cordis activation did not expose local Analyzer composition')
 }
 const repositoryConfig = {
   repositories: [{
