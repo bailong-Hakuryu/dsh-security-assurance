@@ -45,6 +45,7 @@ try {
     type: 'module',
     dependencies: {
       '@deepseek-ai/cordis': '4.0.1',
+      '@deepseek-ai/dsh-home-paths': '0.1.1-rc.2',
       'dsh-security-assurance': pathToFileURL(tarball).href,
     },
   }, null, 2)}\n`, 'utf8')
@@ -67,12 +68,15 @@ if ('SecurityAuthorityResolver' in contracts || 'resolveTrustedInvocation' in co
   throw new Error('contracts export leaked authority minting')
 }
 const root = await import('dsh-security-assurance')
+if ('SecurityPersistence' in root || 'freezeSubject' in root || 'SecurityAuthorityResolver' in root) {
+  throw new Error('root export leaked a package-private implementation boundary')
+}
 const { Context } = await import('@deepseek-ai/cordis')
 const ctx = new Context()
 if (ctx.reflect.get('securityAssurance') !== undefined) {
   throw new Error('package import activated the Service')
 }
-const fiber = ctx.plugin(root.default)
+const fiber = ctx.plugin(root.default, { dshHome: ${JSON.stringify(join(temporaryRoot, 'dsh-home'))} })
 await fiber
 if (ctx.reflect.get('securityAssurance') === undefined) {
   throw new Error('Cordis activation did not mount securityAssurance')

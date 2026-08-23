@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import SecurityAssuranceService, { runtimeHealthSnapshotSchema } from '../src/index.ts'
@@ -5,15 +8,19 @@ import type { GetHealthRequest, SecurityInvocation } from '../src/index.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
 const liveContexts: Context[] = []
+const temporaryHomes: string[] = []
 
 afterEach(async () => {
   await Promise.all(liveContexts.splice(0).map(async context => context.fiber.dispose()))
+  await Promise.all(temporaryHomes.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
 
 async function harness() {
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-health-home-'))
+  temporaryHomes.push(dshHome)
   const ctx = new Context()
   liveContexts.push(ctx)
-  const fiber = ctx.plugin(SecurityAssuranceService)
+  const fiber = ctx.plugin(SecurityAssuranceService, { dshHome })
   await fiber
   return {
     ctx,

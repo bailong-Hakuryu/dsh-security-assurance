@@ -6,6 +6,12 @@ export function referenceHostInvocation(service: SecurityAssuranceService): Secu
   return resolveTrustedInvocation(service, {
     kind: 'host-operator',
     principalId: 'reference-host-operator',
-    permissions: ['health:read'],
+    permissions: [
+      'health:read',
+      'repository:read',
+      'repository:admin',
+      'assessment:start',
+      'assessment:read',
+    ],
   })
 }

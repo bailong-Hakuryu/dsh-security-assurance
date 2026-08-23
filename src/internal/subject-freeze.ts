@@ -1,0 +1,635 @@
+import { randomUUID } from 'node:crypto'
+import { spawn } from 'node:child_process'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readlink,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
+import { constants } from 'node:fs'
+import type { BigIntStats } from 'node:fs'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import type {
+  AssessmentSubjectSourceV1,
+  DigestEnvelopeV1,
+} from '../contracts.ts'
+import { binaryDigest, canonicalJson, structuredDigest } from './canonical.ts'
+
+const MAX_SUBJECT_FILES = 10_000
+const MAX_SUBJECT_BYTES = 64 * 1024 * 1024
+const MAX_GIT_OUTPUT_BYTES = 80 * 1024 * 1024
+const MAX_PATH_BYTES = 1_024
+
+export type SubjectFreezeErrorCode =
+  | 'invalid_subject'
+  | 'unstable_subject'
+  | 'resource_limit'
+  | 'canceled'
+  | 'integrity_failure'
+
+export class SubjectFreezeError extends Error {
+  constructor(
+    readonly code: SubjectFreezeErrorCode,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'SubjectFreezeError'
+  }
+}
+
+interface FileEntry {
+  readonly path: string
+  readonly kind: 'file'
+  readonly mode: '100644' | '100755'
+  readonly digest: DigestEnvelopeV1
+}
+
+interface SymbolicLinkEntry {
+  readonly path: string
+  readonly kind: 'symbolic_link'
+  readonly mode: '120000'
+  readonly target: string
+  readonly targetScope: 'inside_subject_root' | 'outside_subject_root'
+  readonly digest: DigestEnvelopeV1
+}
+
+interface SubmoduleEntry {
+  readonly path: string
+  readonly kind: 'submodule'
+  readonly mode: '160000'
+  readonly revision: string
+}
+
+type SubjectManifestEntryV1 = FileEntry | SymbolicLinkEntry | SubmoduleEntry
+
+interface SubjectManifestPayloadV1 {
+  readonly schemaVersion: 1
+  readonly subject: Readonly<Record<string, unknown>>
+  readonly entries: readonly SubjectManifestEntryV1[]
+  readonly exclusions: readonly (
+    | {
+        readonly kind: 'policy'
+        readonly reason: 'git_ignored_and_repository_metadata_not_admitted'
+      }
+    | {
+        readonly kind: 'workspace_deleted'
+        readonly path: string
+      }
+  )[]
+  readonly totals: {
+    readonly files: number
+    readonly bytes: number
+    readonly symbolicLinks: number
+    readonly submodules: number
+  }
+}
+
+export interface FrozenSubject {
+  readonly source: AssessmentSubjectSourceV1
+  readonly manifestDigest: DigestEnvelopeV1
+  readonly files: number
+  readonly bytes: number
+  readonly symbolicLinks: number
+  readonly submodules: number
+}
+
+export interface FreezeSubjectOptions {
+  readonly repositoryRoot: string
+  readonly securityRoot: string
+  readonly source: AssessmentSubjectSourceV1
+  readonly signal?: AbortSignal | undefined
+}
+
+interface GitTreeEntry {
+  readonly mode: string
+  readonly type: 'blob' | 'commit'
+  readonly objectId: string
+  readonly path: string
+}
+
+interface StableFile {
+  readonly bytes: Buffer
+  readonly signature: string
+}
+
+function canceled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new SubjectFreezeError('canceled', 'Subject Freeze was canceled')
+}
+
+function runGit(
+  repositoryRoot: string,
+  args: readonly string[],
+  signal?: AbortSignal,
+): Promise<Buffer> {
+  canceled(signal)
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn('git', ['--no-replace-objects', '--literal-pathspecs', ...args], {
+      cwd: repositoryRoot,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    let stdoutBytes = 0
+    let stderrBytes = 0
+    let settled = false
+    const abort = () => child.kill()
+    signal?.addEventListener('abort', abort, { once: true })
+
+    const finish = (error?: Error, value?: Buffer) => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener('abort', abort)
+      if (error !== undefined) rejectPromise(error)
+      else resolvePromise(value ?? Buffer.alloc(0))
+    }
+    child.once('error', () => finish(new SubjectFreezeError('invalid_subject', 'Git is unavailable')))
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdoutBytes += chunk.byteLength
+      if (stdoutBytes > MAX_GIT_OUTPUT_BYTES) {
+        child.kill()
+        finish(new SubjectFreezeError('resource_limit', 'Git output exceeded the Subject limit'))
+        return
+      }
+      stdout.push(chunk)
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderrBytes += chunk.byteLength
+      if (stderrBytes <= 8_192) stderr.push(chunk)
+    })
+    child.once('close', code => {
+      if (signal?.aborted) {
+        finish(new SubjectFreezeError('canceled', 'Subject Freeze was canceled'))
+      } else if (code !== 0) {
+        finish(new SubjectFreezeError('invalid_subject', 'Git could not resolve the exact Subject identity'))
+      } else {
+        finish(undefined, Buffer.concat(stdout))
+      }
+    })
+  })
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw new SubjectFreezeError('invalid_subject', 'Subject paths must be valid UTF-8')
+  }
+}
+
+function nullSeparated(bytes: Buffer): readonly string[] {
+  if (bytes.byteLength === 0) return []
+  const values = decodeUtf8(bytes).split('\0')
+  if (values.at(-1) === '') values.pop()
+  return values
+}
+
+function validateRelativePath(path: string, seen: Set<string>): string {
+  const canonical = path.normalize('NFC')
+  const segments = canonical.split('/')
+  const reserved = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu
+  if (
+    canonical !== path
+    || Buffer.byteLength(canonical, 'utf8') > MAX_PATH_BYTES
+    || canonical.length === 0
+    || canonical.startsWith('/')
+    || canonical.includes('\\')
+    || canonical.includes('\0')
+    || /[\u0000-\u001f]/u.test(canonical)
+    || segments.some(segment => (
+      segment.length === 0
+      || segment === '.'
+      || segment === '..'
+      || segment.toLowerCase() === '.git'
+      || segment.endsWith('.')
+      || segment.endsWith(' ')
+      || segment.includes(':')
+      || reserved.test(segment)
+    ))
+  ) {
+    throw new SubjectFreezeError('invalid_subject', 'Subject contains a non-portable or unsafe path')
+  }
+  const collisionKey = canonical.toLocaleLowerCase('en-US')
+  if (seen.has(collisionKey)) {
+    throw new SubjectFreezeError('invalid_subject', 'Subject contains colliding portable paths')
+  }
+  seen.add(collisionKey)
+  return canonical
+}
+
+function parseGitTree(bytes: Buffer): readonly GitTreeEntry[] {
+  const seen = new Set<string>()
+  return nullSeparated(bytes).map(record => {
+    const match = /^(\d{6}) (blob|commit) ([0-9a-f]{40})\t([\s\S]+)$/u.exec(record)
+    if (match === null) throw new SubjectFreezeError('invalid_subject', 'Git tree entry is malformed')
+    const [, mode, type, objectId, unsafePath] = match
+    if (mode === undefined || type === undefined || objectId === undefined || unsafePath === undefined) {
+      throw new SubjectFreezeError('invalid_subject', 'Git tree entry is incomplete')
+    }
+    return {
+      mode,
+      type: type as 'blob' | 'commit',
+      objectId,
+      path: validateRelativePath(unsafePath, seen),
+    }
+  })
+}
+
+async function exactCommit(repositoryRoot: string, commit: string, signal?: AbortSignal): Promise<string> {
+  const resolved = decodeUtf8(await runGit(repositoryRoot, [
+    'rev-parse',
+    '--verify',
+    `${commit}^{commit}`,
+  ], signal)).trim()
+  if (resolved !== commit) {
+    throw new SubjectFreezeError('invalid_subject', 'Git commit identity did not resolve exactly')
+  }
+  return resolved
+}
+
+function assertSubjectBounds(entries: readonly SubjectManifestEntryV1[]): void {
+  const files = entries.filter(entry => entry.kind === 'file')
+  const bytes = files.reduce((sum, entry) => sum + entry.digest.byteLength, 0)
+  if (files.length > MAX_SUBJECT_FILES || bytes > MAX_SUBJECT_BYTES) {
+    throw new SubjectFreezeError('resource_limit', 'Subject exceeds the v0.1 file or byte limit')
+  }
+}
+
+async function writeMaterializedFile(root: string, entryPath: string, bytes: Uint8Array, executable: boolean): Promise<void> {
+  const destination = join(root, ...entryPath.split('/'))
+  await mkdir(dirname(destination), { recursive: true })
+  await writeFile(destination, bytes, { flag: 'wx', mode: executable ? 0o555 : 0o444 })
+  await chmod(destination, executable ? 0o555 : 0o444)
+}
+
+async function materializeGitTree(
+  repositoryRoot: string,
+  commit: string,
+  contentRoot: string,
+  signal?: AbortSignal,
+): Promise<readonly SubjectManifestEntryV1[]> {
+  const tree = parseGitTree(await runGit(repositoryRoot, ['ls-tree', '-rz', '--full-tree', commit], signal))
+  if (tree.length > MAX_SUBJECT_FILES) {
+    throw new SubjectFreezeError('resource_limit', 'Subject exceeds the v0.1 entry limit')
+  }
+  const entries: SubjectManifestEntryV1[] = []
+  let totalBytes = 0
+  for (const item of tree) {
+    canceled(signal)
+    if (item.mode === '160000' && item.type === 'commit') {
+      entries.push({ path: item.path, kind: 'submodule', mode: '160000', revision: item.objectId })
+      continue
+    }
+    if (item.type !== 'blob' || !['100644', '100755', '120000'].includes(item.mode)) {
+      throw new SubjectFreezeError('invalid_subject', 'Git tree contains an unsupported object kind')
+    }
+    const bytes = await runGit(repositoryRoot, ['cat-file', 'blob', item.objectId], signal)
+    totalBytes += bytes.byteLength
+    if (totalBytes > MAX_SUBJECT_BYTES) {
+      throw new SubjectFreezeError('resource_limit', 'Subject exceeds the v0.1 byte limit')
+    }
+    if (item.mode === '120000') {
+      const target = decodeUtf8(bytes)
+      const lexicalTarget = resolve(repositoryRoot, dirname(item.path), target)
+      const targetRelative = relative(repositoryRoot, lexicalTarget)
+      const inside = targetRelative !== '..'
+        && !targetRelative.startsWith(`..${sep}`)
+        && !isAbsolute(targetRelative)
+      entries.push({
+        path: item.path,
+        kind: 'symbolic_link',
+        mode: '120000',
+        target,
+        targetScope: inside ? 'inside_subject_root' : 'outside_subject_root',
+        digest: binaryDigest('text/plain', bytes),
+      })
+      continue
+    }
+    await writeMaterializedFile(contentRoot, item.path, bytes, item.mode === '100755')
+    entries.push({
+      path: item.path,
+      kind: 'file',
+      mode: item.mode === '100755' ? '100755' : '100644',
+      digest: binaryDigest('application/octet-stream', bytes),
+    })
+  }
+  return entries
+}
+
+function statSignature(stat: BigIntStats): string {
+  return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].map(String).join(':')
+}
+
+async function stableFile(path: string): Promise<StableFile> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const before = await handle.stat({ bigint: true })
+    if (!before.isFile()) throw new SubjectFreezeError('invalid_subject', 'Workspace entry is not a regular file')
+    if (before.size > BigInt(MAX_SUBJECT_BYTES)) {
+      throw new SubjectFreezeError('resource_limit', 'Workspace file exceeds the Subject byte limit')
+    }
+    const bytes = await handle.readFile()
+    const after = await handle.stat({ bigint: true })
+    if (statSignature(before) !== statSignature(after) || BigInt(bytes.byteLength) !== after.size) {
+      throw new SubjectFreezeError('unstable_subject', 'Workspace file changed during Subject Freeze')
+    }
+    return { bytes, signature: statSignature(after) }
+  } finally {
+    await handle.close()
+  }
+}
+
+function parseIndexModes(bytes: Buffer): ReadonlyMap<string, { readonly mode: string; readonly objectId: string }> {
+  const modes = new Map<string, { readonly mode: string; readonly objectId: string }>()
+  for (const record of nullSeparated(bytes)) {
+    const match = /^(\d{6}) ([0-9a-f]{40}) ([0-3])\t([\s\S]+)$/u.exec(record)
+    if (match === null) throw new SubjectFreezeError('invalid_subject', 'Git index entry is malformed')
+    const [, mode, objectId, stage, path] = match
+    if (mode === undefined || objectId === undefined || stage === undefined || path === undefined || stage !== '0') {
+      throw new SubjectFreezeError('invalid_subject', 'Workspace has unresolved Git index stages')
+    }
+    modes.set(path, { mode, objectId })
+  }
+  return modes
+}
+
+async function materializeWorkspace(
+  repositoryRoot: string,
+  contentRoot: string,
+  signal?: AbortSignal,
+): Promise<{
+  readonly entries: readonly SubjectManifestEntryV1[]
+  readonly headCommit: string
+  readonly selectionDigest: DigestEnvelopeV1
+  readonly exclusions: readonly { readonly kind: 'workspace_deleted'; readonly path: string }[]
+}> {
+  const selectionArgs = ['ls-files', '-z', '--cached', '--others', '--exclude-standard'] as const
+  const beforeSelection = await runGit(repositoryRoot, selectionArgs, signal)
+  const beforeDeleted = await runGit(repositoryRoot, ['ls-files', '-z', '--deleted'], signal)
+  const beforeHead = decodeUtf8(await runGit(repositoryRoot, [
+    'rev-parse', '--verify', 'HEAD^{commit}',
+  ], signal)).trim()
+  if (!/^[0-9a-f]{40}$/u.test(beforeHead)) {
+    throw new SubjectFreezeError('invalid_subject', 'Workspace does not have an exact HEAD commit')
+  }
+  const indexModes = parseIndexModes(await runGit(repositoryRoot, ['ls-files', '-s', '-z'], signal))
+  const unsafePaths = nullSeparated(beforeSelection)
+  if (unsafePaths.length > MAX_SUBJECT_FILES) {
+    throw new SubjectFreezeError('resource_limit', 'Workspace exceeds the v0.1 entry limit')
+  }
+  const seen = new Set<string>()
+  const paths = unsafePaths.map(path => validateRelativePath(path, seen))
+  const deletedSeen = new Set<string>()
+  const deletedPaths = nullSeparated(beforeDeleted).map(path => validateRelativePath(path, deletedSeen))
+  const deleted = new Set(deletedPaths)
+  const entries: SubjectManifestEntryV1[] = []
+  const stableFiles = new Map<string, { readonly signature: string; readonly digest: DigestEnvelopeV1 }>()
+  let totalBytes = 0
+
+  for (const path of paths) {
+    canceled(signal)
+    if (deleted.has(path)) continue
+    const index = indexModes.get(path)
+    if (index?.mode === '160000') {
+      entries.push({ path, kind: 'submodule', mode: '160000', revision: index.objectId })
+      continue
+    }
+    const sourcePath = join(repositoryRoot, ...path.split('/'))
+    const metadata = await lstat(sourcePath, { bigint: true })
+    if (metadata.isSymbolicLink()) {
+      const target = await readlink(sourcePath)
+      const targetBytes = Buffer.from(target, 'utf8')
+      const lexicalTarget = resolve(dirname(sourcePath), target)
+      const targetRelative = relative(repositoryRoot, lexicalTarget)
+      const inside = targetRelative !== '..'
+        && !targetRelative.startsWith(`..${sep}`)
+        && !isAbsolute(targetRelative)
+      entries.push({
+        path,
+        kind: 'symbolic_link',
+        mode: '120000',
+        target,
+        targetScope: inside ? 'inside_subject_root' : 'outside_subject_root',
+        digest: binaryDigest('text/plain', targetBytes),
+      })
+      continue
+    }
+    const captured = await stableFile(sourcePath)
+    totalBytes += captured.bytes.byteLength
+    if (totalBytes > MAX_SUBJECT_BYTES) {
+      throw new SubjectFreezeError('resource_limit', 'Workspace exceeds the v0.1 byte limit')
+    }
+    const executable = index?.mode === '100755' || (index === undefined && (metadata.mode & 0o111n) !== 0n)
+    await writeMaterializedFile(contentRoot, path, captured.bytes, executable)
+    const digest = binaryDigest('application/octet-stream', captured.bytes)
+    stableFiles.set(path, { signature: captured.signature, digest })
+    entries.push({ path, kind: 'file', mode: executable ? '100755' : '100644', digest })
+  }
+
+  for (const [path, expected] of stableFiles) {
+    canceled(signal)
+    const observed = await stableFile(join(repositoryRoot, ...path.split('/')))
+    if (
+      observed.signature !== expected.signature
+      || binaryDigest('application/octet-stream', observed.bytes).value !== expected.digest.value
+    ) {
+      throw new SubjectFreezeError('unstable_subject', 'Workspace changed across the stable-read boundary')
+    }
+  }
+  const afterSelection = await runGit(repositoryRoot, selectionArgs, signal)
+  const afterDeleted = await runGit(repositoryRoot, ['ls-files', '-z', '--deleted'], signal)
+  const afterHead = decodeUtf8(await runGit(repositoryRoot, [
+    'rev-parse', '--verify', 'HEAD^{commit}',
+  ], signal)).trim()
+  if (!beforeSelection.equals(afterSelection) || !beforeDeleted.equals(afterDeleted) || beforeHead !== afterHead) {
+    throw new SubjectFreezeError('unstable_subject', 'Workspace identity changed during Subject Freeze')
+  }
+  return {
+    entries,
+    headCommit: beforeHead,
+    selectionDigest: binaryDigest('application/vnd.dsh.git.path-selection', beforeSelection),
+    exclusions: deletedPaths.map(path => ({ kind: 'workspace_deleted', path })),
+  }
+}
+
+async function lockTree(path: string): Promise<void> {
+  const entries = await readdir(path, { withFileTypes: true })
+  for (const entry of entries) {
+    const child = join(path, entry.name)
+    if (entry.isDirectory()) await lockTree(child)
+    else await chmod(child, 0o444)
+  }
+  await chmod(path, 0o555)
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject Manifest is not a record')
+  }
+  return value as Record<string, unknown>
+}
+
+async function materializedFilePaths(
+  contentRoot: string,
+  directory = contentRoot,
+): Promise<readonly string[]> {
+  const paths: string[] = []
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const child = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      paths.push(...await materializedFilePaths(contentRoot, child))
+    } else if (entry.isFile()) {
+      paths.push(relative(contentRoot, child).split(sep).join('/'))
+    } else {
+      throw new SubjectFreezeError('integrity_failure', 'Subject materialization contains a special object')
+    }
+  }
+  return paths
+}
+
+async function verifyPublishedSnapshot(
+  publishedRoot: string,
+  expectedDigest: DigestEnvelopeV1,
+): Promise<void> {
+  const manifest = recordValue(JSON.parse(await readFile(join(publishedRoot, 'manifest.json'), 'utf8')))
+  const declaredDigest = manifest.rootDigest
+  const payload = Object.fromEntries(Object.entries(manifest).filter(([key]) => key !== 'rootDigest'))
+  const recomputed = structuredDigest('application/vnd.dsh.security.subject-manifest+json', payload)
+  if (
+    canonicalJson(declaredDigest) !== canonicalJson(expectedDigest)
+    || canonicalJson(recomputed) !== canonicalJson(expectedDigest)
+  ) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject Manifest digest verification failed')
+  }
+  if (!Array.isArray(manifest.entries)) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject Manifest entries are invalid')
+  }
+  const seen = new Set<string>()
+  const expectedFiles: string[] = []
+  for (const value of manifest.entries) {
+    const entry = recordValue(value)
+    if (typeof entry.path !== 'string' || typeof entry.kind !== 'string') {
+      throw new SubjectFreezeError('integrity_failure', 'Subject Manifest entry is invalid')
+    }
+    const path = validateRelativePath(entry.path, seen)
+    if (entry.kind !== 'file') continue
+    const declaredFileDigest = recordValue(entry.digest)
+    const captured = await stableFile(join(publishedRoot, 'content', ...path.split('/')))
+    const recomputedFileDigest = binaryDigest('application/octet-stream', captured.bytes)
+    if (canonicalJson(declaredFileDigest) !== canonicalJson(recomputedFileDigest)) {
+      throw new SubjectFreezeError('integrity_failure', 'Subject file digest verification failed')
+    }
+    expectedFiles.push(path)
+  }
+  const actualFiles = [...await materializedFilePaths(join(publishedRoot, 'content'))].sort()
+  expectedFiles.sort()
+  if (canonicalJson(actualFiles) !== canonicalJson(expectedFiles)) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject materialization does not match its Manifest')
+  }
+}
+
+/** Freeze one exact Subject and atomically publish its private content-addressed Snapshot. */
+export async function freezeSubject(options: FreezeSubjectOptions): Promise<FrozenSubject> {
+  canceled(options.signal)
+  const stagingParent = join(options.securityRoot, 'staging')
+  const subjectsRoot = join(options.securityRoot, 'subjects')
+  await mkdir(stagingParent, { recursive: true, mode: 0o700 })
+  await mkdir(subjectsRoot, { recursive: true, mode: 0o700 })
+  const stagingRoot = join(stagingParent, `subject-${randomUUID()}`)
+  const contentRoot = join(stagingRoot, 'content')
+  await mkdir(contentRoot, { recursive: true, mode: 0o700 })
+  let published = false
+  try {
+    let entries: readonly SubjectManifestEntryV1[]
+    let resolvedSubject: Readonly<Record<string, unknown>>
+    let subjectExclusions: readonly { readonly kind: 'workspace_deleted'; readonly path: string }[] = []
+    if (options.source.kind === 'git_revision') {
+      const commit = await exactCommit(options.repositoryRoot, options.source.commit, options.signal)
+      entries = await materializeGitTree(options.repositoryRoot, commit, contentRoot, options.signal)
+      resolvedSubject = { kind: 'git_revision', commit }
+    } else if (options.source.kind === 'change') {
+      const baseCommit = await exactCommit(options.repositoryRoot, options.source.baseCommit, options.signal)
+      const headCommit = await exactCommit(options.repositoryRoot, options.source.headCommit, options.signal)
+      const changeSet = await runGit(options.repositoryRoot, [
+        'diff', '--raw', '-z', '--no-renames', baseCommit, headCommit,
+      ], options.signal)
+      entries = await materializeGitTree(options.repositoryRoot, headCommit, contentRoot, options.signal)
+      resolvedSubject = {
+        kind: 'change',
+        baseCommit,
+        headCommit,
+        changeSetDigest: binaryDigest('application/vnd.dsh.git.raw-diff', changeSet),
+      }
+    } else {
+      const workspace = await materializeWorkspace(options.repositoryRoot, contentRoot, options.signal)
+      entries = workspace.entries
+      subjectExclusions = workspace.exclusions
+      resolvedSubject = {
+        kind: 'workspace_snapshot',
+        headCommit: workspace.headCommit,
+        selectionDigest: workspace.selectionDigest,
+      }
+    }
+    assertSubjectBounds(entries)
+    const payload: SubjectManifestPayloadV1 = {
+      schemaVersion: 1,
+      subject: resolvedSubject,
+      entries: [...entries].sort((left, right) => left.path.localeCompare(right.path, 'en-US')),
+      exclusions: [{
+        kind: 'policy',
+        reason: 'git_ignored_and_repository_metadata_not_admitted',
+      }, ...subjectExclusions],
+      totals: {
+        files: entries.filter(entry => entry.kind === 'file').length,
+        bytes: entries
+          .filter((entry): entry is FileEntry => entry.kind === 'file')
+          .reduce((sum, entry) => sum + entry.digest.byteLength, 0),
+        symbolicLinks: entries.filter(entry => entry.kind === 'symbolic_link').length,
+        submodules: entries.filter(entry => entry.kind === 'submodule').length,
+      },
+    }
+    const rootDigest = structuredDigest('application/vnd.dsh.security.subject-manifest+json', payload)
+    const manifest = { ...payload, rootDigest }
+    await writeFile(join(stagingRoot, 'manifest.json'), `${canonicalJson(manifest)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o444,
+    })
+    const publishedRoot = join(subjectsRoot, rootDigest.value)
+    try {
+      await rename(stagingRoot, publishedRoot)
+      published = true
+      await verifyPublishedSnapshot(publishedRoot, rootDigest)
+      await lockTree(publishedRoot)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'EEXIST' && code !== 'ENOTEMPTY') throw error
+      await verifyPublishedSnapshot(publishedRoot, rootDigest)
+      await rm(stagingRoot, { recursive: true, force: true })
+      published = true
+    }
+    canceled(options.signal)
+    return {
+      source: options.source,
+      manifestDigest: rootDigest,
+      files: payload.totals.files,
+      bytes: payload.totals.bytes,
+      symbolicLinks: payload.totals.symbolicLinks,
+      submodules: payload.totals.submodules,
+    }
+  } catch (error) {
+    if (!published) await rm(stagingRoot, { recursive: true, force: true })
+    if (error instanceof SubjectFreezeError) throw error
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR' || code === 'EPERM' || code === 'EACCES') {
+      throw new SubjectFreezeError('invalid_subject', 'Subject content could not be read safely')
+    }
+    throw error
+  }
+}

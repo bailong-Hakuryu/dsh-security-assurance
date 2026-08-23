@@ -1,6 +1,11 @@
 import type { SecurityInvocation } from '../contracts.ts'
 
-export type SecurityPermission = 'health:read'
+export type SecurityPermission =
+  | 'health:read'
+  | 'repository:read'
+  | 'repository:admin'
+  | 'assessment:start'
+  | 'assessment:read'
 export type SecurityCallerChannelKind = 'harness-session' | 'host-operator' | 'control-plane'
 
 /** Package-private method key that Cordis traceable Service proxies can forward. */
@@ -16,7 +21,7 @@ export interface TrustedCallerChannel {
   readonly permissions: readonly SecurityPermission[]
 }
 
-interface ResolvedSecurityAuthority {
+export interface ResolvedSecurityAuthority {
   readonly kind: SecurityCallerChannelKind
   readonly principalId: string
   readonly permissions: ReadonlySet<SecurityPermission>
@@ -30,7 +35,18 @@ export class SecurityAuthorityResolver {
     if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/i.test(channel.principalId)) {
       throw new TypeError('trusted caller channel has an invalid principal identity')
     }
-    if (channel.permissions.length === 0 || channel.permissions.some(permission => permission !== 'health:read')) {
+    const known = new Set<SecurityPermission>([
+      'health:read',
+      'repository:read',
+      'repository:admin',
+      'assessment:start',
+      'assessment:read',
+    ])
+    if (
+      channel.permissions.length === 0
+      || new Set(channel.permissions).size !== channel.permissions.length
+      || channel.permissions.some(permission => !known.has(permission))
+    ) {
       throw new TypeError('trusted caller channel has invalid permissions')
     }
 
@@ -46,6 +62,11 @@ export class SecurityAuthorityResolver {
   authorizes(invocation: unknown, permission: SecurityPermission): boolean {
     if ((typeof invocation !== 'object' && typeof invocation !== 'function') || invocation === null) return false
     return this.#issued.get(invocation)?.permissions.has(permission) ?? false
+  }
+
+  authority(invocation: unknown): ResolvedSecurityAuthority | undefined {
+    if ((typeof invocation !== 'object' && typeof invocation !== 'function') || invocation === null) return undefined
+    return this.#issued.get(invocation)
   }
 }
 

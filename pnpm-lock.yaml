@@ -15,6 +15,9 @@ importers:
       '@deepseek-ai/cordis':
         specifier: link:../deepseek-harness-master/vendor/cordis
         version: link:../deepseek-harness-master/vendor/cordis
+      '@deepseek-ai/dsh-home-paths':
+        specifier: link:../deepseek-harness-master/packages/util/home-paths
+        version: link:../deepseek-harness-master/packages/util/home-paths
       '@types/node':
         specifier: ^22.20.0
         version: 22.20.1
