@@ -15,12 +15,24 @@ importers:
       '@deepseek-ai/cordis':
         specifier: link:../deepseek-harness-master/vendor/cordis
         version: link:../deepseek-harness-master/vendor/cordis
+      '@deepseek-ai/dsh-agent':
+        specifier: link:../deepseek-harness-master/packages/core/agent
+        version: link:../deepseek-harness-master/packages/core/agent
       '@deepseek-ai/dsh-home-paths':
         specifier: link:../deepseek-harness-master/packages/util/home-paths
         version: link:../deepseek-harness-master/packages/util/home-paths
+      '@deepseek-ai/dsh-subagent':
+        specifier: link:../deepseek-harness-master/packages/subagent/subagent
+        version: link:../deepseek-harness-master/packages/subagent/subagent
+      '@deepseek-ai/dsh-subprocess-local':
+        specifier: link:../deepseek-harness-master/packages/subprocess/subprocess-local
+        version: link:../deepseek-harness-master/packages/subprocess/subprocess-local
       '@types/node':
         specifier: ^22.20.0
         version: 22.20.1
+      dsh-engineering-control-plane:
+        specifier: link:../DSH Engineering Control Plane
+        version: link:../DSH Engineering Control Plane
       tsdown:
         specifier: ^0.22.2
         version: 0.22.14(typescript@6.0.3)

@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 
 const execute = promisify(execFile)
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const controlPlaneRoot = resolve(projectRoot, '..', 'DSH Engineering Control Plane')
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'dsh-security-assurance-pack-'))
 const artifactRoot = join(temporaryRoot, 'artifacts')
 const consumerRoot = join(temporaryRoot, 'consumer')
@@ -37,6 +38,21 @@ try {
   const filename = manifest[0]?.filename
   if (typeof filename !== 'string') throw new Error('npm pack did not report an artifact filename')
   const tarball = join(artifactRoot, filename)
+  const packedControlPlane = await executeNpm([
+    '--cache', npmCache,
+    'pack',
+    '--json',
+    '--pack-destination', artifactRoot,
+  ], {
+    cwd: controlPlaneRoot,
+    windowsHide: true,
+  })
+  const controlPlaneManifest = JSON.parse(packedControlPlane.stdout)
+  const controlPlaneFilename = controlPlaneManifest[0]?.filename
+  if (typeof controlPlaneFilename !== 'string') {
+    throw new Error('Control Plane npm pack did not report an artifact filename')
+  }
+  const controlPlaneTarball = join(artifactRoot, controlPlaneFilename)
 
   await writeFile(join(consumerRoot, 'package.json'), `${JSON.stringify({
     name: 'dsh-security-assurance-packed-smoke',
@@ -56,6 +72,7 @@ try {
     '--ignore-scripts',
     '--no-audit',
     '--no-fund',
+    '--legacy-peer-deps',
   ], {
     cwd: consumerRoot,
     windowsHide: true,
@@ -97,14 +114,50 @@ process.stdout.write(JSON.stringify({ packedImport: 'PASS', lifecycle: 'PASS' })
     throw new Error('packed smoke probe returned an invalid result')
   }
 
+  await executeNpm([
+    '--cache', npmCache,
+    'install',
+    pathToFileURL(controlPlaneTarball).href,
+    '--ignore-scripts',
+    '--no-audit',
+    '--no-fund',
+    '--legacy-peer-deps',
+  ], {
+    cwd: consumerRoot,
+    windowsHide: true,
+  })
+  const adapterProbePath = join(consumerRoot, 'adapter-probe.mjs')
+  await writeFile(adapterProbePath, `
+const adapter = await import('dsh-security-assurance/control-plane-provider')
+if (adapter.SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR.providerId !== 'dsh/security-assurance') {
+  throw new Error('packed Control Plane Provider descriptor is invalid')
+}
+const { Context } = await import('@deepseek-ai/cordis')
+const ctx = new Context()
+if (ctx.reflect.get('securityAssurance') !== undefined || ctx.reflect.get('engineeringControlPlane') !== undefined) {
+  throw new Error('Control Plane Provider import activated a Service')
+}
+process.stdout.write(JSON.stringify({ adapterImport: 'PASS', sideEffectFree: 'PASS' }))
+`, 'utf8')
+  const adapterProbe = await execute(process.execPath, [adapterProbePath], {
+    cwd: consumerRoot,
+    windowsHide: true,
+  })
+  const adapterResult = JSON.parse(adapterProbe.stdout)
+  if (adapterResult.adapterImport !== 'PASS' || adapterResult.sideEffectFree !== 'PASS') {
+    throw new Error('packed Adapter smoke probe returned an invalid result')
+  }
+
   const installedManifest = JSON.parse(await readFile(
     join(consumerRoot, 'node_modules', 'dsh-security-assurance', 'package.json'),
     'utf8',
   ))
   process.stdout.write(`${JSON.stringify({
     artifact: filename,
+    controlPlaneArtifact: controlPlaneFilename,
     packageVersion: installedManifest.version,
     ...result,
+    ...adapterResult,
   })}\n`)
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true })

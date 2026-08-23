@@ -50,14 +50,21 @@ This repository is under active vertical-slice development, not at the
 - atomic persistence of Verdict, Assessment Seal, Bundle Manifest, and
   self-contained Assurance Submission at terminal revision 3;
 - content-addressed private Bundle publication with verification on every
-  official read; and
+  official read;
 - fail-closed restart and integrity behavior: interrupted `RUNNING` work becomes
   `BLOCKED`, sealed work is not rerun, and modified publication bytes are not
-  served.
+  served;
+- an optional `dsh-security-assurance/control-plane-provider` Cordis entry that
+  registers exact Provider identity `dsh/security-assurance`, starts and waits
+  for the same private Assessment Engine, and returns a Control Plane transport
+  Submission by value; and
+- real dual-plugin Gate coverage proving `SATISFIED → requirement satisfied`,
+  `FAILED → REWORK_REQUIRED`, `INDETERMINATE → BLOCKED`, and a missing Repository
+  binding → fail-closed `BLOCKED`.
 
 External Analyzer registration, process or agent Analyzers, general Node and
-application-security coverage, the complete protected Evidence Store, Control
-Plane integration, tools, and Workbench are deliberately not claimed as
+application-security coverage, the complete protected Evidence Store, tools,
+and Workbench are deliberately not claimed as
 implemented yet. The built-in Analyzer's development Qualification applies only
 to the exact Node package install-lifecycle key-presence contract; a
 `SATISFIED` Verdict under that Policy is not a claim that the Subject is broadly
@@ -88,8 +95,35 @@ transfer ownership of the continuing run to the caller. The Engine persists
 `RUNNING` before evaluation and exposes official Bundle or Submission values
 only after all terminal records commit together as `SEALED`. The Bundle
 Manifest is a view. The Assurance Submission carries its required artifacts by
-value so a future Control Plane Adapter does not need access to Security
-Assurance storage.
+value so the Control Plane Adapter does not need access to Security Assurance
+storage.
+
+## Optional Control Plane integration
+
+The root plugin remains independently installable. The optional
+`dsh-security-assurance/control-plane-provider` entry activates only when both
+`ctx.securityAssurance` and `ctx.engineeringControlPlane` exist. The Host binds
+one Control Plane repository mapping to an already registered Security
+Repository using public identifier configuration:
+
+```yaml
+assuranceProviders:
+  - providerId: dsh/security-assurance
+    providerVersion: 0.0.0-development
+    activation: required
+    configuration:
+      repositoryId: repo-00000000-0000-4000-8000-000000000000
+```
+
+The Adapter receives no repository path, database, Evidence directory, Gate,
+or credentials. It resolves an internal `control-plane` Security Invocation,
+starts a Workspace Snapshot Assessment against that exact Repository ID,
+propagates cancellation while waiting, retrieves the verified sealed Security
+Submission, and embeds its canonical value plus source digest in the
+provider-neutral Control Plane Submission. The Control Plane copies and
+revalidates that value and remains the sole owner of Mission Assurance Results
+and the Quality Gate. The two plugins never share SQLite files, writable
+Evidence paths, transactions, or Kernel objects.
 
 ## Development
 
@@ -111,8 +145,9 @@ pnpm pack:dry-run
 pnpm pack:smoke
 ```
 
-The bundle row in `cordis.patch.yml` is disabled by default. Installation alone
-does not activate a security authority.
+Both bundle rows in `cordis.patch.yml` are disabled by default. Installation
+alone does not activate a security authority or the optional Control Plane
+Provider.
 
 ## Design authority
 
