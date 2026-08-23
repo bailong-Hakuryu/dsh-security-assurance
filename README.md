@@ -12,8 +12,8 @@ This repository is under active vertical-slice development, not at the
 - dormant bundle installation metadata;
 - real Cordis registration at `ctx.securityAssurance`;
 - an opaque, runtime-verified Security Invocation boundary;
-- authorized `getHealth`, Repository Registry, and `startAssessment`
-  operations;
+- authorized Runtime Health, Repository Registry, Assessment start/query/wait,
+  Bundle Manifest, and Assurance Submission operations;
 - versioned Zod-validated public contracts;
 - one `SecurityResult<T>` success/failure envelope;
 - redacted authorization, validation, cancellation, deadline, and internal
@@ -28,13 +28,26 @@ This repository is under active vertical-slice development, not at the
   ordinary hard links to source content;
 - non-expanding symlink and submodule inventory; and
 - atomic ordering in which Subject Freeze succeeds before an Assessment ID and
-  durable creation Receipt are committed.
+  durable creation Receipt are committed;
+- a deterministic package-private Assessment path with durable
+  `CREATED → RUNNING → SEALED` revisions;
+- a pure Policy Evaluator and independent seal-readiness check;
+- honest mandatory Coverage reconciliation: because no qualified Analyzer is
+  registered in this slice, the default obligation resolves to `GAP` and the
+  Security Verdict is `INDETERMINATE`, never a fabricated success;
+- atomic persistence of Verdict, Assessment Seal, Bundle Manifest, and
+  self-contained Assurance Submission at terminal revision 3;
+- content-addressed private Bundle publication with verification on every
+  official read; and
+- fail-closed restart and integrity behavior: interrupted `RUNNING` work becomes
+  `BLOCKED`, sealed work is not rerun, and modified publication bytes are not
+  served.
 
-Assessment Engine execution, analyzers, Findings, Evidence persistence,
-Verdicts, sealed Bundles/Submissions, Control Plane integration, tools, and
-Workbench are deliberately not claimed as implemented yet. Newly created
-Assessments remain in `CREATED`; the next slice will implement the smallest
-deterministic Assessment-to-Submission path.
+Real Analyzer execution, validated Findings, the complete Evidence Store,
+Control Plane integration, tools, and Workbench are deliberately not claimed as
+implemented yet. The current deterministic path is a contract and lifecycle
+slice: it proves that missing verdict-eligible analysis produces a sealed
+`INDETERMINATE` result whose Coverage gap is explicit and digest-bound.
 
 ## Implemented service surface
 
@@ -48,9 +61,21 @@ sole business Interface at `ctx.securityAssurance`. Implemented operations are:
 - `getRepository`
 - `listRepositories`
 - `startAssessment`
+- `getAssessment`
+- `waitForAssessmentRevision`
+- `getBundleManifest`
+- `getAssuranceSubmission`
 
 Repository roots remain private. Query Snapshots and command Receipts are
 versioned, JSON-safe, recursively immutable, bounded, and path-free.
+
+`startAssessment` returns the durable revision-1 `CREATED` Receipt; it does not
+transfer ownership of the continuing run to the caller. The Engine persists
+`RUNNING` before evaluation and exposes official Bundle or Submission values
+only after all terminal records commit together as `SEALED`. The Bundle
+Manifest is a view. The Assurance Submission carries its required artifacts by
+value so a future Control Plane Adapter does not need access to Security
+Assurance storage.
 
 ## Development
 

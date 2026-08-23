@@ -471,3 +471,301 @@ export const assessmentReceiptResultSchema: z.ZodType<SecurityResult<AssessmentR
     z.strictObject({ ok: z.literal(true), value: assessmentReceiptV1Schema }),
     z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
   ])
+
+export const securityVerdictSchema = z.enum(['SATISFIED', 'FAILED', 'INDETERMINATE'])
+export type SecurityVerdict = z.infer<typeof securityVerdictSchema>
+
+export interface GetAssessmentRequest {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+}
+
+export const getAssessmentRequestSchema: z.ZodType<GetAssessmentRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+})
+
+export interface WaitForAssessmentRevisionRequest {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly afterRevision: number
+  readonly timeoutMs: number
+}
+
+export const waitForAssessmentRevisionRequestSchema: z.ZodType<WaitForAssessmentRevisionRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  afterRevision: z.number().int().positive(),
+  timeoutMs: z.number().int().min(1).max(30_000),
+})
+
+export interface AssessmentCoverageResolutionV1 {
+  readonly obligationId: string
+  readonly state: 'SATISFIED' | 'GAP'
+  readonly reason: 'ELIGIBLE_EVIDENCE' | 'NO_ELIGIBLE_ANALYZER'
+}
+
+export const assessmentCoverageResolutionV1Schema: z.ZodType<AssessmentCoverageResolutionV1> = z.strictObject({
+  obligationId: boundedBindingId,
+  state: z.enum(['SATISFIED', 'GAP']),
+  reason: z.enum(['ELIGIBLE_EVIDENCE', 'NO_ELIGIBLE_ANALYZER']),
+})
+
+export interface AssessmentCoverageSnapshotV1 {
+  readonly status: 'PENDING' | 'COMPLETE' | 'GAP'
+  readonly mandatoryObligations: number
+  readonly satisfiedObligations: number
+  readonly gapObligations: number
+  readonly resolutions: readonly AssessmentCoverageResolutionV1[]
+  readonly digest: DigestEnvelopeV1
+}
+
+export const assessmentCoverageSnapshotV1Schema: z.ZodType<AssessmentCoverageSnapshotV1> = z.strictObject({
+  status: z.enum(['PENDING', 'COMPLETE', 'GAP']),
+  mandatoryObligations: z.number().int().nonnegative(),
+  satisfiedObligations: z.number().int().nonnegative(),
+  gapObligations: z.number().int().nonnegative(),
+  resolutions: z.array(assessmentCoverageResolutionV1Schema).max(256),
+  digest: digestEnvelopeV1Schema,
+})
+
+export interface AssessmentSealV1 {
+  readonly schemaVersion: 1
+  readonly sealId: string
+  readonly assessmentRevision: number
+  readonly verdict: SecurityVerdict
+  readonly digest: DigestEnvelopeV1
+  readonly sealedAt: string
+}
+
+export const assessmentSealV1Schema: z.ZodType<AssessmentSealV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  sealId: z.string().regex(/^seal-[0-9a-f-]{36}$/),
+  assessmentRevision: z.number().int().positive(),
+  verdict: securityVerdictSchema,
+  digest: digestEnvelopeV1Schema,
+  sealedAt: z.iso.datetime({ offset: true }),
+})
+
+export interface AssessmentSnapshotV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly state: AssessmentState
+  readonly repository: {
+    readonly repositoryId: RepositoryId
+    readonly repositoryRevision: number
+  }
+  readonly subject: AssessmentSubjectReceiptV1
+  readonly policy: {
+    readonly policyId: string
+    readonly digest: DigestEnvelopeV1
+  }
+  readonly coverage: AssessmentCoverageSnapshotV1
+  readonly verdict: SecurityVerdict | null
+  readonly seal: AssessmentSealV1 | null
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export const assessmentSnapshotV1Schema: z.ZodType<AssessmentSnapshotV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  state: assessmentStateSchema,
+  repository: z.strictObject({
+    repositoryId: repositoryIdSchema,
+    repositoryRevision: z.number().int().positive(),
+  }),
+  subject: assessmentSubjectReceiptV1Schema,
+  policy: z.strictObject({
+    policyId: boundedBindingId,
+    digest: digestEnvelopeV1Schema,
+  }),
+  coverage: assessmentCoverageSnapshotV1Schema,
+  verdict: securityVerdictSchema.nullable(),
+  seal: assessmentSealV1Schema.nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+})
+
+export interface AssessmentRevisionSignalV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly kind: 'CHANGED' | 'TIMED_OUT'
+  readonly assessmentRevision: number
+}
+
+export const assessmentRevisionSignalV1Schema: z.ZodType<AssessmentRevisionSignalV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  kind: z.enum(['CHANGED', 'TIMED_OUT']),
+  assessmentRevision: z.number().int().positive(),
+})
+
+export interface GetBundleManifestRequest {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+}
+
+export const getBundleManifestRequestSchema: z.ZodType<GetBundleManifestRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+})
+
+export interface GetAssuranceSubmissionRequest {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+}
+
+export const getAssuranceSubmissionRequestSchema: z.ZodType<GetAssuranceSubmissionRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+})
+
+export interface BundleRecordDescriptorV1 {
+  readonly recordId: string
+  readonly schemaId: string
+  readonly schemaVersion: 1
+  readonly classification: 'INTERNAL' | 'CONTROL_PLANE'
+  readonly digest: DigestEnvelopeV1
+}
+
+const schemaIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*){1,7}$/)
+
+export const bundleRecordDescriptorV1Schema: z.ZodType<BundleRecordDescriptorV1> = z.strictObject({
+  recordId: boundedBindingId,
+  schemaId: schemaIdSchema,
+  schemaVersion: z.literal(1),
+  classification: z.enum(['INTERNAL', 'CONTROL_PLANE']),
+  digest: digestEnvelopeV1Schema,
+})
+
+export interface BundleOmissionV1 {
+  readonly schemaId: string
+  readonly reason: 'NO_ELIGIBLE_ANALYZER'
+}
+
+export const bundleOmissionV1Schema: z.ZodType<BundleOmissionV1> = z.strictObject({
+  schemaId: schemaIdSchema,
+  reason: z.literal('NO_ELIGIBLE_ANALYZER'),
+})
+
+export interface BundleManifestV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly verdict: SecurityVerdict
+  readonly seal: AssessmentSealV1
+  readonly records: readonly BundleRecordDescriptorV1[]
+  readonly omissions: readonly BundleOmissionV1[]
+  readonly digest: DigestEnvelopeV1
+}
+
+export const bundleManifestV1Schema: z.ZodType<BundleManifestV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  verdict: securityVerdictSchema,
+  seal: assessmentSealV1Schema,
+  records: z.array(bundleRecordDescriptorV1Schema).min(1).max(128),
+  omissions: z.array(bundleOmissionV1Schema).max(128),
+  digest: digestEnvelopeV1Schema,
+})
+
+export const securitySubmissionJsonV1Schema = z.json()
+export type SecuritySubmissionJsonV1 = z.infer<typeof securitySubmissionJsonV1Schema>
+
+export interface SecuritySubmissionArtifactV1 {
+  readonly artifactId: string
+  readonly schemaId: string
+  readonly schemaVersion: 1
+  readonly digest: DigestEnvelopeV1
+  readonly value: SecuritySubmissionJsonV1
+}
+
+export const securitySubmissionArtifactV1Schema: z.ZodType<SecuritySubmissionArtifactV1> = z.strictObject({
+  artifactId: boundedBindingId,
+  schemaId: schemaIdSchema,
+  schemaVersion: z.literal(1),
+  digest: digestEnvelopeV1Schema,
+  value: securitySubmissionJsonV1Schema,
+})
+
+export interface SecurityAssuranceSubmissionV1 {
+  readonly schemaVersion: 1
+  readonly payload: {
+    readonly assessment: {
+      readonly assessmentId: AssessmentId
+      readonly assessmentRevision: number
+      readonly state: 'SEALED'
+      readonly verdict: SecurityVerdict
+    }
+    readonly binding: {
+      readonly repositoryId: RepositoryId
+      readonly repositoryRevision: number
+      readonly subjectDigest: DigestEnvelopeV1
+      readonly policyId: string
+      readonly policyDigest: DigestEnvelopeV1
+    }
+    readonly providerComposition: SecuritySubmissionArtifactV1
+    readonly providerPolicy: SecuritySubmissionArtifactV1
+    readonly coverage: SecuritySubmissionArtifactV1
+    readonly findings: SecuritySubmissionArtifactV1
+    readonly sourceSeal: SecuritySubmissionArtifactV1
+    readonly provenance: SecuritySubmissionArtifactV1
+    readonly evidence: readonly SecuritySubmissionArtifactV1[]
+  }
+  readonly digest: DigestEnvelopeV1
+}
+
+export const securityAssuranceSubmissionV1Schema: z.ZodType<SecurityAssuranceSubmissionV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  payload: z.strictObject({
+    assessment: z.strictObject({
+      assessmentId: assessmentIdSchema,
+      assessmentRevision: z.number().int().positive(),
+      state: z.literal('SEALED'),
+      verdict: securityVerdictSchema,
+    }),
+    binding: z.strictObject({
+      repositoryId: repositoryIdSchema,
+      repositoryRevision: z.number().int().positive(),
+      subjectDigest: digestEnvelopeV1Schema,
+      policyId: boundedBindingId,
+      policyDigest: digestEnvelopeV1Schema,
+    }),
+    providerComposition: securitySubmissionArtifactV1Schema,
+    providerPolicy: securitySubmissionArtifactV1Schema,
+    coverage: securitySubmissionArtifactV1Schema,
+    findings: securitySubmissionArtifactV1Schema,
+    sourceSeal: securitySubmissionArtifactV1Schema,
+    provenance: securitySubmissionArtifactV1Schema,
+    evidence: z.array(securitySubmissionArtifactV1Schema).min(1).max(128),
+  }),
+  digest: digestEnvelopeV1Schema,
+})
+
+export const assessmentSnapshotResultSchema: z.ZodType<SecurityResult<AssessmentSnapshotV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: assessmentSnapshotV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
+
+export const assessmentRevisionSignalResultSchema: z.ZodType<SecurityResult<AssessmentRevisionSignalV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: assessmentRevisionSignalV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
+
+export const bundleManifestResultSchema: z.ZodType<SecurityResult<BundleManifestV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: bundleManifestV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
+
+export const securityAssuranceSubmissionResultSchema: z.ZodType<SecurityResult<SecurityAssuranceSubmissionV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: securityAssuranceSubmissionV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])

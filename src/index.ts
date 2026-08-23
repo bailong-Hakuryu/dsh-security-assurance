@@ -5,6 +5,9 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import {
   disableRepositoryRequestSchema,
+  getAssuranceSubmissionRequestSchema,
+  getAssessmentRequestSchema,
+  getBundleManifestRequestSchema,
   getRepositoryRequestSchema,
   getHealthRequestSchema,
   listRepositoriesRequestSchema,
@@ -16,12 +19,20 @@ import {
   SECURITY_ASSURANCE_PRODUCT_NAME,
   SECURITY_ASSURANCE_PRODUCT_VERSION,
   TARGET_HARNESS_VERSION,
+  waitForAssessmentRevisionRequestSchema,
 } from './contracts.ts'
 import type {
+  AssessmentId,
   AssessmentReceiptV1,
+  AssessmentRevisionSignalV1,
+  AssessmentSnapshotV1,
   AssessmentSubjectSourceV1,
   AssessmentTargetSelectorV1,
+  BundleManifestV1,
   DisableRepositoryRequest,
+  GetAssuranceSubmissionRequest,
+  GetAssessmentRequest,
+  GetBundleManifestRequest,
   GetHealthRequest,
   GetRepositoryRequest,
   InvocationOptions,
@@ -32,10 +43,12 @@ import type {
   RepositoryListSnapshotV1,
   RepositorySnapshotV1,
   RuntimeHealthSnapshot,
+  SecurityAssuranceSubmissionV1,
   SecurityInvocation,
   SecurityResult,
   StartAssessmentRequest,
   UpdateRepositoryRequest,
+  WaitForAssessmentRevisionRequest,
 } from './contracts.ts'
 import {
   RESOLVE_TRUSTED_INVOCATION,
@@ -43,11 +56,22 @@ import {
 } from './internal/authority.ts'
 import type { TrustedCallerChannel } from './internal/authority.ts'
 import { deepFreeze } from './internal/freeze.ts'
+import { publicAssessmentSnapshot } from './internal/assessment-record.ts'
+import {
+  checkSealReadiness,
+  evaluateDeterministicAssessment,
+  prepareAssessmentContract,
+} from './internal/deterministic-kernel.ts'
 import {
   openSecurityPersistence,
   SecurityPersistenceError,
 } from './internal/persistence.ts'
 import type { SecurityPersistence } from './internal/persistence.ts'
+import {
+  assembleSealedArtifacts,
+  publishSealedArtifacts,
+  verifyPublishedSealedArtifacts,
+} from './internal/sealed-artifacts.ts'
 import { freezeSubject, SubjectFreezeError } from './internal/subject-freeze.ts'
 
 export * from './contracts.ts'
@@ -175,6 +199,10 @@ export class SecurityAssuranceService extends Service {
   private readonly authorityResolver = new SecurityAuthorityResolver()
   private readonly ready: Promise<SecurityPersistence | undefined>
   private readonly securityRoot: string
+  private readonly runningAssessments = new Map<AssessmentId, {
+    readonly controller: AbortController
+    readonly task: Promise<void>
+  }>()
   private disposed = false
 
   constructor(ctx: Context, config: Config = {}) {
@@ -188,10 +216,18 @@ export class SecurityAssuranceService extends Service {
     })
     this.ready = this.initialize(config)
     void this.ready.catch(() => {})
+    void this.ready.then(persistence => {
+      if (persistence === undefined || this.disposed) return
+      for (const assessmentId of persistence.listCreatedAssessmentIds()) {
+        this.launchAssessment(persistence, assessmentId)
+      }
+    }).catch(() => {})
     ctx.effect(async () => {
       const persistence = await this.ready
-      return () => {
+      return async () => {
         this.disposed = true
+        for (const running of this.runningAssessments.values()) running.controller.abort()
+        await Promise.allSettled([...this.runningAssessments.values()].map(running => running.task))
         persistence?.close()
       }
     }, 'security assurance teardown')
@@ -453,7 +489,10 @@ export class SecurityAssuranceService extends Service {
         repositoryId: parsed.data.repositoryId,
         canonicalRequest: parsed.data,
       })
-      if (replay !== undefined) return deepFreeze({ ok: true, value: replay })
+      if (replay !== undefined) {
+        this.launchAssessment(persistence, replay.assessmentId)
+        return deepFreeze({ ok: true, value: replay })
+      }
 
       const frozen = await freezeSubject({
         repositoryRoot: repository.canonicalRoot,
@@ -463,6 +502,13 @@ export class SecurityAssuranceService extends Service {
       })
       const interruptedAfterFreeze = interruption<AssessmentReceiptV1>(options)
       if (interruptedAfterFreeze !== undefined) return interruptedAfterFreeze
+      const preparedContract = prepareAssessmentContract({
+        policyId: repository.snapshot.bindings.policyId,
+        assessmentMode: parsed.data.assessmentMode,
+        assessmentProfileId: parsed.data.assessmentProfileId,
+        target: parsed.data.target,
+        requestedStrongerControlIds: parsed.data.requestedStrongerControlIds,
+      })
       const receipt = persistence.createAssessment({
         principalId: authority.principalId,
         authorityKind: authority.kind,
@@ -478,11 +524,9 @@ export class SecurityAssuranceService extends Service {
           symbolicLinks: frozen.symbolicLinks,
           submodules: frozen.submodules,
         },
-        assessmentMode: parsed.data.assessmentMode,
-        assessmentProfileId: parsed.data.assessmentProfileId,
-        target: parsed.data.target,
-        requestedStrongerControlIds: parsed.data.requestedStrongerControlIds,
+        preparedContract,
       })
+      this.launchAssessment(persistence, receipt.assessmentId)
       return deepFreeze({ ok: true, value: receipt })
     } catch (error) {
       if (error instanceof SubjectFreezeError) {
@@ -502,12 +546,247 @@ export class SecurityAssuranceService extends Service {
     }
   }
 
+  /** Read one immutable, path-free Assessment projection. */
+  async getAssessment(
+    invocation: SecurityInvocation,
+    request: GetAssessmentRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<AssessmentSnapshotV1>> {
+    try {
+      if (!this.authorityResolver.authorizes(invocation, 'assessment:read')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to read Assessments.')
+      }
+      const interrupted = interruption<AssessmentSnapshotV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = getAssessmentRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match getAssessment schema version 1.')
+      }
+      const persistence = await this.ready
+      if (persistence === undefined || this.disposed) {
+        return failure('UNAVAILABLE', 'Assessment queries are unavailable while the private store is offline.', true)
+      }
+      const record = persistence.getAssessmentRecord(parsed.data.assessmentId)
+      if (record === undefined) return failure('NOT_FOUND', 'The Assessment does not exist.')
+      return deepFreeze({ ok: true, value: publicAssessmentSnapshot(record) })
+    } catch (error) {
+      return this.assessmentReadFailure(error)
+    }
+  }
+
+  /** Bounded long-poll for a durable Assessment revision without holding a Store transaction. */
+  async waitForAssessmentRevision(
+    invocation: SecurityInvocation,
+    request: WaitForAssessmentRevisionRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<AssessmentRevisionSignalV1>> {
+    try {
+      if (!this.authorityResolver.authorizes(invocation, 'assessment:read')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to read Assessments.')
+      }
+      const parsed = waitForAssessmentRevisionRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match waitForAssessmentRevision schema version 1.')
+      }
+      const persistence = await this.ready
+      if (persistence === undefined || this.disposed) {
+        return failure('UNAVAILABLE', 'Assessment queries are unavailable while the private store is offline.', true)
+      }
+      const timeoutAt = Date.now() + parsed.data.timeoutMs
+      while (true) {
+        const interrupted = interruption<AssessmentRevisionSignalV1>(options)
+        if (interrupted !== undefined) return interrupted
+        const record = persistence.getAssessmentRecord(parsed.data.assessmentId)
+        if (record === undefined) return failure('NOT_FOUND', 'The Assessment does not exist.')
+        if (record.assessmentRevision > parsed.data.afterRevision) {
+          return deepFreeze({
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: record.assessmentId,
+              kind: 'CHANGED',
+              assessmentRevision: record.assessmentRevision,
+            },
+          })
+        }
+        const remaining = timeoutAt - Date.now()
+        if (remaining <= 0) {
+          return deepFreeze({
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: record.assessmentId,
+              kind: 'TIMED_OUT',
+              assessmentRevision: record.assessmentRevision,
+            },
+          })
+        }
+        await new Promise(resolve => setTimeout(resolve, Math.min(25, remaining)))
+      }
+    } catch (error) {
+      return this.assessmentReadFailure(error)
+    }
+  }
+
+  /** Serve the machine-authoritative Bundle Manifest only after publication verification. */
+  async getBundleManifest(
+    invocation: SecurityInvocation,
+    request: GetBundleManifestRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<BundleManifestV1>> {
+    try {
+      if (!this.authorityResolver.authorizes(invocation, 'assessment:read')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to read Assessment Bundles.')
+      }
+      const interrupted = interruption<BundleManifestV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = getBundleManifestRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match getBundleManifest schema version 1.')
+      }
+      const sealed = await this.verifiedSealedRecord(parsed.data.assessmentId)
+      if (sealed === undefined) {
+        const persistence = await this.ready
+        if (persistence?.getAssessmentRecord(parsed.data.assessmentId) === undefined) {
+          return failure('NOT_FOUND', 'The Assessment does not exist.')
+        }
+        return failure('CONFLICT', 'The Assessment has not produced a sealed Bundle.')
+      }
+      return deepFreeze({ ok: true, value: sealed.bundleManifest })
+    } catch (error) {
+      return this.assessmentReadFailure(error, true)
+    }
+  }
+
+  /** Serve a self-contained immutable Submission by value; private paths never cross this seam. */
+  async getAssuranceSubmission(
+    invocation: SecurityInvocation,
+    request: GetAssuranceSubmissionRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<SecurityAssuranceSubmissionV1>> {
+    try {
+      if (!this.authorityResolver.authorizes(invocation, 'assessment:read')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to read Assurance Submissions.')
+      }
+      const interrupted = interruption<SecurityAssuranceSubmissionV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = getAssuranceSubmissionRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match getAssuranceSubmission schema version 1.')
+      }
+      const sealed = await this.verifiedSealedRecord(parsed.data.assessmentId)
+      if (sealed === undefined) {
+        const persistence = await this.ready
+        if (persistence?.getAssessmentRecord(parsed.data.assessmentId) === undefined) {
+          return failure('NOT_FOUND', 'The Assessment does not exist.')
+        }
+        return failure('CONFLICT', 'The Assessment has not produced a sealed Submission.')
+      }
+      return deepFreeze({ ok: true, value: sealed.submission })
+    } catch (error) {
+      return this.assessmentReadFailure(error, true)
+    }
+  }
+
+  private launchAssessment(persistence: SecurityPersistence, assessmentId: AssessmentId): void {
+    if (this.disposed || this.runningAssessments.has(assessmentId)) return
+    const controller = new AbortController()
+    const task = this.runAssessment(persistence, assessmentId, controller.signal)
+    const running = { controller, task }
+    this.runningAssessments.set(assessmentId, running)
+    void task.finally(() => {
+      if (this.runningAssessments.get(assessmentId) === running) {
+        this.runningAssessments.delete(assessmentId)
+      }
+    })
+  }
+
+  private async runAssessment(
+    persistence: SecurityPersistence,
+    assessmentId: AssessmentId,
+    signal: AbortSignal,
+  ): Promise<void> {
+    let runningRevision: number | undefined
+    try {
+      const running = persistence.beginAssessment(assessmentId)
+      if (running === undefined) return
+      runningRevision = running.assessmentRevision
+      if (signal.aborted) throw new Error('assessment execution canceled')
+      const sealedAt = new Date().toISOString()
+      const outcome = evaluateDeterministicAssessment(running.contract, sealedAt)
+      const readiness = checkSealReadiness(running.contract, outcome)
+      if (!readiness.ready) throw new Error(`seal readiness failed: ${readiness.violations.join(',')}`)
+      const artifacts = assembleSealedArtifacts(running, outcome, {
+        sealId: `seal-${randomUUID()}`,
+        sealedAt,
+      })
+      await publishSealedArtifacts(this.securityRoot, assessmentId, artifacts)
+      if (signal.aborted) throw new Error('assessment execution canceled')
+      persistence.sealAssessment({
+        assessmentId,
+        expectedAssessmentRevision: 2,
+        coverage: outcome.coverage,
+        findings: outcome.findings,
+        evaluationTrace: outcome.evaluationTrace,
+        verdict: outcome.verdict,
+        seal: artifacts.seal,
+        bundleManifest: artifacts.bundleManifest,
+        submission: artifacts.submission,
+        publicationDigest: artifacts.publicationDigest,
+      })
+    } catch {
+      if (runningRevision !== undefined) {
+        try {
+          persistence.blockAssessment(assessmentId, runningRevision, 'ASSESSMENT_EXECUTION_FAILED')
+        } catch {
+          // Teardown or a concurrent terminal transition already made this failure durable.
+        }
+      }
+    }
+  }
+
+  private async verifiedSealedRecord(assessmentId: AssessmentId): Promise<{
+    readonly bundleManifest: BundleManifestV1
+    readonly submission: SecurityAssuranceSubmissionV1
+  } | undefined> {
+    const persistence = await this.ready
+    if (persistence === undefined || this.disposed) {
+      throw new SecurityPersistenceError('corrupt_database', 'Assessment store is unavailable')
+    }
+    const record = persistence.getAssessmentRecord(assessmentId)
+    if (
+      record === undefined
+      || record.state !== 'SEALED'
+      || record.seal === null
+      || record.bundleManifest === null
+      || record.submission === null
+      || record.publicationDigest === null
+    ) return undefined
+    await verifyPublishedSealedArtifacts(this.securityRoot, assessmentId, {
+      seal: record.seal,
+      bundleManifest: record.bundleManifest,
+      submission: record.submission,
+      publicationDigest: record.publicationDigest,
+    })
+    return {
+      bundleManifest: record.bundleManifest,
+      submission: record.submission,
+    }
+  }
+
   private async initialize(config: Config): Promise<SecurityPersistence | undefined> {
     try {
       const dshHome = resolveDshHome(config.dshHome)
-      return await openSecurityPersistence({
+      const persistence = await openSecurityPersistence({
         databasePath: join(dshHome, 'security-assurance', 'security-assurance.sqlite'),
       })
+      try {
+        persistence.recoverInterruptedAssessments()
+        return persistence
+      } catch (error) {
+        persistence.close()
+        throw error
+      }
     } catch {
       return undefined
     }
@@ -525,6 +804,16 @@ export class SecurityAssuranceService extends Service {
         return failure('CONFLICT', 'The Repository command conflicts with its current revision or state.')
       }
       return failure('UNAVAILABLE', 'The private Security Assurance store is unavailable.', true)
+    }
+    return failure('INTERNAL', 'Security Assurance could not complete the operation.', true)
+  }
+
+  private assessmentReadFailure<T>(error: unknown, artifactRead = false): SecurityResult<T> {
+    if (error instanceof SecurityPersistenceError) {
+      return failure('UNAVAILABLE', 'The private Security Assurance store is unavailable.', true)
+    }
+    if (artifactRead && error instanceof Error) {
+      return failure('UNAVAILABLE', 'The sealed Assessment artifact failed integrity verification.', true)
     }
     return failure('INTERNAL', 'Security Assurance could not complete the operation.', true)
   }

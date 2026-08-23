@@ -11,15 +11,21 @@ import type {
   AssessmentId,
   AssessmentReceiptV1,
   AssessmentSubjectSourceV1,
-  AssessmentTargetSelectorV1,
+  BundleManifestV1,
   DigestEnvelopeV1,
   RepositoryBindingsV1,
   RepositoryCommandReceiptV1,
   RepositoryId,
   RepositoryListSnapshotV1,
   RepositorySnapshotV1,
+  SecurityAssuranceSubmissionV1,
 } from '../contracts.ts'
 import { canonicalJson, sha256Hex } from './canonical.ts'
+import {
+  internalAssessmentRecordV1Schema,
+} from './assessment-record.ts'
+import type { InternalAssessmentRecordV1 } from './assessment-record.ts'
+import type { PreparedAssessmentContractV1 } from './deterministic-kernel.ts'
 
 const APPLICATION_ID = 0x4453_4853
 const SCHEMA_VERSION = 1
@@ -31,6 +37,7 @@ export type SecurityPersistenceErrorCode =
   | 'idempotency_conflict'
   | 'repository_conflict'
   | 'repository_not_found'
+  | 'assessment_not_found'
   | 'revision_conflict'
 
 export class SecurityPersistenceError extends Error {
@@ -90,10 +97,20 @@ export interface AssessmentStartPersistenceInput {
     readonly symbolicLinks: number
     readonly submodules: number
   }
-  readonly assessmentMode: 'REPOSITORY' | 'CHANGE' | 'TARGETED'
-  readonly assessmentProfileId: string
-  readonly target: AssessmentTargetSelectorV1
-  readonly requestedStrongerControlIds: readonly string[]
+  readonly preparedContract: PreparedAssessmentContractV1
+}
+
+export interface SealAssessmentPersistenceInput {
+  readonly assessmentId: AssessmentId
+  readonly expectedAssessmentRevision: 2
+  readonly coverage: InternalAssessmentRecordV1['coverage']
+  readonly findings: InternalAssessmentRecordV1['findings']
+  readonly evaluationTrace: NonNullable<InternalAssessmentRecordV1['evaluationTrace']>
+  readonly verdict: NonNullable<InternalAssessmentRecordV1['verdict']>
+  readonly seal: NonNullable<InternalAssessmentRecordV1['seal']>
+  readonly bundleManifest: BundleManifestV1
+  readonly submission: SecurityAssuranceSubmissionV1
+  readonly publicationDigest: DigestEnvelopeV1
 }
 
 export interface SecurityPersistenceOptions {
@@ -110,6 +127,10 @@ interface IdempotencyRow {
 }
 
 interface RepositoryRow {
+  readonly snapshot_json: string
+}
+
+interface AssessmentRow {
   readonly snapshot_json: string
 }
 
@@ -600,7 +621,7 @@ export class SecurityPersistence {
         acceptedAt,
         correlationId: this.nextCorrelationId(),
       })
-      const snapshot = {
+      const snapshot = internalAssessmentRecordV1Schema.parse({
         schemaVersion: 1,
         assessmentId,
         assessmentRevision: 1,
@@ -616,15 +637,19 @@ export class SecurityPersistence {
           digest: input.subjectDigest,
           stats: input.subjectStats,
         },
-        contract: {
-          assessmentMode: input.assessmentMode,
-          assessmentProfileId: input.assessmentProfileId,
-          target: input.target,
-          requestedStrongerControlIds: input.requestedStrongerControlIds,
-        },
+        contract: input.preparedContract,
+        coverage: input.preparedContract.coverage,
+        findings: [],
+        evaluationTrace: null,
+        verdict: null,
+        seal: null,
+        bundleManifest: null,
+        submission: null,
+        publicationDigest: null,
+        failureCode: null,
         createdAt: acceptedAt,
         updatedAt: acceptedAt,
-      }
+      })
       const snapshotJson = canonicalJson(snapshot)
       this.db.prepare(`
         INSERT INTO assessments (
@@ -661,6 +686,143 @@ export class SecurityPersistence {
       this.db.exec('ROLLBACK')
       throw error
     }
+  }
+
+  getAssessmentRecord(assessmentId: AssessmentId): InternalAssessmentRecordV1 | undefined {
+    this.requireOpen()
+    const row = this.db.prepare(`
+      SELECT snapshot_json FROM assessments WHERE assessment_id = ?
+    `).get(assessmentId) as AssessmentRow | undefined
+    return row === undefined
+      ? undefined
+      : internalAssessmentRecordV1Schema.parse(JSON.parse(row.snapshot_json))
+  }
+
+  listCreatedAssessmentIds(): readonly AssessmentId[] {
+    this.requireOpen()
+    const rows = this.db.prepare(`
+      SELECT assessment_id FROM assessments WHERE state = 'CREATED' ORDER BY rowid
+    `).all() as unknown as readonly { readonly assessment_id: AssessmentId }[]
+    return rows.map(row => row.assessment_id)
+  }
+
+  /** Persist the durable execution boundary before any evaluation work begins. */
+  beginAssessment(assessmentId: AssessmentId): InternalAssessmentRecordV1 | undefined {
+    this.requireOpen()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const current = this.getAssessmentRecord(assessmentId)
+      if (current === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
+      if (current.state !== 'CREATED' || current.assessmentRevision !== 1) {
+        this.db.exec('COMMIT')
+        return undefined
+      }
+      const committedAt = this.now()
+      const running = internalAssessmentRecordV1Schema.parse({
+        ...current,
+        assessmentRevision: 2,
+        state: 'RUNNING',
+        updatedAt: committedAt,
+      })
+      this.commitAssessmentRevision(running, 'assessment_begun', committedAt)
+      this.db.exec('COMMIT')
+      return running
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Atomically commit Verdict, Seal, Bundle and Submission as one terminal revision. */
+  sealAssessment(input: SealAssessmentPersistenceInput): InternalAssessmentRecordV1 {
+    this.requireOpen()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const current = this.getAssessmentRecord(input.assessmentId)
+      if (current === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
+      if (
+        current.state !== 'RUNNING'
+        || current.assessmentRevision !== input.expectedAssessmentRevision
+      ) {
+        throw new SecurityPersistenceError('revision_conflict', 'Assessment is not sealable at this revision')
+      }
+      const committedAt = this.now()
+      const sealed = internalAssessmentRecordV1Schema.parse({
+        ...current,
+        assessmentRevision: 3,
+        state: 'SEALED',
+        coverage: input.coverage,
+        findings: input.findings,
+        evaluationTrace: input.evaluationTrace,
+        verdict: input.verdict,
+        seal: input.seal,
+        bundleManifest: input.bundleManifest,
+        submission: input.submission,
+        publicationDigest: input.publicationDigest,
+        failureCode: null,
+        updatedAt: committedAt,
+      })
+      this.commitAssessmentRevision(sealed, 'assessment_sealed', committedAt)
+      this.db.exec('COMMIT')
+      return sealed
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  blockAssessment(
+    assessmentId: AssessmentId,
+    expectedAssessmentRevision: number,
+    failureCode: string,
+  ): InternalAssessmentRecordV1 | undefined {
+    this.requireOpen()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const current = this.getAssessmentRecord(assessmentId)
+      if (
+        current === undefined
+        || current.state !== 'RUNNING'
+        || current.assessmentRevision !== expectedAssessmentRevision
+      ) {
+        this.db.exec('COMMIT')
+        return undefined
+      }
+      const committedAt = this.now()
+      const blocked = internalAssessmentRecordV1Schema.parse({
+        ...current,
+        assessmentRevision: current.assessmentRevision + 1,
+        state: 'BLOCKED',
+        failureCode,
+        updatedAt: committedAt,
+      })
+      this.commitAssessmentRevision(blocked, 'assessment_blocked', committedAt)
+      this.db.exec('COMMIT')
+      return blocked
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** A process restart never silently replays evaluation that had durably begun. */
+  recoverInterruptedAssessments(): readonly AssessmentId[] {
+    this.requireOpen()
+    const rows = this.db.prepare(`
+      SELECT assessment_id, current_revision
+      FROM assessments WHERE state = 'RUNNING' ORDER BY rowid
+    `).all() as unknown as readonly {
+      readonly assessment_id: AssessmentId
+      readonly current_revision: number
+    }[]
+    for (const row of rows) {
+      this.blockAssessment(row.assessment_id, row.current_revision, 'HOST_RESTART_DURING_EVALUATION')
+    }
+    return rows.map(row => row.assessment_id)
   }
 
   listRepositories(limit: number, state?: RepositorySnapshotV1['state']): RepositoryListSnapshotV1 {
@@ -729,6 +891,33 @@ export class SecurityPersistence {
         repository_id, repository_revision, snapshot_json, committed_at
       ) VALUES (?, ?, ?, ?)
     `).run(snapshot.repositoryId, snapshot.repositoryRevision, snapshotJson, committedAt)
+  }
+
+  private commitAssessmentRevision(
+    snapshot: InternalAssessmentRecordV1,
+    eventKind: string,
+    committedAt: string,
+  ): void {
+    const snapshotJson = canonicalJson(snapshot)
+    const changed = this.db.prepare(`
+      UPDATE assessments
+      SET current_revision = ?, state = ?, snapshot_json = ?, updated_at = ?
+      WHERE assessment_id = ?
+    `).run(
+      snapshot.assessmentRevision,
+      snapshot.state,
+      snapshotJson,
+      committedAt,
+      snapshot.assessmentId,
+    )
+    if (changed.changes !== 1) {
+      throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+    }
+    this.db.prepare(`
+      INSERT INTO assessment_revisions (
+        assessment_id, assessment_revision, event_kind, snapshot_json, committed_at
+      ) VALUES (?, ?, ?, ?, ?)
+    `).run(snapshot.assessmentId, snapshot.assessmentRevision, eventKind, snapshotJson, committedAt)
   }
 
   private recordIdempotency(
