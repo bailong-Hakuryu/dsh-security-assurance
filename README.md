@@ -138,6 +138,11 @@ or credentials. It resolves an internal `control-plane` Security Invocation,
 starts a Workspace Snapshot Assessment against that exact Repository ID,
 retrieves the verified sealed Security Submission, and embeds its canonical
 value plus source digest in the provider-neutral Control Plane Submission. If a
+sealed Submission cannot be supplied, the Adapter returns the Control Plane's
+strict provider-neutral External Assessment Failure value. Configuration or
+external blocking, cancellation, and runtime failure therefore settle the
+Control Plane Invocation as indeterminate and block its Gate without exposing
+Security internals or fabricating Evidence. If a
 durably begun Control Plane invocation is explicitly resumed after both hosts
 restart, the Adapter reuses the exact Assessment start identity, explicitly
 resumes that Assessment when it is `BLOCKED`, and returns the same sealed value

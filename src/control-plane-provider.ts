@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type EngineeringControlPlane from 'dsh-engineering-control-plane'
 import {
+  parseExternalAssessmentFailureV1,
   sealAssuranceSubmissionV1,
   type AssuranceClaimedOutcomeV1,
   type AssuranceExecutionContext,
@@ -47,7 +48,7 @@ function externalFailure(
 ): AssuranceProviderOutcomeV1 {
   return {
     kind: 'external_failure',
-    failure: Object.freeze({ schemaVersion: 1, reason, code }) as ExternalAssessmentFailureV1,
+    failure: parseExternalAssessmentFailureV1({ schemaVersion: 1, reason, code }),
   }
 }
 

@@ -344,7 +344,7 @@ describe('Security Assurance Control Plane Provider', () => {
         assuranceAssessments: [{
           assessor: { kind: 'machine_provider', provider: SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR },
           outcome: assuranceOutcome,
-          reasonCodes: [configurationMissing ? 'provider_incomplete' : 'eligible_submission'],
+          reasonCodes: [configurationMissing ? 'external_assessment_blocked' : 'eligible_submission'],
         }],
         assuranceResults: [{
           requirementId: `external-provider:${SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR.providerId}@${SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR.providerVersion}`,
@@ -356,7 +356,12 @@ describe('Security Assurance Control Plane Provider', () => {
         configurationMissing
           ? expect.objectContaining({
               descriptor: SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
-              state: 'begun',
+              state: 'external_failed',
+              failure: {
+                schemaVersion: 1,
+                reason: 'blocked',
+                code: 'invalid_provider_configuration',
+              },
             })
           : expect.objectContaining({
               descriptor: SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
@@ -506,7 +511,7 @@ describe('Security Assurance Control Plane Provider', () => {
       name: 'cancel-active-control-plane-fixture',
       version: '1.0.0',
       type: 'module',
-    }, 750)
+    }, 150)
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-control-plane-cancel-home-'))
     temporaryRoots.push(dshHome)
     const platform = process.platform
@@ -541,6 +546,18 @@ describe('Security Assurance Control Plane Provider', () => {
     )
     await ctx.engineeringControlPlane.whenReady()
     const adapterFiber = await ctx.plugin(SecurityAssuranceControlPlaneProvider)
+    let resolveAssessmentStarted!: (assessmentId: string) => void
+    const assessmentStarted = new Promise<string>(resolve => { resolveAssessmentStarted = resolve })
+    let releaseAssessment!: () => void
+    const assessmentHold = new Promise<void>(resolve => { releaseAssessment = resolve })
+    const disposeCheckpoint = installControlPlaneCancellationCrashCheckpoint(
+      ctx.securityAssurance,
+      async event => {
+        if (event.name !== 'after_assessment_started') return
+        resolveAssessmentStarted(event.assessmentId)
+        await assessmentHold
+      },
+    )
 
     try {
       const agent = {
@@ -552,7 +569,12 @@ describe('Security Assurance Control Plane Provider', () => {
         objective: 'Cancel the active external Security Assessment with the Mission',
       }, new AbortController().signal)
       await waitForProviderInvocation(ctx, agent, receipt.missionId, ['begun'])
-      await new Promise(resolve => setTimeout(resolve, 2_500))
+      await Promise.race([
+        assessmentStarted,
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error('Security Assessment did not reach the start checkpoint')), 15_000)
+        }),
+      ])
       const active = await ctx.engineeringControlPlane.status(
         agent,
         receipt.missionId,
@@ -624,6 +646,8 @@ describe('Security Assurance Control Plane Provider', () => {
         },
       })
     } finally {
+      releaseAssessment()
+      disposeCheckpoint()
       await adapterFiber.dispose()
       await controlPlaneFiber.dispose()
       await securityFiber.dispose()
