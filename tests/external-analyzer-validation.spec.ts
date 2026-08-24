@@ -7,6 +7,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import SecurityAssuranceService, {
   analyzerContributionV1Schema,
+  evidenceViewV1Schema,
   securitySubmissionJsonV1Schema,
 } from '../src/index.ts'
 import type {
@@ -15,7 +16,10 @@ import type {
   AssessmentId,
   SecurityInvocation,
 } from '../src/index.ts'
-import { referenceHostInvocation } from './support/reference-host.ts'
+import {
+  referenceHostInvocation,
+  referenceHostInvocationWithPermissions,
+} from './support/reference-host.ts'
 
 const run = promisify(execFile)
 const temporaryRoots: string[] = []
@@ -49,6 +53,8 @@ interface ReferenceValidationScenario<Observation = undefined> {
   readonly candidateHex: string
   readonly additionalCandidateHexes?: readonly string[]
   readonly additionalObservedValues?: readonly ('VIOLATED' | 'SATISFIED')[]
+  readonly evidencePaddingBytes?: number
+  readonly evidenceProtectionId?: string
   readonly inspect?: (
     service: SecurityAssuranceService,
     invocation: SecurityInvocation,
@@ -212,6 +218,9 @@ async function runReferenceValidationScenario<Observation = undefined>(
               subjectDigest: input.subject.digest,
               sourceAnchor,
               observedValue: observedValues[index],
+              ...(scenario.evidencePaddingBytes === undefined
+                ? {}
+                : { padding: 'x'.repeat(scenario.evidencePaddingBytes) }),
             }),
           })),
           diagnostics: [],
@@ -237,7 +246,7 @@ async function runReferenceValidationScenario<Observation = undefined>(
       bindings: {
         policyId: 'security/reference-validation',
         assessmentProfileId: 'security/standard',
-        evidenceProtectionId: 'evidence/local-protected',
+        evidenceProtectionId: scenario.evidenceProtectionId ?? 'evidence/local-protected',
         dataEgressPolicyId: 'egress/deny-by-default',
         platform,
         deliveryDestinationIds: [],
@@ -558,6 +567,402 @@ describe('external Analyzer Candidate validation', () => {
       },
     })
     expect(observation).not.toHaveProperty('detail.value.evidenceLinks.0.value')
+    expect(JSON.stringify(observation)).not.toContain('"observedValue":"VIOLATED"')
+  })
+
+  it('returns a metadata-only Evidence View bound to one exact Finding revision', async () => {
+    const { assessment, observation } = await runReferenceValidationScenario({
+      id: 'get-evidence-metadata-view',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '4',
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed, view: null }
+        const summary = listed.value.findings[0]
+        const detail = await service.getFinding(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        })
+        if (!detail.ok || detail.value.evidenceLinks[0] === undefined) return { listed, detail, view: null }
+        const link = detail.value.evidenceLinks[0]
+        return {
+          listed,
+          detail,
+          view: await service.getEvidenceView(invocation, {
+            schemaVersion: 1,
+            assessmentId,
+            assessmentRevision: summary.assessmentRevision,
+            context: {
+              kind: 'finding',
+              recordId: summary.recordId,
+              recordRevision: summary.recordRevision,
+            },
+            evidenceArtifactId: link.artifactId,
+            evidenceDigest: link.digest,
+            purpose: 'FINDING_TRIAGE',
+            viewProfileId: 'security/evidence-view/metadata-only-v1',
+          }),
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      view: {
+        ok: true,
+        value: {
+          schemaVersion: 1,
+          assessmentId: assessment.assessmentId,
+          assessmentRevision: assessment.assessmentRevision,
+          context: {
+            kind: 'finding',
+            recordId: expect.stringMatching(/^finding-[0-9a-f]{64}$/),
+            recordRevision: 1,
+          },
+          evidence: {
+            artifactId: 'reference-validation-evidence',
+            schemaId: 'fixture/reference-validation-evidence',
+            digest: { algorithm: 'sha256' },
+            classification: 'CONTROL_PLANE',
+          },
+          link: {
+            purpose: 'VALIDATION_EVIDENCE',
+            eligibilityDecision: 'ELIGIBLE',
+            eligibilityDecisionArtifactId: 'validation-eligibility-4444444444444444',
+          },
+          purpose: 'FINDING_TRIAGE',
+          viewProfileId: 'security/evidence-view/metadata-only-v1',
+          protection: {
+            policyId: 'evidence/local-protected',
+            status: 'AVAILABLE',
+          },
+          retention: { status: 'RETAINED' },
+          egress: {
+            policyId: 'egress/deny-by-default',
+            status: 'LOCAL_ONLY',
+          },
+          content: {
+            kind: 'REDACTED',
+            reason: 'PROFILE_METADATA_ONLY',
+          },
+        },
+      },
+    })
+    expect(JSON.stringify(observation)).not.toContain('"observedValue":"VIOLATED"')
+    expect(JSON.stringify(observation)).not.toMatch(/evidence[\\/]asm-/i)
+    expect(observation).not.toHaveProperty('view.value.path')
+    expect(observation).not.toHaveProperty('view.value.key')
+  })
+
+  it('requires separate disclosure authority and a validation purpose for bounded Evidence content', async () => {
+    const { observation } = await runReferenceValidationScenario({
+      id: 'get-evidence-bounded-view',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '5',
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed }
+        const summary = listed.value.findings[0]
+        const detail = await service.getFinding(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        })
+        if (!detail.ok || detail.value.evidenceLinks[0] === undefined) return { listed, detail }
+        const link = detail.value.evidenceLinks[0]
+        const base = {
+          schemaVersion: 1 as const,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          context: {
+            kind: 'finding' as const,
+            recordId: summary.recordId,
+            recordRevision: summary.recordRevision,
+          },
+          evidenceArtifactId: link.artifactId,
+          evidenceDigest: link.digest,
+          purpose: 'VALIDATION_REVIEW' as const,
+          viewProfileId: 'security/evidence-view/bounded-json-v1' as const,
+        }
+        const metadataOnlyAuthority = referenceHostInvocationWithPermissions(
+          service,
+          ['assessment:read'],
+          'metadata-only-reviewer',
+        )
+        const noReadAuthority = referenceHostInvocationWithPermissions(
+          service,
+          ['health:read'],
+          'health-only-operator',
+        )
+        return {
+          bounded: await service.getEvidenceView(invocation, base),
+          withoutDisclosureAuthority: await service.getEvidenceView(metadataOnlyAuthority, base),
+          wrongPurpose: await service.getEvidenceView(invocation, {
+            ...base,
+            purpose: 'FINDING_TRIAGE',
+          }),
+          metadataWithReadAuthority: await service.getEvidenceView(metadataOnlyAuthority, {
+            ...base,
+            purpose: 'FINDING_TRIAGE',
+            viewProfileId: 'security/evidence-view/metadata-only-v1',
+          }),
+          submissionByMetadataAuthority: await service.getAssuranceSubmission(
+            metadataOnlyAuthority,
+            { schemaVersion: 1, assessmentId },
+          ),
+          withoutReadAuthority: await service.getEvidenceView(noReadAuthority, base),
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      bounded: {
+        ok: true,
+        value: {
+          purpose: 'VALIDATION_REVIEW',
+          viewProfileId: 'security/evidence-view/bounded-json-v1',
+          content: {
+            kind: 'BOUNDED_JSON',
+            byteLength: expect.any(Number),
+            value: {
+              schemaVersion: 1,
+              observedValue: 'VIOLATED',
+            },
+          },
+        },
+      },
+      withoutDisclosureAuthority: {
+        ok: true,
+        value: { content: { kind: 'REDACTED', reason: 'DISCLOSURE_NOT_AUTHORIZED' } },
+      },
+      wrongPurpose: {
+        ok: true,
+        value: { content: { kind: 'REDACTED', reason: 'PURPOSE_NOT_AUTHORIZED' } },
+      },
+      metadataWithReadAuthority: {
+        ok: true,
+        value: { content: { kind: 'REDACTED', reason: 'PROFILE_METADATA_ONLY' } },
+      },
+      submissionByMetadataAuthority: {
+        ok: false,
+        error: { code: 'UNAUTHORIZED' },
+      },
+      withoutReadAuthority: {
+        ok: false,
+        error: { code: 'UNAUTHORIZED' },
+      },
+    })
+    expect(observation?.bounded).not.toHaveProperty('value.path')
+    expect(observation?.bounded).not.toHaveProperty('value.key')
+    if (observation?.bounded?.ok && observation.bounded.value.content.kind === 'BOUNDED_JSON') {
+      expect(evidenceViewV1Schema.safeParse({
+        ...observation.bounded.value,
+        content: {
+          ...observation.bounded.value.content,
+          byteLength: observation.bounded.value.content.byteLength + 1,
+        },
+      }).success).toBe(false)
+    }
+  })
+
+  it('fails closed for stale, cross-Finding, and mismatched Evidence identities', async () => {
+    const { observation } = await runReferenceValidationScenario({
+      id: 'reject-mismatched-evidence-view',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '6',
+      additionalCandidateHexes: ['7'],
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings.length !== 2) return { listed }
+        const first = listed.value.findings[0]
+        const second = listed.value.findings[1]
+        if (first === undefined || second === undefined) return { listed }
+        const detail = await service.getFinding(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: first.assessmentRevision,
+          recordId: first.recordId,
+          recordRevision: first.recordRevision,
+        })
+        if (!detail.ok || detail.value.evidenceLinks[0] === undefined) return { listed, detail }
+        const link = detail.value.evidenceLinks[0]
+        const base = {
+          schemaVersion: 1 as const,
+          assessmentId,
+          assessmentRevision: first.assessmentRevision,
+          context: {
+            kind: 'finding' as const,
+            recordId: first.recordId,
+            recordRevision: first.recordRevision,
+          },
+          evidenceArtifactId: link.artifactId,
+          evidenceDigest: link.digest,
+          purpose: 'FINDING_TRIAGE' as const,
+          viewProfileId: 'security/evidence-view/metadata-only-v1' as const,
+        }
+        return {
+          wrongDigest: await service.getEvidenceView(invocation, {
+            ...base,
+            evidenceDigest: { ...link.digest, value: 'f'.repeat(64) },
+          }),
+          wrongArtifact: await service.getEvidenceView(invocation, {
+            ...base,
+            evidenceArtifactId: 'reference-validation-evidence-9',
+          }),
+          crossFinding: await service.getEvidenceView(invocation, {
+            ...base,
+            context: {
+              kind: 'finding',
+              recordId: second.recordId,
+              recordRevision: second.recordRevision,
+            },
+          }),
+          staleAssessment: await service.getEvidenceView(invocation, {
+            ...base,
+            assessmentRevision: first.assessmentRevision + 1,
+          }),
+          staleFinding: await service.getEvidenceView(invocation, {
+            ...base,
+            context: { ...base.context, recordRevision: first.recordRevision + 1 },
+          }),
+          unknownProfile: await service.getEvidenceView(invocation, {
+            ...base,
+            viewProfileId: 'security/evidence-view/unrestricted-v1',
+          } as never),
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      wrongDigest: { ok: false, error: { code: 'NOT_FOUND' } },
+      wrongArtifact: { ok: false, error: { code: 'NOT_FOUND' } },
+      crossFinding: { ok: false, error: { code: 'NOT_FOUND' } },
+      staleAssessment: { ok: false, error: { code: 'CONFLICT' } },
+      staleFinding: { ok: false, error: { code: 'CONFLICT' } },
+      unknownProfile: { ok: false, error: { code: 'INVALID_REQUEST' } },
+    })
+  })
+
+  it('redacts content that exceeds the bounded-json Profile byte limit', async () => {
+    const { observation } = await runReferenceValidationScenario({
+      id: 'redact-oversized-evidence-view',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '8',
+      evidencePaddingBytes: 33 * 1024,
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return listed
+        const summary = listed.value.findings[0]
+        const detail = await service.getFinding(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        })
+        if (!detail.ok || detail.value.evidenceLinks[0] === undefined) return detail
+        const link = detail.value.evidenceLinks[0]
+        return service.getEvidenceView(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          context: {
+            kind: 'finding',
+            recordId: summary.recordId,
+            recordRevision: summary.recordRevision,
+          },
+          evidenceArtifactId: link.artifactId,
+          evidenceDigest: link.digest,
+          purpose: 'VALIDATION_REVIEW',
+          viewProfileId: 'security/evidence-view/bounded-json-v1',
+        })
+      },
+    })
+
+    expect(observation).toMatchObject({
+      ok: true,
+      value: {
+        content: { kind: 'REDACTED', reason: 'PROFILE_BYTE_LIMIT' },
+      },
+    })
+    expect(JSON.stringify(observation)).not.toContain('x'.repeat(128))
+  })
+
+  it('re-evaluates the frozen Evidence protection policy before content disclosure', async () => {
+    const { observation } = await runReferenceValidationScenario({
+      id: 'unavailable-evidence-protection',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '9',
+      evidenceProtectionId: 'evidence/external-key-provider',
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return listed
+        const summary = listed.value.findings[0]
+        const detail = await service.getFinding(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        })
+        if (!detail.ok || detail.value.evidenceLinks[0] === undefined) return detail
+        const link = detail.value.evidenceLinks[0]
+        return service.getEvidenceView(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          context: {
+            kind: 'finding',
+            recordId: summary.recordId,
+            recordRevision: summary.recordRevision,
+          },
+          evidenceArtifactId: link.artifactId,
+          evidenceDigest: link.digest,
+          purpose: 'VALIDATION_REVIEW',
+          viewProfileId: 'security/evidence-view/bounded-json-v1',
+        })
+      },
+    })
+
+    expect(observation).toMatchObject({
+      ok: true,
+      value: {
+        protection: {
+          policyId: 'evidence/external-key-provider',
+          status: 'UNAVAILABLE',
+        },
+        content: { kind: 'REDACTED', reason: 'PROTECTION_UNAVAILABLE' },
+      },
+    })
     expect(JSON.stringify(observation)).not.toContain('"observedValue":"VIOLATED"')
   })
 

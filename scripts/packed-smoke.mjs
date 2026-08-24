@@ -145,8 +145,11 @@ if (
   || typeof contracts.getFindingRequestSchema?.parse !== 'function'
   || typeof contracts.findingDetailViewV1Schema?.parse !== 'function'
   || typeof contracts.findingDetailResultSchema?.parse !== 'function'
+  || typeof contracts.getEvidenceViewRequestSchema?.parse !== 'function'
+  || typeof contracts.evidenceViewV1Schema?.parse !== 'function'
+  || typeof contracts.evidenceViewResultSchema?.parse !== 'function'
 ) {
-  throw new Error('packed Finding query contracts are incomplete')
+  throw new Error('packed Finding and Evidence View contracts are incomplete')
 }
 const analyzer = await import('dsh-security-assurance/analyzer')
 if (
@@ -179,8 +182,9 @@ if (
   typeof ctx.securityAssurance.registerAnalyzer !== 'function'
   || typeof ctx.securityAssurance.registerAnalyzerQualification !== 'function'
   || typeof ctx.securityAssurance.getFinding !== 'function'
+  || typeof ctx.securityAssurance.getEvidenceView !== 'function'
 ) {
-  throw new Error('Cordis activation did not expose Finding detail or local Analyzer composition')
+  throw new Error('Cordis activation did not expose Finding/Evidence detail or local Analyzer composition')
 }
 const repositoryConfig = {
   repositories: [{

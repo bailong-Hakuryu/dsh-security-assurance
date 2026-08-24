@@ -438,6 +438,7 @@ const SecurityAssuranceControlPlaneProvider = {
         'assessment:read',
         'assessment:resume',
         'assessment:cancel',
+        'assurance-submission:read',
       ],
     })
     return ctx.engineeringControlPlane.registerAssuranceProvider(

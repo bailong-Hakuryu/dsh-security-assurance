@@ -711,6 +711,49 @@ export const getFindingRequestSchema: z.ZodType<GetFindingRequest> = z.strictObj
   recordRevision: z.number().int().positive(),
 })
 
+export const EVIDENCE_VIEW_METADATA_ONLY_PROFILE_ID =
+  'security/evidence-view/metadata-only-v1' as const
+export const EVIDENCE_VIEW_BOUNDED_JSON_PROFILE_ID =
+  'security/evidence-view/bounded-json-v1' as const
+
+export type EvidenceViewPurposeV1 = 'FINDING_TRIAGE' | 'VALIDATION_REVIEW'
+export type EvidenceViewProfileIdV1 =
+  | typeof EVIDENCE_VIEW_METADATA_ONLY_PROFILE_ID
+  | typeof EVIDENCE_VIEW_BOUNDED_JSON_PROFILE_ID
+
+export interface GetEvidenceViewRequest {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly context: {
+    readonly kind: 'finding'
+    readonly recordId: string
+    readonly recordRevision: number
+  }
+  readonly evidenceArtifactId: string
+  readonly evidenceDigest: DigestEnvelopeV1
+  readonly purpose: EvidenceViewPurposeV1
+  readonly viewProfileId: EvidenceViewProfileIdV1
+}
+
+export const getEvidenceViewRequestSchema: z.ZodType<GetEvidenceViewRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  context: z.strictObject({
+    kind: z.literal('finding'),
+    recordId: findingRecordIdSchema,
+    recordRevision: z.number().int().positive(),
+  }),
+  evidenceArtifactId: boundedBindingId,
+  evidenceDigest: digestEnvelopeV1Schema,
+  purpose: z.enum(['FINDING_TRIAGE', 'VALIDATION_REVIEW']),
+  viewProfileId: z.enum([
+    EVIDENCE_VIEW_METADATA_ONLY_PROFILE_ID,
+    EVIDENCE_VIEW_BOUNDED_JSON_PROFILE_ID,
+  ]),
+})
+
 export interface WaitForAssessmentRevisionRequest {
   readonly schemaVersion: 1
   readonly assessmentId: AssessmentId
@@ -1058,6 +1101,117 @@ export const bundleManifestV1Schema: z.ZodType<BundleManifestV1> = z.strictObjec
 export const securitySubmissionJsonV1Schema = z.json()
 export type SecuritySubmissionJsonV1 = z.infer<typeof securitySubmissionJsonV1Schema>
 
+export type EvidenceViewRedactionReasonV1 =
+  | 'PROFILE_METADATA_ONLY'
+  | 'DISCLOSURE_NOT_AUTHORIZED'
+  | 'PURPOSE_NOT_AUTHORIZED'
+  | 'PROTECTION_UNAVAILABLE'
+  | 'SCHEMA_NOT_DISCLOSABLE'
+  | 'PROFILE_BYTE_LIMIT'
+
+export type EvidenceViewContentV1 =
+  | {
+      readonly kind: 'REDACTED'
+      readonly reason: EvidenceViewRedactionReasonV1
+    }
+  | {
+      readonly kind: 'BOUNDED_JSON'
+      readonly byteLength: number
+      readonly value: SecuritySubmissionJsonV1
+    }
+
+export interface EvidenceViewV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly context: {
+    readonly kind: 'finding'
+    readonly recordId: string
+    readonly recordRevision: number
+  }
+  readonly evidence: {
+    readonly artifactId: string
+    readonly schemaId: string
+    readonly digest: DigestEnvelopeV1
+    readonly classification: 'INTERNAL' | 'CONTROL_PLANE'
+  }
+  readonly link: {
+    readonly purpose: 'VALIDATION_EVIDENCE' | 'COUNTER_EVIDENCE'
+    readonly eligibilityDecision: 'ELIGIBLE' | 'INELIGIBLE'
+    readonly eligibilityDecisionArtifactId: string
+  }
+  readonly purpose: EvidenceViewPurposeV1
+  readonly viewProfileId: EvidenceViewProfileIdV1
+  readonly protection: {
+    readonly policyId: string
+    readonly status: 'AVAILABLE' | 'UNAVAILABLE'
+  }
+  readonly retention: { readonly status: 'RETAINED' }
+  readonly egress: {
+    readonly policyId: string
+    readonly status: 'LOCAL_ONLY'
+  }
+  readonly content: EvidenceViewContentV1
+}
+
+const evidenceViewContentV1Schema: z.ZodType<EvidenceViewContentV1> = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('REDACTED'),
+    reason: z.enum([
+      'PROFILE_METADATA_ONLY',
+      'DISCLOSURE_NOT_AUTHORIZED',
+      'PURPOSE_NOT_AUTHORIZED',
+      'PROTECTION_UNAVAILABLE',
+      'SCHEMA_NOT_DISCLOSABLE',
+      'PROFILE_BYTE_LIMIT',
+    ]),
+  }),
+  z.strictObject({
+    kind: z.literal('BOUNDED_JSON'),
+    byteLength: z.number().int().nonnegative().max(32 * 1024),
+    value: securitySubmissionJsonV1Schema,
+  }).refine(content => (
+    Buffer.byteLength(JSON.stringify(content.value), 'utf8') === content.byteLength
+  ), { message: 'bounded Evidence content byteLength does not match its JSON value' }),
+])
+
+export const evidenceViewV1Schema: z.ZodType<EvidenceViewV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  context: z.strictObject({
+    kind: z.literal('finding'),
+    recordId: findingRecordIdSchema,
+    recordRevision: z.number().int().positive(),
+  }),
+  evidence: z.strictObject({
+    artifactId: boundedBindingId,
+    schemaId: findingEvidenceSchemaId,
+    digest: digestEnvelopeV1Schema,
+    classification: z.enum(['INTERNAL', 'CONTROL_PLANE']),
+  }),
+  link: z.strictObject({
+    purpose: z.enum(['VALIDATION_EVIDENCE', 'COUNTER_EVIDENCE']),
+    eligibilityDecision: z.enum(['ELIGIBLE', 'INELIGIBLE']),
+    eligibilityDecisionArtifactId: boundedBindingId,
+  }),
+  purpose: z.enum(['FINDING_TRIAGE', 'VALIDATION_REVIEW']),
+  viewProfileId: z.enum([
+    EVIDENCE_VIEW_METADATA_ONLY_PROFILE_ID,
+    EVIDENCE_VIEW_BOUNDED_JSON_PROFILE_ID,
+  ]),
+  protection: z.strictObject({
+    policyId: boundedBindingId,
+    status: z.enum(['AVAILABLE', 'UNAVAILABLE']),
+  }),
+  retention: z.strictObject({ status: z.literal('RETAINED') }),
+  egress: z.strictObject({
+    policyId: boundedBindingId,
+    status: z.literal('LOCAL_ONLY'),
+  }),
+  content: evidenceViewContentV1Schema,
+})
+
 export interface SecuritySubmissionArtifactV1 {
   readonly artifactId: string
   readonly schemaId: string
@@ -1143,6 +1297,12 @@ export const findingListResultSchema: z.ZodType<SecurityResult<FindingListPageV1
 export const findingDetailResultSchema: z.ZodType<SecurityResult<FindingDetailViewV1>> =
   z.discriminatedUnion('ok', [
     z.strictObject({ ok: z.literal(true), value: findingDetailViewV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
+
+export const evidenceViewResultSchema: z.ZodType<SecurityResult<EvidenceViewV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: evidenceViewV1Schema }),
     z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
   ])
 

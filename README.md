@@ -13,8 +13,8 @@ This repository is under active vertical-slice development, not at the
 - real Cordis registration at `ctx.securityAssurance`;
 - an opaque, runtime-verified Security Invocation boundary;
 - authorized Runtime Health, Repository Registry, Assessment start/query/wait,
-  Finding Summary and Detail, Bundle Manifest, and Assurance Submission
-  operations;
+  Finding Summary and Detail, purpose-bound Evidence View, Bundle Manifest,
+  and Assurance Submission operations;
 - versioned Zod-validated public contracts;
 - one `SecurityResult<T>` success/failure envelope;
 - redacted authorization, validation, cancellation, deadline, and internal
@@ -80,6 +80,15 @@ This repository is under active vertical-slice development, not at the
   lineage, separate Severity/Confidence/Policy dimensions, Coverage and Risk
   status, and digest-bound Evidence Link metadata without returning Evidence
   values or read capabilities;
+- revision-bound `getEvidenceView` projections that require exact Assessment,
+  consuming Finding revision, Evidence artifact, and digest identity. The
+  metadata-only Profile needs Assessment read authority and always redacts
+  content; the bounded-json Profile additionally requires the purpose-specific
+  `evidence:disclose:validation-review` authority, `VALIDATION_REVIEW` purpose,
+  an available frozen protection policy, an allowlisted Evidence schema, and a
+  32 KiB canonical JSON limit. Denied or unavailable content remains a
+  structured redacted View without Store paths, keys, unrestricted sources, or
+  reusable read capabilities;
 - blocking-Finding precedence proving a qualified validated Reference Candidate
   seals as `FAILED` with complete Coverage without allowing the Analyzer to set
   Finding, Severity, Significance, or Verdict directly;
@@ -153,6 +162,7 @@ sole business Interface at `ctx.securityAssurance`. Implemented operations are:
 - `getAssessment`
 - `listFindings`
 - `getFinding`
+- `getEvidenceView`
 - `waitForAssessmentRevision`
 - `getBundleManifest`
 - `getAssuranceSubmission`
@@ -181,6 +191,24 @@ revision fails with `CONFLICT`; an unknown record fails with `NOT_FOUND`.
 Evidence Links carry only artifact identity, schema, digest, purpose, and the
 bound Eligibility Decision. They never contain the Evidence payload and are
 not reusable disclosure capabilities.
+
+`getEvidenceView` is also SEALED-only. Its request repeats the exact Assessment
+and Finding revisions plus the linked Evidence artifact ID and digest, then
+declares one viewing purpose and one named Profile. Cross-Finding links,
+mismatched digests, unknown Profiles, and stale revisions fail closed. The
+`security/evidence-view/metadata-only-v1` Profile returns classification,
+protection, retention, Egress, and Eligibility metadata with redacted content.
+The `security/evidence-view/bounded-json-v1` Profile may return at most 32 KiB
+of JSON only for `VALIDATION_REVIEW`, only under the dedicated trusted-channel
+permission, and only for currently allowlisted safe Evidence schemas. A
+missing permission, incompatible purpose, unavailable protection policy,
+unknown schema, or byte-limit breach produces a redacted View rather than a
+payload or read handle.
+
+`getAssuranceSubmission` uses the separate `assurance-submission:read`
+authority held by the Control Plane Adapter and explicitly trusted Host
+composition. Generic Assessment read authority cannot use the self-contained
+Control Plane transport Submission to bypass Evidence View authorization.
 
 `startAssessment` returns the durable revision-1 `CREATED` Receipt; it does not
 transfer ownership of the continuing run to the caller. The Engine persists

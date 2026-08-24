@@ -8,6 +8,8 @@ export type SecurityPermission =
   | 'assessment:read'
   | 'assessment:resume'
   | 'assessment:cancel'
+  | 'evidence:disclose:validation-review'
+  | 'assurance-submission:read'
 export type SecurityCallerChannelKind = 'harness-session' | 'host-operator' | 'control-plane'
 
 /** Package-private method key that Cordis traceable Service proxies can forward. */
@@ -47,6 +49,8 @@ export class SecurityAuthorityResolver {
       'assessment:read',
       'assessment:resume',
       'assessment:cancel',
+      'evidence:disclose:validation-review',
+      'assurance-submission:read',
     ])
     if (
       channel.permissions.length === 0

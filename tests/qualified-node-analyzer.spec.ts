@@ -366,6 +366,47 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
         },
       })
       expect(detail).not.toHaveProperty('value.evidenceLinks.0.value')
+      if (!detail.ok || detail.value.evidenceLinks[0] === undefined) {
+        throw new Error('sealed built-in Finding has no Evidence Link')
+      }
+      const evidenceLink = detail.value.evidenceLinks[0]
+      const evidenceView = await ctx.securityAssurance.getEvidenceView(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+        assessmentRevision: summary.assessmentRevision,
+        context: {
+          kind: 'finding',
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        },
+        evidenceArtifactId: evidenceLink.artifactId,
+        evidenceDigest: evidenceLink.digest,
+        purpose: 'VALIDATION_REVIEW',
+        viewProfileId: 'security/evidence-view/bounded-json-v1',
+      })
+      expect(evidenceView).toMatchObject({
+        ok: true,
+        value: {
+          evidence: {
+            artifactId: 'node-package-manifest-evidence',
+            schemaId: 'dsh/security-node-package-manifest-evidence',
+            classification: 'CONTROL_PLANE',
+          },
+          content: {
+            kind: 'BOUNDED_JSON',
+            value: {
+              schemaVersion: 1,
+              manifests: expect.arrayContaining([expect.objectContaining({
+                path: 'package.json',
+                parseStatus: 'VALID',
+                installLifecycleScripts: ['postinstall'],
+              })]),
+            },
+          },
+        },
+      })
+      expect(JSON.stringify(evidenceView)).not.toContain('node setup.js')
+      expect(JSON.stringify(evidenceView)).not.toContain(repository)
     } finally {
       await fiber.dispose()
     }

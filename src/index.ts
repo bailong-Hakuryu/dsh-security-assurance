@@ -9,6 +9,7 @@ import {
   getAssuranceSubmissionRequestSchema,
   getAssessmentRequestSchema,
   getBundleManifestRequestSchema,
+  getEvidenceViewRequestSchema,
   getFindingRequestSchema,
   getRepositoryRequestSchema,
   getHealthRequestSchema,
@@ -41,10 +42,12 @@ import type {
   GetAssuranceSubmissionRequest,
   GetAssessmentRequest,
   GetBundleManifestRequest,
+  GetEvidenceViewRequest,
   GetFindingRequest,
   GetHealthRequest,
   GetRepositoryRequest,
   InvocationOptions,
+  EvidenceViewV1,
   FindingDetailViewV1,
   FindingListPageV1,
   ListFindingsRequest,
@@ -55,6 +58,7 @@ import type {
   RepositoryCommandReceiptV1,
   RepositoryListSnapshotV1,
   RepositorySnapshotV1,
+  RepositoryBindingsV1,
   RuntimeHealthSnapshot,
   SecurityAssuranceSubmissionV1,
   SecurityInvocation,
@@ -85,6 +89,10 @@ import {
 import type { TrustedCallerChannel } from './internal/authority.ts'
 import { AnalyzerRegistry } from './internal/analyzer-registry.ts'
 import { deepFreeze } from './internal/freeze.ts'
+import {
+  EvidenceViewModule,
+  EvidenceViewNotFoundError,
+} from './internal/evidence-view.ts'
 import {
   FindingQueryCursorError,
   FindingQueryModule,
@@ -241,6 +249,7 @@ export class SecurityAssuranceService extends Service {
   private readonly authorityResolver = new SecurityAuthorityResolver()
   private readonly analyzerRegistry = new AnalyzerRegistry()
   private readonly findingQueries = new FindingQueryModule()
+  private readonly evidenceViews = new EvidenceViewModule()
   private readonly ready: Promise<SecurityPersistence | undefined>
   private readonly securityRoot: string
   private readonly runningAssessments = new Map<AssessmentId, {
@@ -881,6 +890,70 @@ export class SecurityAssuranceService extends Service {
     }
   }
 
+  /** Resolve one purpose/profile-bound View without exposing Evidence storage authority. */
+  async getEvidenceView(
+    invocation: SecurityInvocation,
+    request: GetEvidenceViewRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<EvidenceViewV1>> {
+    try {
+      const authority = this.authorityResolver.authority(invocation)
+      if (authority === undefined || !authority.permissions.has('assessment:read')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to read Evidence metadata.')
+      }
+      const interrupted = interruption<EvidenceViewV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = getEvidenceViewRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match getEvidenceView schema version 1.')
+      }
+      const sealed = await this.verifiedSealedRecord(parsed.data.assessmentId)
+      if (sealed === undefined) {
+        const persistence = await this.ready
+        if (persistence?.getAssessmentRecord(parsed.data.assessmentId) === undefined) {
+          return failure('NOT_FOUND', 'The Assessment does not exist.')
+        }
+        return failure('CONFLICT', 'The Assessment has not produced sealed Evidence records.')
+      }
+      const finding = this.findingQueries.get(sealed.submission, {
+        schemaVersion: 1,
+        assessmentId: parsed.data.assessmentId,
+        assessmentRevision: parsed.data.assessmentRevision,
+        recordId: parsed.data.context.recordId,
+        recordRevision: parsed.data.context.recordRevision,
+      })
+      return deepFreeze({
+        ok: true,
+        value: this.evidenceViews.get(
+          sealed.submission,
+          sealed.bundleManifest,
+          finding,
+          parsed.data,
+          {
+            evidenceProtectionId: sealed.bindings.evidenceProtectionId,
+            dataEgressPolicyId: sealed.bindings.dataEgressPolicyId,
+          },
+          {
+            canDiscloseValidationReview: authority.permissions.has(
+              'evidence:disclose:validation-review',
+            ),
+          },
+        ),
+      })
+    } catch (error) {
+      if (error instanceof FindingQueryNotFoundError) {
+        return failure('NOT_FOUND', 'The consuming Finding record does not exist.')
+      }
+      if (error instanceof EvidenceViewNotFoundError) {
+        return failure('NOT_FOUND', 'The Evidence is not linked to the consuming Finding revision.')
+      }
+      if (error instanceof FindingQueryRevisionError) {
+        return failure('CONFLICT', 'The requested Finding revision does not match the sealed record.')
+      }
+      return this.assessmentReadFailure(error, true)
+    }
+  }
+
   /** Bounded long-poll for a durable Assessment revision without holding a Store transaction. */
   async waitForAssessmentRevision(
     invocation: SecurityInvocation,
@@ -972,7 +1045,7 @@ export class SecurityAssuranceService extends Service {
     options: InvocationOptions = {},
   ): Promise<SecurityResult<SecurityAssuranceSubmissionV1>> {
     try {
-      if (!this.authorityResolver.authorizes(invocation, 'assessment:read')) {
+      if (!this.authorityResolver.authorizes(invocation, 'assurance-submission:read')) {
         return failure('UNAUTHORIZED', 'The caller is not authorized to read Assurance Submissions.')
       }
       const interrupted = interruption<SecurityAssuranceSubmissionV1>(options)
@@ -1110,6 +1183,7 @@ export class SecurityAssuranceService extends Service {
   private async verifiedSealedRecord(assessmentId: AssessmentId): Promise<{
     readonly bundleManifest: BundleManifestV1
     readonly submission: SecurityAssuranceSubmissionV1
+    readonly bindings: RepositoryBindingsV1
   } | undefined> {
     const persistence = await this.ready
     if (persistence === undefined || this.disposed) {
@@ -1133,6 +1207,7 @@ export class SecurityAssuranceService extends Service {
     return {
       bundleManifest: record.bundleManifest,
       submission: record.submission,
+      bindings: record.repository.bindings,
     }
   }
 
