@@ -29,6 +29,7 @@ import type {
   FindingDetailViewV1,
   FindingSummaryV1,
   RepositorySnapshotV1,
+  RuntimeHealthSnapshot,
   SecurityCatalogSnapshotV1,
   StartAssessmentSelectionV1,
   StartPreflightV1,
@@ -52,7 +53,9 @@ export interface WorkbenchOverlayInjected {
   readonly loadMoreFindings: () => void
   readonly openFindings: () => void
   readonly openRepositories: () => void
+  readonly openRuntimeHealth: () => void
   readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
+  readonly refreshRuntimeHealth: () => void
   readonly resumeAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
   readonly backToFindingList: () => void
   readonly backToFindingDetail: () => void
@@ -85,7 +88,9 @@ export function WorkbenchOverlay({
   loadMoreFindings,
   openFindings,
   openRepositories,
+  openRuntimeHealth,
   recordRiskDecision,
+  refreshRuntimeHealth,
   resumeAssessment,
   backToFindingList,
   backToFindingDetail,
@@ -168,7 +173,19 @@ export function WorkbenchOverlay({
               loadingMore={state.kind === 'SELECTION_LOADING_MORE'}
               loadMoreAssessments={loadMoreAssessments}
               openRepositories={openRepositories}
+              openRuntimeHealth={openRuntimeHealth}
               selectAssessment={selectAssessment}
+              t={t}
+            />
+          )}
+          {state.kind === 'HEALTH_LOADING' && (
+            <MessageState title={t('health.loadingTitle')} body={t('health.loadingBody')} role="status" />
+          )}
+          {state.kind === 'HEALTH_READY' && (
+            <RuntimeHealthView
+              health={state.health}
+              backToAssessmentSelection={backToAssessmentSelection}
+              refreshRuntimeHealth={refreshRuntimeHealth}
               t={t}
             />
           )}
@@ -256,6 +273,7 @@ function AssessmentSelection({
   loadingMore,
   loadMoreAssessments,
   openRepositories,
+  openRuntimeHealth,
   selectAssessment,
   t,
 }: {
@@ -264,6 +282,7 @@ function AssessmentSelection({
   readonly loadingMore: boolean
   readonly loadMoreAssessments: () => void
   readonly openRepositories: () => void
+  readonly openRuntimeHealth: () => void
   readonly selectAssessment: (assessmentId: AssessmentId) => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
@@ -272,9 +291,14 @@ function AssessmentSelection({
       <div>
         <div className="dsh-security-view-heading">
           <h2 id="dsh-security-selection-title">{t('selection.title')}</h2>
-          <button type="button" className="dsh-security-secondary-action" onClick={openRepositories}>
-            {t('repositories.open')}
-          </button>
+          <div className="dsh-security-view-heading__actions">
+            <button type="button" className="dsh-security-secondary-action" onClick={openRuntimeHealth}>
+              {t('health.open')}
+            </button>
+            <button type="button" className="dsh-security-secondary-action" onClick={openRepositories}>
+              {t('repositories.open')}
+            </button>
+          </div>
         </div>
         <p>{t('selection.body')}</p>
       </div>
@@ -314,6 +338,87 @@ function AssessmentSelection({
           {loadingMore ? t('selection.loadingMore') : t('selection.loadMore')}
         </button>
       )}
+    </section>
+  )
+}
+
+function RuntimeHealthView({
+  health,
+  backToAssessmentSelection,
+  refreshRuntimeHealth,
+  t,
+}: {
+  readonly health: RuntimeHealthSnapshot
+  readonly backToAssessmentSelection: () => void
+  readonly refreshRuntimeHealth: () => void
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  const admissions = [
+    [t('health.queries'), health.admission.queries],
+    [t('health.mutations'), health.admission.mutations],
+    [t('health.sealedExports'), health.admission.sealedExports],
+  ] as const
+  return (
+    <section className="dsh-security-health" aria-labelledby="dsh-security-health-title">
+      <div className="dsh-security-view-heading">
+        <div>
+          <span className="dsh-security-eyebrow">{t('health.eyebrow')}</span>
+          <h2 id="dsh-security-health-title">{t('health.title')}</h2>
+        </div>
+        <MachineBadge value={health.state} />
+      </div>
+      <p className="dsh-security-readonly-note">{t('health.immutable')}</p>
+      <div className="dsh-security-view-heading__actions dsh-security-health__actions">
+        <button type="button" className="dsh-security-secondary-action" onClick={backToAssessmentSelection}>
+          {t('health.back')}
+        </button>
+        <button type="button" className="dsh-security-secondary-action" onClick={refreshRuntimeHealth}>
+          {t('health.refresh')}
+        </button>
+      </div>
+      <dl className="dsh-security-facts">
+        <Fact label={t('health.product')} value={health.product.name} machine />
+        <Fact label={t('health.version')} value={health.product.version} machine />
+        <Fact label={t('label.state')} value={health.state} machine />
+        <Fact label={t('health.targetHarness')} value={health.compatibility.targetHarnessVersion} machine />
+        <Fact label={t('health.requiredNode')} value={health.compatibility.requiredNodeRange} machine />
+        <Fact label={t('health.actualNode')} value={health.compatibility.actualNodeVersion} machine />
+        <Fact label={t('health.harnessVerification')} value={health.compatibility.harnessVerification} machine />
+      </dl>
+      <section className="dsh-security-section" aria-labelledby="dsh-security-health-admission-title">
+        <div className="dsh-security-section__header">
+          <h2 id="dsh-security-health-admission-title">{t('health.admission')}</h2>
+        </div>
+        <ul className="dsh-security-health__admission">
+          {admissions.map(([label, admitted]) => (
+            <li key={label}>
+              <span>{label}</span>
+              <MachineBadge value={String(admitted)} />
+            </li>
+          ))}
+        </ul>
+      </section>
+      <section className="dsh-security-section" aria-labelledby="dsh-security-health-checks-title">
+        <div className="dsh-security-section__header">
+          <h2 id="dsh-security-health-checks-title">{t('health.checks')}</h2>
+        </div>
+        <ul className="dsh-security-health__checks">
+          {health.checks.map(check => (
+            <li key={check.id}>
+              <div className="dsh-security-health__check-heading">
+                <code>{check.id}</code>
+                <div className="dsh-security-badges">
+                  <span className="dsh-security-health__requirement">
+                    {check.required ? t('health.required') : t('health.optional')}
+                  </span>
+                  <MachineBadge value={check.status} />
+                </div>
+              </div>
+              <p>{check.message}</p>
+            </li>
+          ))}
+        </ul>
+      </section>
     </section>
   )
 }

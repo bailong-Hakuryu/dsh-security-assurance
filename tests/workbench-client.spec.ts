@@ -1794,6 +1794,97 @@ describe('Security Assurance Workbench Client', () => {
     expect(JSON.stringify(cancelPayloads[0])).not.toContain('principalId')
   })
 
+  it('opens and reauthorizes the exact Runtime Health projection without browser derivation', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+    const authorityId = authorityContextId('workbench-session-health-client')
+    const payloads: Array<{ readonly endpoint: string; readonly payload: unknown }> = []
+    let healthRead = 0
+    const healthSnapshot = (state: 'READ_ONLY_SAFE' | 'READY') => ({
+      schemaVersion: 1 as const,
+      product: { name: 'dsh-security-assurance' as const, version: '0.0.0-development' as const },
+      compatibility: {
+        targetHarnessVersion: '0.1.1-rc.2' as const,
+        requiredNodeRange: '^22.19.0 || >=24.0.0' as const,
+        actualNodeVersion: '24.7.0',
+        harnessVerification: 'PENDING_INVARIANT' as const,
+      },
+      state,
+      admission: {
+        queries: true,
+        mutations: state === 'READY',
+        sealedExports: state === 'READY',
+      },
+      checks: [{
+        id: 'persistence.sqlite',
+        status: state === 'READY' ? 'PASS' as const : 'FAIL' as const,
+        required: true,
+        message: state === 'READY' ? 'SQLite persistence is ready.' : 'SQLite persistence is unavailable.',
+      }],
+    })
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+    ): Promise<unknown> {
+      payloads.push({ endpoint, payload })
+      if (endpoint === 'securityAssuranceWorkbench/listAssessments') {
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: {
+            schemaVersion: 1,
+            consistencyWatermark: 'health.signature',
+            assessments: [],
+            nextCursor: null,
+          } },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getHealth') {
+        healthRead += 1
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: healthSnapshot(healthRead === 1 ? 'READ_ONLY_SAFE' : 'READY') },
+        })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+
+    await controller.openAssessmentSelection({ securityAssuranceWorkbenchContextId: authorityId })
+    await expect(controller.openRuntimeHealth()).resolves.toMatchObject({
+      kind: 'HEALTH_READY',
+      health: {
+        state: 'READ_ONLY_SAFE',
+        admission: { queries: true, mutations: false, sealedExports: false },
+        checks: [{ id: 'persistence.sqlite', status: 'FAIL' }],
+      },
+    })
+    await expect(controller.refreshRuntimeHealth()).resolves.toMatchObject({
+      kind: 'HEALTH_READY',
+      health: {
+        state: 'READY',
+        admission: { queries: true, mutations: true, sealedExports: true },
+        checks: [{ id: 'persistence.sqlite', status: 'PASS' }],
+      },
+    })
+    expect(payloads.map(item => item.endpoint)).toEqual([
+      'securityAssuranceWorkbench/listAssessments',
+      'securityAssuranceWorkbench/getHealth',
+      'securityAssuranceWorkbench/getHealth',
+    ])
+    expect(payloads[1]?.payload).toMatchObject({
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1 },
+      },
+    })
+    expect(JSON.stringify(payloads)).not.toContain('principalId')
+  })
+
   it('drives Repository selection, digest-bound preflight, and exact Assessment start', async () => {
     const ctx = new Context()
     contexts.push(ctx)

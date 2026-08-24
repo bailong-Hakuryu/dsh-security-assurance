@@ -16,6 +16,7 @@ import type {
   FindingDetailViewV1,
   FindingListPageV1,
   GetCatalogRequest,
+  GetHealthRequest,
   GetAssessmentRequest,
   GetFindingRequest,
   ListFindingsRequest,
@@ -26,6 +27,7 @@ import type {
   ResumeAssessmentRequest,
   RiskDecisionReceiptV1,
   RepositoryListSnapshotV1,
+  RuntimeHealthSnapshot,
   SecurityCatalogSnapshotV1,
   SecurityInvocation,
   SecurityResult,
@@ -245,6 +247,20 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
         })
       },
     })
+  }
+
+  /** Read the bounded Runtime Health projection through current Host authority. */
+  @Remote
+  getHealth(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: GetHealthRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<RuntimeHealthSnapshot>> {
+    return this.ctx.securityAssurance.getHealth(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
   }
 
   /** List authority-visible path-free Repository Registry entries. */

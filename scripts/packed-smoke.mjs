@@ -195,8 +195,10 @@ const typertContribution = await import('dsh-security-assurance/typert')
 const clientRemoteContribution = await import('dsh-security-assurance/remote')
 if (
   typeof workbenchRemote.default !== 'function'
-  || typertContribution.TYPERT?.invocations?.length !== 13
-    || clientRemoteContribution.default?.descriptors?.length !== 13
+  || typertContribution.TYPERT?.invocations?.length !== 14
+    || clientRemoteContribution.default?.descriptors?.length !== 14
+    || !clientRemoteContribution.default.descriptors.some(descriptor =>
+      descriptor.method === 'getHealth')
     || !clientRemoteContribution.default.descriptors.some(descriptor =>
       descriptor.method === 'listRepositories')
     || !clientRemoteContribution.default.descriptors.some(descriptor =>
@@ -259,6 +261,8 @@ if (
   || workbenchClient.inject[2] !== 'locale'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.loadMoreAssessments !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openRuntimeHealth !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.refreshRuntimeHealth !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openRepositories !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectRepository !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.requestStartPreflight !== 'function'
@@ -309,7 +313,7 @@ const workbenchFiber = ctx.plugin(workbenchRemote.default, {
     if (contextId !== 'packed-workbench-context-v1') return undefined
     return {
       principalId: 'packed-workbench-operator',
-      permissions: ['assessment:read', 'risk:decide'],
+      permissions: ['health:read', 'assessment:read', 'risk:decide'],
     }
   },
 })
@@ -330,6 +334,22 @@ if (
   || typeof assessmentList.value?.consistencyWatermark !== 'string'
 ) {
   throw new Error('packed strict Workbench Remote did not list redacted Assessments')
+}
+const runtimeHealth = await ctx.typertGateway.invoke({
+  namespace: 'securityAssuranceWorkbench',
+  method: 'getHealth',
+  args: {
+    securityAssuranceWorkbenchContextId: 'packed-workbench-context-v1',
+    request: { schemaVersion: 1 },
+  },
+})
+if (
+  runtimeHealth?.ok !== true
+  || runtimeHealth.value?.state !== 'READY'
+  || runtimeHealth.value?.admission?.queries !== true
+  || !runtimeHealth.value?.checks?.some(check => check.id === 'persistence.sqlite')
+) {
+  throw new Error('packed strict Workbench Remote did not return Runtime Health')
 }
 const missingAssessment = await ctx.typertGateway.invoke({
   namespace: 'securityAssuranceWorkbench',

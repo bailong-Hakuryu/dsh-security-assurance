@@ -31,6 +31,7 @@ import type {
   RiskDecisionKindV1,
   RiskDecisionReceiptV1,
   RepositorySnapshotV1,
+  RuntimeHealthSnapshot,
   SecurityCatalogSnapshotV1,
   SecurityResult,
   StartAssessmentSelectionV1,
@@ -191,6 +192,11 @@ export type SecurityAssuranceWorkbenchStateV1 =
     readonly consistencyWatermark: string
     readonly assessments: readonly AssessmentListItemV1[]
     readonly nextCursor: string
+  }
+  | { readonly kind: 'HEALTH_LOADING' }
+  | {
+    readonly kind: 'HEALTH_READY'
+    readonly health: RuntimeHealthSnapshot
   }
   | { readonly kind: 'REPOSITORIES_LOADING' }
   | {
@@ -380,6 +386,25 @@ export class SecurityAssuranceWorkbenchController extends Service {
     })
     this.publish(ready)
     return ready
+  }
+
+  /** Open the Service-owned Runtime Health projection with current Host authority. */
+  async openRuntimeHealth(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    if (session === undefined) return this.state
+    session.monitorGeneration += 1
+    this.evidenceRequestGeneration += 1
+    this.cancelEvidenceRequest(session)
+    this.clearEvidenceExpiry(session)
+    session.assessmentId = undefined
+    return this.loadRuntimeHealth(session)
+  }
+
+  /** Reauthorize and refresh Runtime Health without deriving browser-side health. */
+  async refreshRuntimeHealth(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    if (session === undefined || this.state.kind !== 'HEALTH_READY') return this.state
+    return this.loadRuntimeHealth(session)
   }
 
   /** Resolve the repository-specific Catalog before accepting any wizard selection. */
@@ -1467,6 +1492,28 @@ export class SecurityAssuranceWorkbenchController extends Service {
     return ready
   }
 
+  private async loadRuntimeHealth(
+    session: LiveAssessmentSession,
+  ): Promise<SecurityAssuranceWorkbenchStateV1> {
+    this.publish(Object.freeze({ kind: 'HEALTH_LOADING' }))
+    let result: RemoteResult<SecurityResult<RuntimeHealthSnapshot>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.getHealth(
+        session.contextId,
+        { schemaVersion: 1 },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (!this.isActive(session) || this.state.kind !== 'HEALTH_LOADING') return this.state
+    const health = this.readRemoteResult(session, result)
+    if (health === undefined) return this.state
+    const ready = Object.freeze({ kind: 'HEALTH_READY' as const, health })
+    this.publish(ready)
+    return ready
+  }
+
   private publishWizard(
     repository: RepositorySnapshotV1,
     catalog: SecurityCatalogSnapshotV1,
@@ -1997,7 +2044,9 @@ function installWorkbenchUi(
         loadMoreFindings: () => { void controller.loadMoreFindings() },
         openFindings: () => { void controller.openFindings() },
         openRepositories: () => { void controller.openRepositories() },
+        openRuntimeHealth: () => { void controller.openRuntimeHealth() },
         recordRiskDecision: submission => { void controller.recordRiskDecision(submission) },
+        refreshRuntimeHealth: () => { void controller.refreshRuntimeHealth() },
         resumeAssessment: reason => { void controller.resumeAssessment(reason) },
         selectAssessment: assessmentId => { void controller.selectAssessment(assessmentId) },
         selectRepository: repositoryId => { void controller.selectRepository(repositoryId) },

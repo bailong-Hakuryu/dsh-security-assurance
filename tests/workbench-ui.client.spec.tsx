@@ -718,6 +718,79 @@ describe('Security Assurance Workbench UI', () => {
     await b.runtime.dispose()
   })
 
+  it('renders bilingual Service-owned Runtime Health without repair or bypass controls', async () => {
+    const health = {
+      schemaVersion: 1,
+      product: { name: 'dsh-security-assurance', version: '0.0.0-development' },
+      compatibility: {
+        targetHarnessVersion: '0.1.1-rc.2',
+        requiredNodeRange: '^22.19.0 || >=24.0.0',
+        actualNodeVersion: '22.19.0',
+        harnessVerification: 'PENDING_INVARIANT',
+      },
+      state: 'READ_ONLY_SAFE',
+      admission: { queries: true, mutations: false, sealedExports: false },
+      checks: [
+        { id: 'persistence.sqlite', status: 'FAIL', required: true, message: 'SQLite persistence is unavailable; configuration details are redacted.' },
+        { id: 'runtime.node', status: 'PASS', required: true, message: 'Node.js runtime satisfies the required range.' },
+        { id: 'compatibility.harness', status: 'NOT_EVALUATED', required: false, message: 'Harness compatibility remains a pending invariant.' },
+      ],
+    }
+    const endpoints: string[] = []
+    const b = await bench((_path, endpoint) => {
+      endpoints.push(endpoint)
+      if (endpoint === 'securityAssuranceWorkbench/listAssessments') {
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: {
+            schemaVersion: 1,
+            consistencyWatermark: 'runtime-health.signature',
+            assessments: [],
+            nextCursor: null,
+          } },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getHealth') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: health } })
+      }
+      return Promise.reject(new Error(`Unexpected endpoint: ${endpoint}`))
+    })
+    const launcher = b.runtime.renderSlot('sidebar.footer.action', { wide: true })
+    const overlay = b.runtime.renderSlot('shell.overlay', {})
+    await act(async () => {
+      await b.controller.openAssessmentSelection({
+        securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-health-ui'),
+      })
+      fireEvent.click(launcher.view.getByRole('button', { name: '打开安全保障工作台' }))
+    })
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: 'Runtime Health' }))
+    })
+
+    expect(overlay.view.getByRole('heading', { name: 'Runtime Health' })).toBeTruthy()
+    expect(overlay.view.getAllByText('READ_ONLY_SAFE').length).toBeGreaterThan(0)
+    expect(overlay.view.getByText('dsh-security-assurance')).toBeTruthy()
+    expect(overlay.view.getByText('0.0.0-development')).toBeTruthy()
+    expect(overlay.view.getByRole('heading', { name: '操作准入' })).toBeTruthy()
+    expect(overlay.view.getAllByText('false')).toHaveLength(2)
+    expect(overlay.view.getByText('SQLite persistence is unavailable; configuration details are redacted.')).toBeTruthy()
+    expect(overlay.view.getByText('Harness compatibility remains a pending invariant.')).toBeTruthy()
+    expect(overlay.view.queryByRole('button', { name: /修复|绕过/u })).toBeNull()
+    expect(endpoints).toEqual([
+      'securityAssuranceWorkbench/listAssessments',
+      'securityAssuranceWorkbench/getHealth',
+    ])
+
+    act(() => { b.locale.setLocale('en') })
+    expect(overlay.view.getByRole('heading', { name: 'Operation admission' })).toBeTruthy()
+    expect(overlay.view.getByText(/neither infers health nor offers browser-side repair or bypass actions/u)).toBeTruthy()
+    expect(overlay.view.getByRole('button', { name: 'Reauthorize and refresh' })).toBeTruthy()
+
+    await b.feature.dispose()
+    await b.gateway.dispose()
+    await b.runtime.dispose()
+  })
+
   it('renders a bilingual Catalog-only New Assessment wizard and immutable preflight', async () => {
     const repository = {
       schemaVersion: 1 as const,

@@ -107,6 +107,10 @@ async function harness(strictTypert = false): Promise<{
       principalId: 'workbench-starter',
       permissions: ['repository:read', 'assessment:start', 'assessment:read'],
     }],
+    [authorityContextId('workbench-session-health'), {
+      principalId: 'workbench-health-reader',
+      permissions: ['health:read'],
+    }],
   ])
   const remoteFiber = await ctx.plugin(SecurityAssuranceWorkbenchRemote, {
     async resolveAuthorityContext(contextId: WorkbenchAuthorityContextId) {
@@ -148,6 +152,34 @@ async function harness(strictTypert = false): Promise<{
 }
 
 describe('Security Assurance Workbench Remote', () => {
+  it('returns the bounded Runtime Health snapshot through freshly resolved Host authority', async () => {
+    const { ctx, resolvedContextIds } = await harness(true)
+    const authorityId = authorityContextId('workbench-session-health')
+
+    await expect(ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getHealth',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1 },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        schemaVersion: 1,
+        product: { name: 'dsh-security-assurance' },
+        state: 'READY',
+        admission: { queries: true, mutations: true, sealedExports: true },
+        checks: expect.arrayContaining([
+          expect.objectContaining({ id: 'persistence.sqlite', status: 'PASS', required: true }),
+          expect.objectContaining({ id: 'runtime.node', status: 'PASS', required: true }),
+          expect.objectContaining({ id: 'compatibility.harness', status: 'NOT_EVALUATED', required: false }),
+        ]),
+      },
+    })
+    expect(resolvedContextIds).toEqual([authorityId])
+  })
+
   it('lists Repositories, resolves a digest-bound preflight, and confirms the exact start', async () => {
     const { ctx, resolvedContextIds } = await harness(true)
     const authorityId = authorityContextId('workbench-session-starter')

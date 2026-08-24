@@ -30,8 +30,8 @@ This repository is under active vertical-slice development, not at the
 - a package-owned `dsh-security-assurance/workbench-remote` Host Adapter plus
   generated strict `dsh-security-assurance/typert` and
   `dsh-security-assurance/remote` artifacts. Its headless Workbench slice
-  exposes authority-projected Repository and Assessment selection, effective
-  `getCatalog`, digest-bound `startAssessment`, exact `getAssessment`,
+  exposes authority-projected Runtime Health, Repository and Assessment selection,
+  effective `getHealth`, `getCatalog`, digest-bound `startAssessment`, exact `getAssessment`,
   revision-bound Finding queries, strict metadata-only
   `getEvidenceView`, separate expiring `discloseEvidence`, bounded
   `waitForAssessmentRevision`, and revision-bound, idempotent
@@ -39,8 +39,8 @@ This repository is under active vertical-slice development, not at the
   Invocation on the wire;
 - a package-owned `dsh-security-assurance/client` browser entry that mounts the
   generated Remote contribution and provides one transient
-  `ctx.securityAssuranceWorkbench` Controller. It opens authenticated, redacted
-  Repository and Assessment selectors, builds the New Assessment Wizard only
+  `ctx.securityAssuranceWorkbench` Controller. It opens authenticated Runtime Health,
+  redacted Repository and Assessment selectors, builds the New Assessment Wizard only
   from Catalog choices, confirms immutable Start Preflight proposals, fetches immutable Snapshots,
   follows committed revisions through cancellable long-polling, fences stale
   responses and disclosure attempts, opens metadata only from an exact Finding
@@ -200,7 +200,7 @@ Node and application-security coverage, the complete protected Evidence Store,
 model tools, and the complete Workbench information architecture are deliberately not claimed
 as implemented yet. The Workbench Host Remote, authenticated redacted Assessment selection
 with stable cursor continuation, generated Client contract, transient browser
-Controller, Repositories and digest-bound New Assessment flow, read-only Assessment Detail, multidimensional Finding triage,
+Controller, Runtime Health, Repositories and digest-bound New Assessment flow, read-only Assessment Detail, multidimensional Finding triage,
 revision-bound Finding Detail navigation, bilingual metadata-first Evidence,
 explicit expiring bounded-content disclosure, and a governed Risk Decision form
 with Critical Dual Authority completion are implemented. This repository ships no production external
@@ -385,7 +385,7 @@ fails closed, and the dormant bundle row must not be enabled for an anonymous
 LAN deployment.
 
 The generated Host contribution is published at `./typert`; the generated
-Client contribution is published at `./remote`. All thirteen operations use strict
+Client contribution is published at `./remote`. All fourteen operations use strict
 generated request/result codecs. Cancellation is forwarded to the root Service,
 mutation retries retain the caller's original idempotency key, and Adapter
 disposal withdraws its lookup and Remote Service without altering Assessments
@@ -393,9 +393,9 @@ or the root plugin.
 
 The package also publishes a Harness-discoverable `./client` entry. It mounts
 `./remote` through `ctx.remote.$mount()` and provides the browser-local
-`ctx.securityAssuranceWorkbench` Controller with twenty-four public operations:
+`ctx.securityAssuranceWorkbench` Controller with twenty-six public operations:
 `openAssessmentSelection`, `loadMoreAssessments`, `selectAssessment`,
-`openRepositories`, `selectRepository`, `requestStartPreflight`,
+`openRuntimeHealth`, `refreshRuntimeHealth`, `openRepositories`, `selectRepository`, `requestStartPreflight`,
 `cancelStartPreflight`, `confirmStartAssessment`, `backToAssessmentSelection`,
 `openAssessment`, `openFindings`, `loadMoreFindings`, `selectFinding`,
 `backToFindingList`, `recordRiskDecision`, `resumeAssessment`, `cancelAssessment`,
@@ -428,7 +428,11 @@ authority failure, or Service expiry. Those navigation and lifecycle exits also
 abort any in-flight Evidence request before the stale-response fence is applied.
 Remote or Security failures fail closed
 to a payload-free `FAILED` state; reopening re-fetches Service truth by opaque
-Assessment ID. From the selector, the Controller can also list path-free
+Assessment ID. From the selector, the Controller can fetch or explicitly refresh
+the Service-owned Runtime Health Snapshot. Each read reuses current Host authority;
+the browser renders the exact overall state, compatibility, admission booleans,
+and redacted checks without deriving health or exposing repair/bypass actions.
+The Controller can also list path-free
 Repository Snapshots, resolve a repository-specific Security Catalog, and
 submit only the exact Catalog selection for a Service-derived Start Preflight.
 Confirmation adds a fresh idempotency identity and the proposal digest to the
@@ -441,7 +445,7 @@ launcher in `sidebar.footer.action` opens a frame-wide dialog in
 `shell.overlay`; neither replaces a single-owner Host shell slot. The overlay
 subscribes to the Controller through the Slot renderer's observable seam and
 renders `CLOSED`, `SELECTION_LOADING`, `SELECTION_READY`,
-`SELECTION_LOADING_MORE`, Repository/Catalog/Preflight/Wizard states, `LOADING`,
+`SELECTION_LOADING_MORE`, Runtime Health, Repository/Catalog/Preflight/Wizard states, `LOADING`,
 `READY`, and `FAILED` without duplicating
 Remote, polling, authorization, or revision logic. `READY` shows canonical machine IDs
 unchanged together with revision, state, Verdict, repository and policy
