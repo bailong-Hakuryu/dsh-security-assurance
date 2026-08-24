@@ -149,6 +149,8 @@ if (
   || typeof contracts.evidenceViewV1Schema?.parse !== 'function'
   || typeof contracts.evidenceViewResultSchema?.parse !== 'function'
   || typeof contracts.recordRiskDecisionRequestSchema?.parse !== 'function'
+  || typeof contracts.availableRiskDecisionOptionV1Schema?.parse !== 'function'
+  || typeof contracts.assessmentAvailableActionV1Schema?.parse !== 'function'
   || typeof contracts.riskDecisionAttestationV1Schema?.parse !== 'function'
   || typeof contracts.riskDecisionRecordV1Schema?.parse !== 'function'
   || typeof contracts.riskDecisionReceiptResultSchema?.parse !== 'function'

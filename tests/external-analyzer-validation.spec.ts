@@ -519,6 +519,93 @@ describe('external Analyzer Candidate validation', () => {
     expect(submission).toBeUndefined()
   })
 
+  it('projects no Assessment action to a read-only observer', async () => {
+    const result = await runReferenceValidationScenario({
+      id: 'read-only-available-actions',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: 'e',
+      requestedStrongerControlIds: ['security/risk-decision-window-v1'],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: async (service, _invocation, assessmentId) => {
+        const observer = referenceHostInvocationWithPermissions(
+          service,
+          ['assessment:read'],
+          'read-only-security-observer',
+        )
+        return service.getAssessment(observer, { schemaVersion: 1, assessmentId })
+      },
+    })
+
+    expect(result.observation).toMatchObject({
+      ok: true,
+      value: {
+        assessmentRevision: 3,
+        state: 'BLOCKED',
+        availableActions: [],
+      },
+    })
+  })
+
+  it('projects exact revision-bound High Risk Decision actions to a qualified operator', async () => {
+    const result = await runReferenceValidationScenario({
+      id: 'high-risk-available-actions',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: 'e',
+      requestedStrongerControlIds: ['security/risk-decision-window-v1'],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: async (service, invocation, assessmentId) => {
+        const findings = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        const assessment = await service.getAssessment(invocation, { schemaVersion: 1, assessmentId })
+        return { findings, assessment }
+      },
+    })
+
+    if (result.observation?.findings.ok !== true || result.observation.assessment.ok !== true) {
+      throw new Error('qualified action projection fixture failed')
+    }
+    const finding = result.observation.findings.value.findings[0]
+    if (finding === undefined) throw new Error('qualified action projection has no Finding')
+
+    expect(result.observation.assessment.value.availableActions).toEqual([
+      {
+        kind: 'CANCEL_ASSESSMENT',
+        expectedAssessmentRevision: 3,
+      },
+      {
+        kind: 'RECORD_RISK_DECISION',
+        expectedAssessmentRevision: 3,
+        finding: {
+          recordId: finding.recordId,
+          recordRevision: 1,
+        },
+        options: [
+          {
+            decision: 'DENY',
+            consequence: 'KEEPS_FINDING_BLOCKING',
+          },
+          {
+            decision: 'ACCEPT',
+            consequence: 'MAKES_FINDING_NON_BLOCKING',
+            authorizationMode: 'SINGLE_AUTHORITY',
+            minimumCompensatingControls: 1,
+            maximumLifetimeSeconds: 604_800,
+            requiredAttestations: 1,
+            completedAttestations: 0,
+            exactMatchRequired: false,
+          },
+        ],
+      },
+    ])
+  })
+
   it('opens a Critical Dual Authority window only when break-glass is explicitly frozen', async () => {
     const { assessment, observation } = await runReferenceValidationScenario({
       id: 'critical-break-glass-window',
@@ -657,6 +744,153 @@ describe('external Analyzer Candidate validation', () => {
       assessmentRevision: 5,
       state: 'SEALED',
       verdict: 'FAILED',
+    })
+  })
+
+  it('projects Critical acceptance only to qualified distinct operator authorities', async () => {
+    const rationale = 'Critical exposure is temporarily accepted only for the isolated emergency recovery window.'
+    const controls = [
+      'Keep the affected deployment isolated from every public ingress.',
+      'Require continuous operator monitoring until the emergency window closes.',
+    ]
+    const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1_000).toISOString()
+    const { observation } = await runReferenceValidationScenario({
+      id: 'critical-available-actions',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      technicalSeverity: 'CRITICAL',
+      candidateHex: '4',
+      requestedStrongerControlIds: [
+        'security/risk-decision-window-v1',
+        'security/critical-break-glass-v1',
+      ],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: async (service, _invocation, assessmentId) => {
+        const firstOperator = referenceHostInvocationWithPermissions(
+          service,
+          ['assessment:read', 'risk:decide', 'risk:break-glass'],
+          'critical-action-first-operator',
+        )
+        const secondOperator = referenceHostInvocationWithPermissions(
+          service,
+          ['assessment:read', 'risk:decide', 'risk:break-glass'],
+          'critical-action-second-operator',
+        )
+        const ordinaryDecisionAuthority = referenceHostInvocationWithPermissions(
+          service,
+          ['assessment:read', 'risk:decide'],
+          'critical-action-ordinary-operator',
+        )
+        const listed = await service.listFindings(firstOperator, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed }
+        const finding = listed.value.findings[0]
+        const ordinaryBefore = await service.getAssessment(ordinaryDecisionAuthority, {
+          schemaVersion: 1,
+          assessmentId,
+        })
+        const firstBefore = await service.getAssessment(firstOperator, { schemaVersion: 1, assessmentId })
+        const first = await service.recordRiskDecision(firstOperator, {
+          schemaVersion: 1,
+          idempotencyKey: 'critical-action-first-v1',
+          assessmentId,
+          expectedAssessmentRevision: listed.value.assessmentRevision,
+          finding: {
+            recordId: finding.recordId,
+            recordRevision: finding.recordRevision,
+          },
+          decision: 'ACCEPT',
+          rationale,
+          compensatingControls: controls,
+          expiresAt,
+        })
+        return {
+          listed,
+          ordinaryBefore,
+          firstBefore,
+          first,
+          samePrincipalAfter: await service.getAssessment(firstOperator, {
+            schemaVersion: 1,
+            assessmentId,
+          }),
+          distinctPrincipalAfter: await service.getAssessment(secondOperator, {
+            schemaVersion: 1,
+            assessmentId,
+          }),
+        }
+      },
+    })
+
+    if (observation?.listed.ok !== true || observation.listed.value.findings[0] === undefined) {
+      throw new Error('Critical action projection fixture failed')
+    }
+    const finding = observation.listed.value.findings[0]
+    expect(observation.ordinaryBefore).toMatchObject({
+      ok: true,
+      value: {
+        availableActions: [{
+          kind: 'RECORD_RISK_DECISION',
+          expectedAssessmentRevision: 3,
+          finding: { recordId: finding.recordId, recordRevision: 1 },
+          options: [{ decision: 'DENY', consequence: 'KEEPS_FINDING_BLOCKING' }],
+        }],
+      },
+    })
+    expect(observation.firstBefore).toMatchObject({
+      ok: true,
+      value: {
+        availableActions: [{
+          kind: 'RECORD_RISK_DECISION',
+          expectedAssessmentRevision: 3,
+          finding: { recordId: finding.recordId, recordRevision: 1 },
+          options: [
+            { decision: 'DENY', consequence: 'KEEPS_FINDING_BLOCKING' },
+            {
+              decision: 'ACCEPT',
+              consequence: 'REQUIRES_SECOND_AUTHORITY',
+              authorizationMode: 'CRITICAL_DUAL_AUTHORITY',
+              minimumCompensatingControls: 2,
+              maximumLifetimeSeconds: 86_400,
+              requiredAttestations: 2,
+              completedAttestations: 0,
+              exactMatchRequired: false,
+            },
+          ],
+        }],
+      },
+    })
+    expect(observation.first).toMatchObject({
+      ok: true,
+      value: { assessmentRevision: 4, resolution: 'PENDING_DUAL_AUTHORITY' },
+    })
+    expect(observation.samePrincipalAfter).toMatchObject({
+      ok: true,
+      value: { assessmentRevision: 4, availableActions: [] },
+    })
+    expect(observation.distinctPrincipalAfter).toMatchObject({
+      ok: true,
+      value: {
+        assessmentRevision: 4,
+        availableActions: [{
+          kind: 'RECORD_RISK_DECISION',
+          expectedAssessmentRevision: 4,
+          finding: { recordId: finding.recordId, recordRevision: 1 },
+          options: [{
+            decision: 'ACCEPT',
+            consequence: 'MAKES_FINDING_NON_BLOCKING',
+            authorizationMode: 'CRITICAL_DUAL_AUTHORITY',
+            minimumCompensatingControls: 2,
+            maximumLifetimeSeconds: 86_400,
+            requiredAttestations: 2,
+            completedAttestations: 1,
+            exactMatchRequired: true,
+          }],
+        }],
+      },
     })
   })
 
@@ -1148,7 +1382,7 @@ describe('external Analyzer Candidate validation', () => {
             listed,
             first,
             second,
-            after: await service.getAssessment(firstInvocation, { schemaVersion: 1, assessmentId }),
+            after: await service.getAssessment(secondInvocation, { schemaVersion: 1, assessmentId }),
           }
         } finally {
           vi.useRealTimers()
@@ -1161,7 +1395,16 @@ describe('external Analyzer Candidate validation', () => {
       second: { ok: false, error: { code: 'CONFLICT' } },
       after: {
         ok: true,
-        value: { assessmentRevision: 4, state: 'BLOCKED', verdict: null, seal: null },
+        value: {
+          assessmentRevision: 4,
+          state: 'BLOCKED',
+          verdict: null,
+          seal: null,
+          availableActions: [{
+            kind: 'CANCEL_ASSESSMENT',
+            expectedAssessmentRevision: 4,
+          }],
+        },
       },
     })
     expect(assessment).toMatchObject({ assessmentRevision: 4, state: 'BLOCKED', seal: null })
@@ -1216,6 +1459,10 @@ describe('external Analyzer Candidate validation', () => {
         })
         if (!pending.ok || pending.value.findings[0] === undefined) return { pending }
         const finding = pending.value.findings[0]
+        const projected = await service.getAssessment(secondInvocation, {
+          schemaVersion: 1,
+          assessmentId,
+        })
         const second = await service.recordRiskDecision(secondInvocation, {
           schemaVersion: 1,
           idempotencyKey: 'critical-restart-second-v1',
@@ -1227,10 +1474,11 @@ describe('external Analyzer Candidate validation', () => {
           compensatingControls: controls,
           expiresAt,
         })
-        if (!second.ok) return { pending, second }
+        if (!second.ok) return { pending, projected, second }
         await waitUntilAssessmentState(service, secondInvocation, assessmentId, 'SEALED')
         return {
           pending,
+          projected,
           second,
           sealed: await service.getAssessment(secondInvocation, { schemaVersion: 1, assessmentId }),
           submission: await service.getAssuranceSubmission(secondInvocation, {
@@ -1257,9 +1505,36 @@ describe('external Analyzer Candidate validation', () => {
         ok: true,
         value: { assessmentRevision: 5, resolution: 'ACCEPTED' },
       },
+      projected: {
+        ok: true,
+        value: {
+          assessmentRevision: 4,
+          availableActions: [
+            {
+              kind: 'CANCEL_ASSESSMENT',
+              expectedAssessmentRevision: 4,
+            },
+            {
+              kind: 'RECORD_RISK_DECISION',
+              expectedAssessmentRevision: 4,
+              options: [{
+                decision: 'ACCEPT',
+                authorizationMode: 'CRITICAL_DUAL_AUTHORITY',
+                completedAttestations: 1,
+                exactMatchRequired: true,
+              }],
+            },
+          ],
+        },
+      },
       sealed: {
         ok: true,
-        value: { assessmentRevision: 6, state: 'SEALED', verdict: 'SATISFIED' },
+        value: {
+          assessmentRevision: 6,
+          state: 'SEALED',
+          verdict: 'SATISFIED',
+          availableActions: [],
+        },
       },
       submission: {
         ok: true,

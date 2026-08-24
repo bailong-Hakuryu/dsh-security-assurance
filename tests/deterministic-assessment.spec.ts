@@ -271,7 +271,15 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       })
       expect(interrupted).toMatchObject({
         ok: true,
-        value: { state: 'BLOCKED', verdict: null, seal: null },
+        value: {
+          state: 'BLOCKED',
+          verdict: null,
+          seal: null,
+          availableActions: [
+            { kind: 'CANCEL_ASSESSMENT', expectedAssessmentRevision: 3 },
+            { kind: 'RESUME_ASSESSMENT', expectedAssessmentRevision: 3 },
+          ],
+        },
       })
       if (!interrupted.ok) throw new Error(`assessment query failed: ${interrupted.error.code}`)
 

@@ -1194,6 +1194,120 @@ export const assessmentSealV1Schema: z.ZodType<AssessmentSealV1> = z.strictObjec
   sealedAt: z.iso.datetime({ offset: true }),
 })
 
+export type AvailableRiskDecisionOptionV1 =
+  | {
+      readonly decision: 'DENY'
+      readonly consequence: 'KEEPS_FINDING_BLOCKING'
+    }
+  | {
+      readonly decision: 'ACCEPT'
+      readonly consequence: 'MAKES_FINDING_NON_BLOCKING'
+      readonly authorizationMode: 'SINGLE_AUTHORITY'
+      readonly minimumCompensatingControls: 1
+      readonly maximumLifetimeSeconds: number
+      readonly requiredAttestations: 1
+      readonly completedAttestations: 0
+      readonly exactMatchRequired: false
+    }
+  | {
+      readonly decision: 'ACCEPT'
+      readonly consequence: 'REQUIRES_SECOND_AUTHORITY'
+      readonly authorizationMode: 'CRITICAL_DUAL_AUTHORITY'
+      readonly minimumCompensatingControls: 2
+      readonly maximumLifetimeSeconds: 86_400
+      readonly requiredAttestations: 2
+      readonly completedAttestations: 0
+      readonly exactMatchRequired: false
+    }
+  | {
+      readonly decision: 'ACCEPT'
+      readonly consequence: 'MAKES_FINDING_NON_BLOCKING'
+      readonly authorizationMode: 'CRITICAL_DUAL_AUTHORITY'
+      readonly minimumCompensatingControls: 2
+      readonly maximumLifetimeSeconds: 86_400
+      readonly requiredAttestations: 2
+      readonly completedAttestations: 1
+      readonly exactMatchRequired: true
+    }
+
+export const availableRiskDecisionOptionV1Schema: z.ZodType<AvailableRiskDecisionOptionV1> =
+  z.union([
+    z.strictObject({
+      decision: z.literal('DENY'),
+      consequence: z.literal('KEEPS_FINDING_BLOCKING'),
+    }),
+    z.strictObject({
+      decision: z.literal('ACCEPT'),
+      consequence: z.literal('MAKES_FINDING_NON_BLOCKING'),
+      authorizationMode: z.literal('SINGLE_AUTHORITY'),
+      minimumCompensatingControls: z.literal(1),
+      maximumLifetimeSeconds: z.number().int().positive().max(30 * 24 * 60 * 60),
+      requiredAttestations: z.literal(1),
+      completedAttestations: z.literal(0),
+      exactMatchRequired: z.literal(false),
+    }),
+    z.strictObject({
+      decision: z.literal('ACCEPT'),
+      consequence: z.literal('REQUIRES_SECOND_AUTHORITY'),
+      authorizationMode: z.literal('CRITICAL_DUAL_AUTHORITY'),
+      minimumCompensatingControls: z.literal(2),
+      maximumLifetimeSeconds: z.literal(86_400),
+      requiredAttestations: z.literal(2),
+      completedAttestations: z.literal(0),
+      exactMatchRequired: z.literal(false),
+    }),
+    z.strictObject({
+      decision: z.literal('ACCEPT'),
+      consequence: z.literal('MAKES_FINDING_NON_BLOCKING'),
+      authorizationMode: z.literal('CRITICAL_DUAL_AUTHORITY'),
+      minimumCompensatingControls: z.literal(2),
+      maximumLifetimeSeconds: z.literal(86_400),
+      requiredAttestations: z.literal(2),
+      completedAttestations: z.literal(1),
+      exactMatchRequired: z.literal(true),
+    }),
+  ])
+
+export type AssessmentAvailableActionV1 =
+  | {
+      readonly kind: 'RESUME_ASSESSMENT'
+      readonly expectedAssessmentRevision: number
+    }
+  | {
+      readonly kind: 'CANCEL_ASSESSMENT'
+      readonly expectedAssessmentRevision: number
+    }
+  | {
+      readonly kind: 'RECORD_RISK_DECISION'
+      readonly expectedAssessmentRevision: number
+      readonly finding: {
+        readonly recordId: string
+        readonly recordRevision: number
+      }
+      readonly options: readonly AvailableRiskDecisionOptionV1[]
+    }
+
+export const assessmentAvailableActionV1Schema: z.ZodType<AssessmentAvailableActionV1> =
+  z.discriminatedUnion('kind', [
+    z.strictObject({
+      kind: z.literal('RESUME_ASSESSMENT'),
+      expectedAssessmentRevision: z.number().int().positive(),
+    }),
+    z.strictObject({
+      kind: z.literal('CANCEL_ASSESSMENT'),
+      expectedAssessmentRevision: z.number().int().positive(),
+    }),
+    z.strictObject({
+      kind: z.literal('RECORD_RISK_DECISION'),
+      expectedAssessmentRevision: z.number().int().positive(),
+      finding: z.strictObject({
+        recordId: z.string().regex(/^finding-[0-9a-f]{64}$/),
+        recordRevision: z.number().int().positive(),
+      }),
+      options: z.array(availableRiskDecisionOptionV1Schema).min(1).max(2),
+    }),
+  ])
+
 export interface AssessmentSnapshotV1 {
   readonly schemaVersion: 1
   readonly assessmentId: AssessmentId
@@ -1209,6 +1323,7 @@ export interface AssessmentSnapshotV1 {
     readonly digest: DigestEnvelopeV1
   }
   readonly coverage: AssessmentCoverageSnapshotV1
+  readonly availableActions: readonly AssessmentAvailableActionV1[]
   readonly verdict: SecurityVerdict | null
   readonly seal: AssessmentSealV1 | null
   readonly createdAt: string
@@ -1230,6 +1345,7 @@ export const assessmentSnapshotV1Schema: z.ZodType<AssessmentSnapshotV1> = z.str
     digest: digestEnvelopeV1Schema,
   }),
   coverage: assessmentCoverageSnapshotV1Schema,
+  availableActions: z.array(assessmentAvailableActionV1Schema).max(1_026),
   verdict: securityVerdictSchema.nullable(),
   seal: assessmentSealV1Schema.nullable(),
   createdAt: z.iso.datetime({ offset: true }),

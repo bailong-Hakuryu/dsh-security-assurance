@@ -33,6 +33,7 @@ import {
   waitForAssessmentRevisionRequestSchema,
 } from './contracts.ts'
 import type {
+  AssessmentAvailableActionV1,
   AssessmentId,
   AssessmentReceiptV1,
   AssessmentResumeReceiptV1,
@@ -819,7 +820,8 @@ export class SecurityAssuranceService extends Service {
     options: InvocationOptions = {},
   ): Promise<SecurityResult<AssessmentSnapshotV1>> {
     try {
-      if (!this.authorityResolver.authorizes(invocation, 'assessment:read')) {
+      const authority = this.authorityResolver.authority(invocation)
+      if (authority === undefined || !authority.permissions.has('assessment:read')) {
         return failure('UNAUTHORIZED', 'The caller is not authorized to read Assessments.')
       }
       const interrupted = interruption<AssessmentSnapshotV1>(options)
@@ -834,7 +836,52 @@ export class SecurityAssuranceService extends Service {
       }
       const record = persistence.getAssessmentRecord(parsed.data.assessmentId)
       if (record === undefined) return failure('NOT_FOUND', 'The Assessment does not exist.')
-      return deepFreeze({ ok: true, value: publicAssessmentSnapshot(record) })
+      const availableActions: AssessmentAvailableActionV1[] = []
+      if (
+        authority.permissions.has('assessment:cancel')
+        && record.state !== 'SEALED'
+        && record.state !== 'CANCELED'
+        && record.pendingCancellation === null
+      ) {
+        availableActions.push({
+          kind: 'CANCEL_ASSESSMENT',
+          expectedAssessmentRevision: record.assessmentRevision,
+        })
+      }
+      if (
+        authority.permissions.has('assessment:resume')
+        && record.state === 'BLOCKED'
+        && record.riskDecisionWindow === null
+      ) {
+        availableActions.push({
+          kind: 'RESUME_ASSESSMENT',
+          expectedAssessmentRevision: record.assessmentRevision,
+        })
+      }
+      if (
+        authority.permissions.has('risk:decide')
+        && record.riskDecisionWindow?.state === 'OPEN'
+      ) {
+        const source = await this.findingQuerySource(record.assessmentId)
+        if (source === undefined) throw new TypeError('Risk Decision Window has no Finding projection source')
+        for (const recordId of record.riskDecisionWindow.findingRecordIds) {
+          const finding = this.findingQueries.get(source, {
+            schemaVersion: 1,
+            assessmentId: record.assessmentId,
+            assessmentRevision: record.assessmentRevision,
+            recordId,
+            recordRevision: 1,
+          })
+          const action = this.riskDecisions.projectAvailableAction(
+            record,
+            finding,
+            authority,
+            new Date().toISOString(),
+          )
+          if (action !== undefined) availableActions.push(action)
+        }
+      }
+      return deepFreeze({ ok: true, value: publicAssessmentSnapshot(record, availableActions) })
     } catch (error) {
       return this.assessmentReadFailure(error)
     }

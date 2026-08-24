@@ -100,6 +100,15 @@ This repository is under active vertical-slice development, not at the
   controls, expiry, Assessment revision successor, and Finding identity. Both
   authorization attestations and the exact Subject/Policy scope survive restart
   and are bound into the final Seal;
+- authority- and revision-specific `availableActions` on every
+  `getAssessment` Snapshot. Read-only callers and terminal Assessments receive
+  no mutation actions; currently admissible Resume, Cancel, ordinary Risk
+  Decision, Critical first-attestation, and distinct-principal second-
+  attestation actions carry exact expected revisions and Finding identities.
+  Risk options state their effect, authorization mode, control minimum, expiry
+  ceiling, completed/required attestations, and whether the pending form must
+  match exactly. These are Service projections for future Workbench rendering,
+  not browser-inferred authority or a model Risk Acceptance tool;
 - revision-bound `getEvidenceView` projections that require exact Assessment,
   consuming Finding revision, Evidence artifact, and digest identity. The
   metadata-only Profile needs Assessment read authority and always redacts

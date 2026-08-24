@@ -1,10 +1,15 @@
 import { securitySubmissionJsonV1Schema } from '../contracts.ts'
 import type {
+  AssessmentAvailableActionV1,
+  AvailableRiskDecisionOptionV1,
   FindingDetailViewV1,
   RecordRiskDecisionRequest,
   RiskDecisionAuthorizationModeV1,
+  TechnicalSeverity,
 } from '../contracts.ts'
 import type { InternalAssessmentRecordV1 } from './assessment-record.ts'
+import type { ResolvedSecurityAuthority } from './authority.ts'
+import { canonicalJson } from './canonical.ts'
 import type { DeterministicAssessmentOutcomeV1 } from './deterministic-kernel.ts'
 import type { EvidencePublicationInputV1 } from './evidence-persistence.ts'
 
@@ -15,8 +20,104 @@ export interface RiskDecisionAdmissionContextV1 {
   readonly criticalBreakGlassAuthorized: boolean
 }
 
+const CRITICAL_MAXIMUM_LIFETIME_SECONDS = 86_400 as const
+
+function ordinaryMaximumLifetimeSeconds(severity: TechnicalSeverity): number {
+  return severity === 'HIGH' ? 7 * 24 * 60 * 60 : 30 * 24 * 60 * 60
+}
+
 /** Deep Module owning Risk Decision admission and its deterministic Verdict input. */
 export class RiskDecisionModule {
+  projectAvailableAction(
+    assessment: InternalAssessmentRecordV1,
+    finding: FindingDetailViewV1,
+    authority: ResolvedSecurityAuthority,
+    evaluationInstant: string,
+  ): AssessmentAvailableActionV1 | undefined {
+    const window = assessment.riskDecisionWindow
+    if (
+      !authority.permissions.has('risk:decide')
+      || assessment.state !== 'BLOCKED'
+      || window?.state !== 'OPEN'
+      || !window.findingRecordIds.includes(finding.recordId)
+      || finding.recordKind !== 'FINDING'
+      || finding.validation.state !== 'VALIDATED'
+    ) return undefined
+
+    const criticalAcceptanceAuthorized = authority.kind === 'host-operator'
+      && authority.permissions.has('risk:break-glass')
+      && assessment.contract.requestedStrongerControlIds.includes('security/critical-break-glass-v1')
+    const attestations = finding.riskDecision.state === 'NOT_RECORDED'
+      ? []
+      : finding.riskDecision.attestations ?? []
+    let options: AvailableRiskDecisionOptionV1[]
+    if (finding.riskDecision.state === 'NOT_RECORDED') {
+      options = [{
+        decision: 'DENY',
+        consequence: 'KEEPS_FINDING_BLOCKING',
+      }]
+      if (finding.technicalSeverity?.value === 'CRITICAL' && criticalAcceptanceAuthorized) {
+        options.push({
+          decision: 'ACCEPT',
+          consequence: 'REQUIRES_SECOND_AUTHORITY',
+          authorizationMode: 'CRITICAL_DUAL_AUTHORITY',
+          minimumCompensatingControls: 2,
+          maximumLifetimeSeconds: CRITICAL_MAXIMUM_LIFETIME_SECONDS,
+          requiredAttestations: 2,
+          completedAttestations: 0,
+          exactMatchRequired: false,
+        })
+      } else if (finding.technicalSeverity !== null && finding.technicalSeverity.value !== 'CRITICAL') {
+        options.push({
+          decision: 'ACCEPT',
+          consequence: 'MAKES_FINDING_NON_BLOCKING',
+          authorizationMode: 'SINGLE_AUTHORITY',
+          minimumCompensatingControls: 1,
+          maximumLifetimeSeconds: ordinaryMaximumLifetimeSeconds(finding.technicalSeverity.value),
+          requiredAttestations: 1,
+          completedAttestations: 0,
+          exactMatchRequired: false,
+        })
+      }
+    } else if (
+      finding.riskDecision.state === 'PENDING_DUAL_AUTHORITY'
+      && finding.technicalSeverity?.value === 'CRITICAL'
+      && criticalAcceptanceAuthorized
+      && finding.riskDecision.authorizationMode === 'CRITICAL_DUAL_AUTHORITY'
+      && attestations.length === 1
+      && attestations.every(
+        attestation => attestation.decisionMaker.principalId !== authority.principalId,
+      )
+      && finding.riskDecision.expiresAt !== null
+      && Date.parse(finding.riskDecision.expiresAt) > Date.parse(evaluationInstant)
+      && finding.riskDecision.scope !== undefined
+      && canonicalJson(finding.riskDecision.scope.subjectDigest) === canonicalJson(assessment.subject.digest)
+      && canonicalJson(finding.riskDecision.scope.policyDigest) === canonicalJson(assessment.contract.policy.digest)
+    ) {
+      options = [{
+        decision: 'ACCEPT',
+        consequence: 'MAKES_FINDING_NON_BLOCKING',
+        authorizationMode: 'CRITICAL_DUAL_AUTHORITY',
+        minimumCompensatingControls: 2,
+        maximumLifetimeSeconds: CRITICAL_MAXIMUM_LIFETIME_SECONDS,
+        requiredAttestations: 2,
+        completedAttestations: 1,
+        exactMatchRequired: true,
+      }]
+    } else {
+      return undefined
+    }
+    return {
+      kind: 'RECORD_RISK_DECISION',
+      expectedAssessmentRevision: assessment.assessmentRevision,
+      finding: {
+        recordId: finding.recordId,
+        recordRevision: finding.recordRevision,
+      },
+      options,
+    }
+  }
+
   admit(
     finding: FindingDetailViewV1,
     request: RecordRiskDecisionRequest,
@@ -55,9 +156,7 @@ export class RiskDecisionModule {
     }
     const evaluatedAt = Date.parse(evaluationInstant)
     const expiresAt = Date.parse(request.expiresAt)
-    const maximumLifetime = finding.technicalSeverity.value === 'HIGH'
-      ? 7 * 24 * 60 * 60 * 1_000
-      : 30 * 24 * 60 * 60 * 1_000
+    const maximumLifetime = ordinaryMaximumLifetimeSeconds(finding.technicalSeverity.value) * 1_000
     if (
       !Number.isFinite(evaluatedAt)
       || !Number.isFinite(expiresAt)

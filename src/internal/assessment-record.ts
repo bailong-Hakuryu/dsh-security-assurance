@@ -19,6 +19,7 @@ import {
   riskDecisionRecordV1Schema,
 } from '../contracts.ts'
 import type {
+  AssessmentAvailableActionV1,
   AssessmentSnapshotV1,
 } from '../contracts.ts'
 import { analyzerPortfolioEntryV1Schema } from '../analyzer.ts'
@@ -106,7 +107,10 @@ export const internalAssessmentRecordV1Schema = z.strictObject({
 
 export type InternalAssessmentRecordV1 = z.infer<typeof internalAssessmentRecordV1Schema>
 
-export function publicAssessmentSnapshot(record: InternalAssessmentRecordV1): AssessmentSnapshotV1 {
+export function publicAssessmentSnapshot(
+  record: InternalAssessmentRecordV1,
+  availableActions: readonly AssessmentAvailableActionV1[],
+): AssessmentSnapshotV1 {
   return {
     schemaVersion: 1,
     assessmentId: record.assessmentId,
@@ -125,6 +129,7 @@ export function publicAssessmentSnapshot(record: InternalAssessmentRecordV1): As
       digest: record.contract.policy.digest,
     },
     coverage: record.coverage,
+    availableActions,
     verdict: record.verdict,
     seal: record.seal,
     createdAt: record.createdAt,
