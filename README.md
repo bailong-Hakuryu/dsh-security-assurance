@@ -30,7 +30,8 @@ This repository is under active vertical-slice development, not at the
   generated strict `dsh-security-assurance/typert` and
   `dsh-security-assurance/remote` artifacts. Its headless Workbench slice
   exposes authority-projected, watermarked `listAssessments`, exact
-  `getAssessment`, bounded
+  `getAssessment`, revision-bound Finding queries, strict metadata-only
+  `getEvidenceView`, bounded
   `waitForAssessmentRevision`, and revision-bound, idempotent
   `recordRiskDecision` without putting a Principal, permissions, or Security
   Invocation on the wire;
@@ -39,7 +40,9 @@ This repository is under active vertical-slice development, not at the
   `ctx.securityAssuranceWorkbench` Controller. It opens an authenticated,
   redacted Assessment selector, fetches immutable Snapshots,
   follows committed revisions through cancellable long-polling, fences stale
-  responses, and erases its authority context and Assessment payload on close.
+  responses and disclosure attempts, opens metadata only from an exact Finding
+  Evidence Link, validates every returned identity binding, and erases its
+  authority context and Assessment payload on close.
   The same entry contributes an additive bilingual launcher at
   `sidebar.footer.action` and a responsive read-only Assessment surface at
   `shell.overlay`; the browser renders Service-projected state, Coverage,
@@ -182,13 +185,14 @@ This repository is under active vertical-slice development, not at the
 
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
-model tools, Risk Decision forms, Evidence disclosure UI, and the complete
-Workbench information architecture are deliberately not claimed as implemented
-yet. The Workbench Host Remote, authenticated redacted Assessment selection
+model tools, Risk Decision forms, bounded Evidence content disclosure UI, and
+the complete Workbench information architecture are deliberately not claimed
+as implemented yet. The Workbench Host Remote, authenticated redacted Assessment selection
 with stable cursor continuation, generated Client contract, transient browser
-Controller, read-only Assessment Detail, multidimensional Finding triage, and
-revision-bound Finding Detail navigation are implemented. This
-repository ships no production external Qualification or external Analyzer
+Controller, read-only Assessment Detail, multidimensional Finding triage,
+revision-bound Finding Detail navigation, and bilingual metadata-only Evidence
+disclosure are implemented. This repository ships no production external
+Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
 Conformance contract and is not a general weakness validator. The built-in
@@ -332,7 +336,7 @@ only its Cordis Service; durable Repository Registry history remains owned by
 the root Security Service, so an equal restart resolves the same Repository ID.
 Conflicting replay fails loudly instead of updating Host policy implicitly.
 
-## Workbench Remote and read-only UI foundation
+## Workbench Remote and metadata-only UI
 
 The optional `dsh-security-assurance/workbench-remote` entry is a Host Adapter,
 not an authentication provider and not a second business Service. It injects
@@ -366,7 +370,7 @@ fails closed, and the dormant bundle row must not be enabled for an anonymous
 LAN deployment.
 
 The generated Host contribution is published at `./typert`; the generated
-Client contribution is published at `./remote`. All six operations use strict
+Client contribution is published at `./remote`. All seven operations use strict
 generated request/result codecs. Cancellation is forwarded to the root Service,
 mutation retries retain the caller's original idempotency key, and Adapter
 disposal withdraws its lookup and Remote Service without altering Assessments
@@ -374,10 +378,11 @@ or the root plugin.
 
 The package also publishes a Harness-discoverable `./client` entry. It mounts
 `./remote` through `ctx.remote.$mount()` and provides the browser-local
-`ctx.securityAssuranceWorkbench` Controller with eleven public operations:
+`ctx.securityAssuranceWorkbench` Controller with thirteen public operations:
 `openAssessmentSelection`, `loadMoreAssessments`, `selectAssessment`,
 `openAssessment`, `openFindings`, `loadMoreFindings`, `selectFinding`,
-`backToFindingList`, `closeAssessment`, `getState`, and `subscribe`. The Host
+`backToFindingList`, `selectEvidence`, `backToFindingDetail`, `closeAssessment`,
+`getState`, and `subscribe`. The Host
 passes its current opaque authority-context ID to `openAssessmentSelection`;
 the browser receives a bounded page of redacted, authority-visible identities
 and can append continuation pages from the same signed consistency window.
@@ -416,8 +421,15 @@ only from an exact listed record revision. Triage keeps record kind, Validation,
 Technical Severity, Evidence Confidence, Policy Significance, weakness, and
 sensitivity visibly separate. Detail exposes canonical Subject-relative Source
 Anchor and Evidence Link metadata without Evidence payloads or read
-capabilities. Assessment actions remain informational—there are no browser
-mutation controls.
+capabilities. Selecting one exact listed Evidence artifact derives the
+Assessment, Finding, artifact, and digest bindings from the retained Detail and
+fixes the viewing purpose and Profile to `FINDING_TRIAGE` and
+`security/evidence-view/metadata-only-v1`; the Controller rejects arbitrary
+identities or mismatched responses and renders only the metadata-only View,
+including its complete Digest Envelope and explicit redaction reason. Evidence
+transitions move focus to the new panel and return it to the originating Link.
+The strict Remote does not admit the bounded-JSON Profile in this slice.
+Assessment actions remain informational—there are no browser mutation controls.
 
 The surface ships complete English and Simplified Chinese copy, semantic dialog
 and status roles, keyboard dismissal and focus return, responsive layout, and

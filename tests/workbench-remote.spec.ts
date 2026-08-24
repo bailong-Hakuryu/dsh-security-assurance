@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import TypertGatewayService from '@deepseek-ai/dsh-api-gateway'
-import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
+import TypertRegistry, { type TypertContribution } from '@deepseek-ai/dsh-typert-registry'
+import { TYPERT } from 'dsh-security-assurance/typert'
 import { afterEach, describe, expect, it } from 'vitest'
 import SecurityAssuranceService, {
   RISK_DECISION_WINDOW_CONTROL_ID,
@@ -18,6 +19,7 @@ import SecurityAssuranceService, {
 import SecurityAssuranceWorkbenchRemote, {
   type AuthenticatedWorkbenchOperatorV1,
   type WorkbenchAuthorityContextId,
+  type WorkbenchEvidenceMetadataViewV1,
 } from '../src/workbench-remote.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
@@ -72,7 +74,7 @@ async function waitUntilBlocked(ctx: Context, assessmentId: AssessmentId): Promi
   throw new Error('Assessment did not open its Risk Decision Window')
 }
 
-async function harness(): Promise<{
+async function harness(strictTypert = false): Promise<{
   readonly ctx: Context
   readonly assessmentId: AssessmentId
   readonly resolvedContextIds: WorkbenchAuthorityContextId[]
@@ -84,6 +86,7 @@ async function harness(): Promise<{
   const ctx = new Context()
   contexts.push(ctx)
   await ctx.plugin(TypertRegistry)
+  if (strictTypert) ctx.typert.register(TYPERT as TypertContribution)
   await ctx.plugin(SecurityAssuranceService, { dshHome })
   await ctx.securityAssurance.whenReady()
   const resolvedContextIds: WorkbenchAuthorityContextId[] = []
@@ -234,6 +237,168 @@ describe('Security Assurance Workbench Remote', () => {
     expect(JSON.stringify(detail)).not.toContain('contentBase64')
     expect(JSON.stringify(detail)).not.toContain('storagePath')
     expect(resolvedContextIds).toEqual([authorityId, authorityId])
+  })
+
+  it('reads metadata-only Evidence through a freshly resolved Host authority', async () => {
+    const { ctx, assessmentId, resolvedContextIds } = await harness(true)
+    const authorityId = authorityContextId('workbench-session-reviewer')
+    const blocked = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getAssessment',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1, assessmentId },
+      },
+    }) as SecurityResult<AssessmentSnapshotV1>
+    if (!blocked.ok) throw new Error(`remote query failed: ${blocked.error.code}`)
+    const action = blocked.value.availableActions.find(candidate =>
+      candidate.kind === 'RECORD_RISK_DECISION')
+    if (action?.kind !== 'RECORD_RISK_DECISION') {
+      throw new Error('Risk Decision action was not projected')
+    }
+    await expect(ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'recordRiskDecision',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          schemaVersion: 1,
+          idempotencyKey: 'workbench-evidence-risk-denial-v1',
+          assessmentId,
+          expectedAssessmentRevision: action.expectedAssessmentRevision,
+          finding: action.finding,
+          decision: 'DENY',
+          rationale: 'The blocking Finding remains denied before Evidence metadata review.',
+          compensatingControls: [],
+          expiresAt: null,
+        },
+      },
+    })).resolves.toMatchObject({ ok: true, value: { operation: 'record_risk_decision' } })
+
+    const listed = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'listFindings',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1, assessmentId, limit: 50 },
+      },
+    }) as SecurityResult<FindingListPageV1>
+    if (!listed.ok || listed.value.findings[0] === undefined) {
+      throw new Error('Sealed Workbench fixture did not project a Finding')
+    }
+    const summary = listed.value.findings[0]
+    const detail = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getFinding',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        },
+      },
+    }) as SecurityResult<FindingDetailViewV1>
+    if (!detail.ok || detail.value.evidenceLinks[0] === undefined) {
+      throw new Error('Sealed Finding Detail did not expose an Evidence Link')
+    }
+    const link = detail.value.evidenceLinks[0]
+
+    const view = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getEvidenceView',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: detail.value.assessmentRevision,
+          context: {
+            kind: 'finding',
+            recordId: detail.value.recordId,
+            recordRevision: detail.value.recordRevision,
+          },
+          evidenceArtifactId: link.artifactId,
+          evidenceDigest: link.digest,
+          purpose: 'FINDING_TRIAGE',
+          viewProfileId: 'security/evidence-view/metadata-only-v1',
+        },
+      },
+    }) as SecurityResult<WorkbenchEvidenceMetadataViewV1>
+
+    expect(view).toMatchObject({
+      ok: true,
+      value: {
+        assessmentId,
+        assessmentRevision: detail.value.assessmentRevision,
+        context: {
+          kind: 'finding',
+          recordId: detail.value.recordId,
+          recordRevision: detail.value.recordRevision,
+        },
+        evidence: {
+          artifactId: link.artifactId,
+          digest: link.digest,
+          classification: 'CONTROL_PLANE',
+        },
+        link: {
+          purpose: link.purpose,
+          eligibilityDecision: link.eligibilityDecision,
+          eligibilityDecisionArtifactId: link.eligibilityDecisionArtifactId,
+        },
+        purpose: 'FINDING_TRIAGE',
+        viewProfileId: 'security/evidence-view/metadata-only-v1',
+        protection: { policyId: 'evidence/local-protected', status: 'AVAILABLE' },
+        retention: { status: 'RETAINED' },
+        egress: { policyId: 'egress/deny-by-default', status: 'LOCAL_ONLY' },
+        content: { kind: 'REDACTED', reason: 'PROFILE_METADATA_ONLY' },
+      },
+    })
+    const serialized = JSON.stringify(view)
+    expect(serialized).not.toContain('storagePath')
+    expect(serialized).not.toContain('encryptionKey')
+    expect(serialized).not.toContain('contentBase64')
+    expect(serialized).not.toContain('postinstall')
+    expect(serialized).not.toContain('principalId')
+    expect(serialized).not.toContain('workbench-reviewer')
+    expect(resolvedContextIds).toEqual(Array.from({ length: 5 }, () => authorityId))
+  })
+
+  it('does not expose the bounded-content Evidence Profile through the metadata Remote', async () => {
+    const { ctx, assessmentId, resolvedContextIds } = await harness(true)
+    const authorityId = authorityContextId('workbench-session-reviewer')
+
+    await expect(ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getEvidenceView',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: 1,
+          context: {
+            kind: 'finding',
+            recordId: `finding-${'a'.repeat(64)}`,
+            recordRevision: 1,
+          },
+          evidenceArtifactId: 'evidence/reference-bounded-json',
+          evidenceDigest: {
+            schemaVersion: 1,
+            algorithm: 'sha256',
+            mediaType: 'application/vnd.dsh.canonical-json',
+            byteLength: 1,
+            canonicalization: 'dsh-canonical-json-v1',
+            value: '0'.repeat(64),
+          },
+          purpose: 'VALIDATION_REVIEW',
+          viewProfileId: 'security/evidence-view/bounded-json-v1',
+        },
+      },
+    })).rejects.toMatchObject({ code: 'input-invalid' })
+    expect(resolvedContextIds).toEqual([authorityId])
   })
 
   it('exposes bounded revision signals through the authenticated Remote seam', async () => {

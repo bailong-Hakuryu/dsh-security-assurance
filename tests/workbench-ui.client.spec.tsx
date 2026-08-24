@@ -23,6 +23,7 @@ import {
   type SecurityAssuranceWorkbenchController,
   type WorkbenchAuthorityContextId,
 } from '../src/client/index.ts'
+import type { WorkbenchEvidenceMetadataViewV1 } from '../src/workbench-remote.ts'
 
 afterEach(() => { cleanup() })
 
@@ -213,7 +214,142 @@ function findingDetailView(summary: FindingSummaryV1): FindingDetailViewV1 {
   }
 }
 
+function evidenceMetadataView(detail: FindingDetailViewV1): WorkbenchEvidenceMetadataViewV1 {
+  const link = detail.evidenceLinks[0]
+  if (link === undefined) throw new Error('Finding Detail fixture has no Evidence Link')
+  return {
+    schemaVersion: 1,
+    assessmentId: detail.assessmentId,
+    assessmentRevision: detail.assessmentRevision,
+    context: {
+      kind: 'finding',
+      recordId: detail.recordId,
+      recordRevision: detail.recordRevision,
+    },
+    evidence: {
+      artifactId: link.artifactId,
+      schemaId: link.schemaId,
+      digest: link.digest,
+      classification: 'CONTROL_PLANE',
+    },
+    link: {
+      purpose: link.purpose,
+      eligibilityDecision: link.eligibilityDecision,
+      eligibilityDecisionArtifactId: link.eligibilityDecisionArtifactId,
+    },
+    purpose: 'FINDING_TRIAGE',
+    viewProfileId: 'security/evidence-view/metadata-only-v1',
+    protection: { policyId: 'evidence/local-protected', status: 'AVAILABLE' },
+    retention: { status: 'RETAINED' },
+    egress: { policyId: 'egress/deny-by-default', status: 'LOCAL_ONLY' },
+    content: { kind: 'REDACTED', reason: 'PROFILE_METADATA_ONLY' },
+  }
+}
+
 describe('Security Assurance Workbench UI', () => {
+  it('renders bilingual metadata-only Evidence and returns to Finding Detail', async () => {
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000072')
+    const snapshot: AssessmentSnapshotV1 = {
+      ...readySnapshot(id),
+      state: 'SEALED',
+      verdict: 'FAILED',
+    }
+    const summary = findingSummaryItem(id)
+    const detail = findingDetailView(summary)
+    const view = evidenceMetadataView(detail)
+    const authorityId = authorityContextId('workbench-session-evidence-ui')
+    const b = await bench((_path, endpoint) => {
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: id,
+              assessmentRevision: 7,
+              findings: [summary],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getEvidenceView') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: view } })
+      }
+      return Promise.reject(new Error(`Unexpected endpoint: ${endpoint}`))
+    })
+    const launcher = b.runtime.renderSlot('sidebar.footer.action', { wide: true })
+    const overlay = b.runtime.renderSlot('shell.overlay', {})
+    await act(async () => {
+      fireEvent.click(launcher.view.getByRole('button', { name: '打开安全保障工作台' }))
+      await b.controller.openAssessment({
+        securityAssuranceWorkbenchContextId: authorityId,
+        assessmentId: id,
+      })
+      await b.controller.openFindings()
+      await b.controller.selectFinding(summary.recordId)
+    })
+
+    const evidenceLink = overlay.view.getByRole('button', {
+      name: `查看 Evidence 元数据 ${view.evidence.artifactId}`,
+    })
+    evidenceLink.focus()
+    expect(document.activeElement).toBe(evidenceLink)
+    await act(async () => { fireEvent.click(evidenceLink) })
+    expect(overlay.view.getByRole('heading', { name: 'Evidence 元数据' })).toBeTruthy()
+    expect(document.activeElement).toBe(overlay.view.getByRole('button', {
+      name: '返回 Finding 详情',
+    }))
+    expect(overlay.view.getAllByText(view.evidence.artifactId).length).toBeGreaterThanOrEqual(2)
+    expect(overlay.view.getByText(view.evidence.schemaId)).toBeTruthy()
+    expect(overlay.view.getByText(view.evidence.digest.value)).toBeTruthy()
+    expect(overlay.view.getByText(view.evidence.digest.algorithm)).toBeTruthy()
+    expect(overlay.view.getByText(view.evidence.digest.mediaType)).toBeTruthy()
+    expect(overlay.view.getByText(String(view.evidence.digest.byteLength))).toBeTruthy()
+    expect(overlay.view.getByText(view.evidence.digest.canonicalization)).toBeTruthy()
+    expect(overlay.view.getByText('CONTROL_PLANE')).toBeTruthy()
+    expect(overlay.view.getByText('VALIDATION_EVIDENCE')).toBeTruthy()
+    expect(overlay.view.getByText('ELIGIBLE')).toBeTruthy()
+    expect(overlay.view.getByText('evidence/local-protected')).toBeTruthy()
+    expect(overlay.view.getByText('RETAINED')).toBeTruthy()
+    expect(overlay.view.getByText('egress/deny-by-default')).toBeTruthy()
+    expect(overlay.view.getByText('LOCAL_ONLY')).toBeTruthy()
+    expect(overlay.view.getByText('FINDING_TRIAGE')).toBeTruthy()
+    expect(overlay.view.getByText('security/evidence-view/metadata-only-v1')).toBeTruthy()
+    expect(overlay.view.getByText('REDACTED')).toBeTruthy()
+    expect(overlay.view.getByText('PROFILE_METADATA_ONLY')).toBeTruthy()
+    expect(overlay.view.queryByText('raw-evidence-value')).toBeNull()
+    expect(overlay.view.queryByText('storagePath')).toBeNull()
+    expect(overlay.view.queryByText(authorityId)).toBeNull()
+
+    act(() => { b.locale.setLocale('en') })
+    expect(overlay.view.getByRole('heading', { name: 'Evidence metadata' })).toBeTruthy()
+    expect(overlay.view.getByText('Digest schema version')).toBeTruthy()
+    expect(overlay.view.getByText('Digest algorithm')).toBeTruthy()
+    expect(overlay.view.getByText('Digest media type')).toBeTruthy()
+    expect(overlay.view.getByText('Digest byte length')).toBeTruthy()
+    expect(overlay.view.getByText('Digest canonicalization')).toBeTruthy()
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: 'Back to Finding detail' }))
+    })
+    expect(overlay.view.getByRole('heading', { name: 'Finding Detail' })).toBeTruthy()
+    expect(overlay.view.queryByRole('heading', { name: 'Evidence metadata' })).toBeNull()
+    expect(document.activeElement).toBe(overlay.view.getByRole('button', {
+      name: `View Evidence metadata ${view.evidence.artifactId}`,
+    }))
+
+    await b.feature.dispose()
+    await b.gateway.dispose()
+    await b.runtime.dispose()
+  })
+
   it('navigates from multidimensional Finding triage to revision-bound Detail and back', async () => {
     const id = assessmentId('asm-00000000-0000-0000-0000-000000000071')
     const snapshot = readySnapshot(id)

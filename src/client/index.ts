@@ -26,7 +26,10 @@ import type {
   PublicSecurityError,
   SecurityResult,
 } from '../contracts.ts'
-import type { WorkbenchAuthorityContextId } from 'dsh-security-assurance/workbench-remote'
+import type {
+  WorkbenchAuthorityContextId,
+  WorkbenchEvidenceMetadataViewV1,
+} from 'dsh-security-assurance/workbench-remote'
 import {
   en,
   WORKBENCH_LOCALE_NAMESPACE,
@@ -81,6 +84,12 @@ export interface WorkbenchClientFailureV1 {
   readonly retryable: boolean
 }
 
+/** Transient metadata disclosure nested under one exact Finding Detail. */
+export type WorkbenchEvidenceStateV1 =
+  | { readonly kind: 'NOT_LOADED' }
+  | { readonly kind: 'METADATA_LOADING'; readonly artifactId: string }
+  | { readonly kind: 'METADATA_READY'; readonly view: WorkbenchEvidenceMetadataViewV1 }
+
 /** Transient Finding projection nested under one revision-bound Assessment view. */
 export type WorkbenchFindingsStateV1 =
   | { readonly kind: 'NOT_LOADED' }
@@ -110,6 +119,7 @@ export type WorkbenchFindingsStateV1 =
     readonly items: readonly FindingSummaryV1[]
     readonly nextCursor: string | null
     readonly detail: FindingDetailViewV1
+    readonly evidence: WorkbenchEvidenceStateV1
   }
 
 /** Immutable observable state of the browser-owned Workbench session. */
@@ -155,6 +165,7 @@ interface LiveAssessmentSession {
 
 const CLOSED_STATE: SecurityAssuranceWorkbenchStateV1 = Object.freeze({ kind: 'CLOSED' })
 const FINDINGS_NOT_LOADED: WorkbenchFindingsStateV1 = Object.freeze({ kind: 'NOT_LOADED' })
+const EVIDENCE_NOT_LOADED: WorkbenchEvidenceStateV1 = Object.freeze({ kind: 'NOT_LOADED' })
 const LONG_POLL_TIMEOUT_MS = 25_000
 
 /**
@@ -169,6 +180,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
   private state: SecurityAssuranceWorkbenchStateV1 = CLOSED_STATE
   private session: LiveAssessmentSession | undefined
   private nextGeneration = 0
+  private evidenceRequestGeneration = 0
 
   constructor(ctx: Context) {
     super(ctx, 'securityAssuranceWorkbench')
@@ -456,6 +468,99 @@ export class SecurityAssuranceWorkbenchController extends Service {
       items: currentFindings.items,
       nextCursor: currentFindings.nextCursor,
       detail,
+      evidence: EVIDENCE_NOT_LOADED,
+    }))
+  }
+
+  /** Open metadata for one Evidence Link retained by the exact Finding Detail. */
+  async selectEvidence(evidenceArtifactId: string): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'READY'
+      || current.findings.kind !== 'DETAIL_READY'
+      || current.findings.evidence.kind !== 'NOT_LOADED'
+    ) return current
+    const link = current.findings.detail.evidenceLinks.find(candidate =>
+      candidate.artifactId === evidenceArtifactId)
+    if (link === undefined) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'EVIDENCE_NOT_LISTED',
+        message: 'The Evidence is not present in the current revision-bound Finding Detail.',
+        retryable: false,
+      })
+    }
+    const currentFindings = current.findings
+    const evidenceRequestGeneration = ++this.evidenceRequestGeneration
+    this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      ...currentFindings,
+      evidence: Object.freeze({
+        kind: 'METADATA_LOADING' as const,
+        artifactId: evidenceArtifactId,
+      }),
+    }))
+
+    let result: RemoteResult<SecurityResult<WorkbenchEvidenceMetadataViewV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.getEvidenceView(
+        session.contextId,
+        {
+          schemaVersion: 1,
+          assessmentId: current.assessmentId,
+          assessmentRevision: currentFindings.detail.assessmentRevision,
+          context: {
+            kind: 'finding',
+            recordId: currentFindings.detail.recordId,
+            recordRevision: currentFindings.detail.recordRevision,
+          },
+          evidenceArtifactId: link.artifactId,
+          evidenceDigest: link.digest,
+          purpose: 'FINDING_TRIAGE',
+          viewProfileId: 'security/evidence-view/metadata-only-v1',
+        },
+        session.abort.signal,
+      )
+    } catch (error) {
+      if (!this.isActiveEvidenceRequest(
+        session,
+        current.snapshot.assessmentRevision,
+        evidenceArtifactId,
+        evidenceRequestGeneration,
+      )) return this.state
+      return this.failClient(session, error)
+    }
+    if (!this.isActiveEvidenceRequest(
+      session,
+      current.snapshot.assessmentRevision,
+      evidenceArtifactId,
+      evidenceRequestGeneration,
+    )) return this.state
+    const view = this.readRemoteResult(session, result)
+    if (view === undefined) return this.state
+    if (!matchesEvidenceMetadata(currentFindings.detail, link, view)) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'EVIDENCE_PROTOCOL_VIOLATION',
+        message: 'The Evidence metadata does not match the selected revision-bound Link.',
+        retryable: false,
+      })
+    }
+    return this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      ...currentFindings,
+      evidence: Object.freeze({ kind: 'METADATA_READY' as const, view }),
+    }))
+  }
+
+  /** Return from Evidence metadata and discard the protected View. */
+  backToFindingDetail(): SecurityAssuranceWorkbenchStateV1 {
+    const current = this.state
+    if (current.kind !== 'READY' || current.findings.kind !== 'DETAIL_READY') return current
+    this.evidenceRequestGeneration += 1
+    return this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      ...current.findings,
+      evidence: EVIDENCE_NOT_LOADED,
     }))
   }
 
@@ -690,6 +795,21 @@ export class SecurityAssuranceWorkbenchController extends Service {
     return this.session === session && !session.abort.signal.aborted
   }
 
+  private isActiveEvidenceRequest(
+    session: LiveAssessmentSession,
+    assessmentRevision: number,
+    evidenceArtifactId: string,
+    requestGeneration: number,
+  ): boolean {
+    return this.isActive(session)
+      && this.evidenceRequestGeneration === requestGeneration
+      && this.state.kind === 'READY'
+      && this.state.snapshot.assessmentRevision === assessmentRevision
+      && this.state.findings.kind === 'DETAIL_READY'
+      && this.state.findings.evidence.kind === 'METADATA_LOADING'
+      && this.state.findings.evidence.artifactId === evidenceArtifactId
+  }
+
   private publish(state: SecurityAssuranceWorkbenchStateV1): void {
     this.state = state
     for (const listener of [...this.listeners]) this.notify(listener, state)
@@ -709,6 +829,40 @@ export class SecurityAssuranceWorkbenchController extends Service {
 
 function isTerminal(snapshot: AssessmentSnapshotV1): boolean {
   return snapshot.state === 'SEALED' || snapshot.state === 'CANCELED'
+}
+
+function matchesEvidenceMetadata(
+  detail: FindingDetailViewV1,
+  link: FindingDetailViewV1['evidenceLinks'][number],
+  view: WorkbenchEvidenceMetadataViewV1,
+): boolean {
+  return view.assessmentId === detail.assessmentId
+    && view.assessmentRevision === detail.assessmentRevision
+    && view.context.kind === 'finding'
+    && view.context.recordId === detail.recordId
+    && view.context.recordRevision === detail.recordRevision
+    && view.evidence.artifactId === link.artifactId
+    && view.evidence.schemaId === link.schemaId
+    && sameDigest(view.evidence.digest, link.digest)
+    && view.link.purpose === link.purpose
+    && view.link.eligibilityDecision === link.eligibilityDecision
+    && view.link.eligibilityDecisionArtifactId === link.eligibilityDecisionArtifactId
+    && view.purpose === 'FINDING_TRIAGE'
+    && view.viewProfileId === 'security/evidence-view/metadata-only-v1'
+    && view.content.kind === 'REDACTED'
+    && view.content.reason === 'PROFILE_METADATA_ONLY'
+}
+
+function sameDigest(
+  left: WorkbenchEvidenceMetadataViewV1['evidence']['digest'],
+  right: WorkbenchEvidenceMetadataViewV1['evidence']['digest'],
+): boolean {
+  return left.schemaVersion === right.schemaVersion
+    && left.algorithm === right.algorithm
+    && left.mediaType === right.mediaType
+    && left.byteLength === right.byteLength
+    && left.canonicalization === right.canonicalization
+    && left.value === right.value
 }
 
 function remoteFailure(error: RemoteFailure): WorkbenchClientFailureV1 {
@@ -786,12 +940,14 @@ function installWorkbenchUi(
       locale: WORKBENCH_LOCALE_NAMESPACE,
       inject: (): WorkbenchOverlayInjected => ({
         hooks: { presentation, assessment },
+        backToFindingDetail: () => { controller.backToFindingDetail() },
         backToFindingList: () => { controller.backToFindingList() },
         closeWorkbench: () => { presentation.hide() },
         loadMoreAssessments: () => { void controller.loadMoreAssessments() },
         loadMoreFindings: () => { void controller.loadMoreFindings() },
         openFindings: () => { void controller.openFindings() },
         selectAssessment: assessmentId => { void controller.selectAssessment(assessmentId) },
+        selectEvidence: artifactId => { void controller.selectEvidence(artifactId) },
         selectFinding: recordId => { void controller.selectFinding(recordId) },
       }),
     }, WorkbenchOverlay))

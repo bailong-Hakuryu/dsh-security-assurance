@@ -5,9 +5,12 @@ import {
   type TypertLookup,
 } from '@deepseek-ai/dsh-typert-protocol'
 import type {
+  AssessmentId,
   AssessmentRevisionSignalV1,
   AssessmentListPageV1,
   AssessmentSnapshotV1,
+  DigestEnvelopeV1,
+  EvidenceViewV1,
   FindingDetailViewV1,
   FindingListPageV1,
   GetAssessmentRequest,
@@ -59,6 +62,60 @@ export interface WorkbenchAuthorityContextResolverV1 {
   resolveAuthorityContext(
     contextId: WorkbenchAuthorityContextId,
   ): AuthenticatedWorkbenchOperatorV1 | undefined | Promise<AuthenticatedWorkbenchOperatorV1 | undefined>
+}
+
+/** Strict browser request for the metadata-only Evidence disclosure slice. */
+export interface WorkbenchEvidenceMetadataRequestV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly context: {
+    readonly kind: 'finding'
+    readonly recordId: string
+    readonly recordRevision: number
+  }
+  readonly evidenceArtifactId: string
+  readonly evidenceDigest: DigestEnvelopeV1
+  readonly purpose: 'FINDING_TRIAGE'
+  readonly viewProfileId: 'security/evidence-view/metadata-only-v1'
+}
+
+/** Strict metadata-only Evidence projection; bounded content is not part of this Remote face. */
+export interface WorkbenchEvidenceMetadataViewV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly context: {
+    readonly kind: 'finding'
+    readonly recordId: string
+    readonly recordRevision: number
+  }
+  readonly evidence: {
+    readonly artifactId: string
+    readonly schemaId: string
+    readonly digest: DigestEnvelopeV1
+    readonly classification: 'INTERNAL' | 'CONTROL_PLANE'
+  }
+  readonly link: {
+    readonly purpose: 'VALIDATION_EVIDENCE' | 'COUNTER_EVIDENCE'
+    readonly eligibilityDecision: 'ELIGIBLE' | 'INELIGIBLE'
+    readonly eligibilityDecisionArtifactId: string
+  }
+  readonly purpose: 'FINDING_TRIAGE'
+  readonly viewProfileId: 'security/evidence-view/metadata-only-v1'
+  readonly protection: {
+    readonly policyId: string
+    readonly status: 'AVAILABLE' | 'UNAVAILABLE'
+  }
+  readonly retention: { readonly status: 'RETAINED' }
+  readonly egress: {
+    readonly policyId: string
+    readonly status: 'LOCAL_ONLY'
+  }
+  readonly content: {
+    readonly kind: 'REDACTED'
+    readonly reason: 'PROFILE_METADATA_ONLY'
+  }
 }
 
 const WORKBENCH_AUTHORITY_CONTEXT_PATTERN = /^[A-Za-z0-9_-]{16,256}$/
@@ -152,6 +209,25 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
     )
   }
 
+  /** Read one purpose/profile-bound Evidence View without exposing Store authority. */
+  @Remote
+  async getEvidenceView(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: WorkbenchEvidenceMetadataRequestV1,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<WorkbenchEvidenceMetadataViewV1>> {
+    const result = await this.ctx.securityAssurance.getEvidenceView(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
+    if (!result.ok) return result
+    if (!isMetadataOnlyEvidenceView(result.value)) {
+      throw new TypeError('Security Service returned a non-metadata Evidence View')
+    }
+    return { ok: true, value: result.value }
+  }
+
   /** Wait for one later committed Assessment revision without holding a Store transaction. */
   @Remote
   waitForAssessmentRevision(
@@ -182,3 +258,12 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
 }
 
 export default SecurityAssuranceWorkbenchRemote
+
+function isMetadataOnlyEvidenceView(
+  view: EvidenceViewV1,
+): view is WorkbenchEvidenceMetadataViewV1 {
+  return view.purpose === 'FINDING_TRIAGE'
+    && view.viewProfileId === 'security/evidence-view/metadata-only-v1'
+    && view.content.kind === 'REDACTED'
+    && view.content.reason === 'PROFILE_METADATA_ONLY'
+}

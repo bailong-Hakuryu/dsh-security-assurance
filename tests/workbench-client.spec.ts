@@ -19,6 +19,7 @@ import {
   type SecurityAssuranceWorkbenchController,
   type WorkbenchAuthorityContextId,
 } from '../src/client/index.ts'
+import type { WorkbenchEvidenceMetadataViewV1 } from '../src/workbench-remote.ts'
 
 const contexts: Context[] = []
 
@@ -190,6 +191,97 @@ function findingDetail(summary: FindingSummaryV1): FindingDetailViewV1 {
     attackPath: { state: 'NOT_AVAILABLE' },
   }
 }
+
+function evidenceMetadataView(detail: FindingDetailViewV1): WorkbenchEvidenceMetadataViewV1 {
+  const link = detail.evidenceLinks[0]
+  if (link === undefined) throw new Error('Finding Detail fixture has no Evidence Link')
+  return {
+    schemaVersion: 1,
+    assessmentId: detail.assessmentId,
+    assessmentRevision: detail.assessmentRevision,
+    context: {
+      kind: 'finding',
+      recordId: detail.recordId,
+      recordRevision: detail.recordRevision,
+    },
+    evidence: {
+      artifactId: link.artifactId,
+      schemaId: link.schemaId,
+      digest: link.digest,
+      classification: 'CONTROL_PLANE',
+    },
+    link: {
+      purpose: link.purpose,
+      eligibilityDecision: link.eligibilityDecision,
+      eligibilityDecisionArtifactId: link.eligibilityDecisionArtifactId,
+    },
+    purpose: 'FINDING_TRIAGE',
+    viewProfileId: 'security/evidence-view/metadata-only-v1',
+    protection: { policyId: 'evidence/local-protected', status: 'AVAILABLE' },
+    retention: { status: 'RETAINED' },
+    egress: { policyId: 'egress/deny-by-default', status: 'LOCAL_ONLY' },
+    content: { kind: 'REDACTED', reason: 'PROFILE_METADATA_ONLY' },
+  }
+}
+
+const evidenceBindingMismatches: readonly [
+  label: string,
+  mutate: (view: WorkbenchEvidenceMetadataViewV1) => WorkbenchEvidenceMetadataViewV1,
+  transportRejection?: boolean,
+][] = [
+  ['Assessment identity', view => ({
+    ...view,
+    assessmentId: assessmentId('asm-00000000-0000-0000-0000-000000000099'),
+  })],
+  ['Assessment revision', view => ({ ...view, assessmentRevision: view.assessmentRevision + 1 })],
+  ['Finding identity', view => ({
+    ...view,
+    context: { ...view.context, recordId: `finding-${'b'.repeat(64)}` },
+  })],
+  ['Finding revision', view => ({
+    ...view,
+    context: { ...view.context, recordRevision: view.context.recordRevision + 1 },
+  })],
+  ['artifact identity', view => ({
+    ...view,
+    evidence: { ...view.evidence, artifactId: 'evidence/different-artifact' },
+  })],
+  ['artifact schema', view => ({
+    ...view,
+    evidence: { ...view.evidence, schemaId: 'security/evidence/different-v1' },
+  })],
+  ['artifact digest', view => ({
+    ...view,
+    evidence: {
+      ...view.evidence,
+      digest: { ...view.evidence.digest, value: 'f'.repeat(64) },
+    },
+  })],
+  ['Link purpose', view => ({
+    ...view,
+    link: { ...view.link, purpose: 'COUNTER_EVIDENCE' },
+  })],
+  ['Eligibility decision', view => ({
+    ...view,
+    link: { ...view.link, eligibilityDecision: 'INELIGIBLE' },
+  })],
+  ['Eligibility decision artifact', view => ({
+    ...view,
+    link: { ...view.link, eligibilityDecisionArtifactId: 'eligibility/different-artifact' },
+  })],
+  ['View purpose', view => ({
+    ...view,
+    purpose: 'VALIDATION_REVIEW',
+  }) as unknown as WorkbenchEvidenceMetadataViewV1, true],
+  ['View Profile', view => ({
+    ...view,
+    viewProfileId: 'security/evidence-view/bounded-json-v1',
+  }) as unknown as WorkbenchEvidenceMetadataViewV1, true],
+  ['content disclosure', view => ({
+    ...view,
+    content: { kind: 'BOUNDED_JSON', byteLength: 16, value: { secret: true } },
+  }) as unknown as WorkbenchEvidenceMetadataViewV1, true],
+]
 
 describe('Security Assurance Workbench Client', () => {
   it('loads a revision-bound Finding list while the terminal Assessment view remains open', async () => {
@@ -479,6 +571,337 @@ describe('Security Assurance Workbench Client', () => {
     })
     expect(payloads).toHaveLength(3)
   })
+
+  it('opens metadata only from an Evidence Link in the exact Finding Detail', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000065')
+    const snapshot = snapshotAt(id, 8, 'SEALED')
+    const summary = findingSummary(id, 8, '8')
+    const detail = findingDetail(summary)
+    const view = evidenceMetadataView(detail)
+    const payloads: unknown[] = []
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+    ): Promise<unknown> {
+      payloads.push(payload)
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: id,
+              assessmentRevision: 8,
+              findings: [summary],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getEvidenceView') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: view } })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+    const authorityId = authorityContextId('workbench-session-evidence-metadata')
+
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityId,
+      assessmentId: id,
+    })
+    await controller.openFindings()
+    await controller.selectFinding(summary.recordId)
+    await expect(controller.selectEvidence(view.evidence.artifactId)).resolves.toMatchObject({
+      kind: 'READY',
+      findings: {
+        kind: 'DETAIL_READY',
+        detail: { recordId: summary.recordId },
+        evidence: {
+          kind: 'METADATA_READY',
+          view: {
+            evidence: { artifactId: view.evidence.artifactId },
+            content: { kind: 'REDACTED', reason: 'PROFILE_METADATA_ONLY' },
+          },
+        },
+      },
+    })
+    expect(payloads[3]).toMatchObject({
+      args: {
+        request: {
+          schemaVersion: 1,
+          assessmentId: id,
+          assessmentRevision: detail.assessmentRevision,
+          context: {
+            kind: 'finding',
+            recordId: detail.recordId,
+            recordRevision: detail.recordRevision,
+          },
+          evidenceArtifactId: view.evidence.artifactId,
+          evidenceDigest: view.evidence.digest,
+          purpose: 'FINDING_TRIAGE',
+          viewProfileId: 'security/evidence-view/metadata-only-v1',
+        },
+      },
+    })
+    expect(JSON.stringify(controller.getState())).not.toContain(authorityId)
+    expect(controller.backToFindingDetail()).toMatchObject({
+      kind: 'READY',
+      findings: {
+        kind: 'DETAIL_READY',
+        detail: { recordId: summary.recordId },
+        evidence: { kind: 'NOT_LOADED' },
+      },
+    })
+    expect(payloads).toHaveLength(4)
+  })
+
+  it('ignores earlier failed and successful attempts after the same Evidence is reopened', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000068')
+    const snapshot = snapshotAt(id, 11, 'SEALED')
+    const summary = findingSummary(id, 11, '8')
+    const detail = findingDetail(summary)
+    const view = evidenceMetadataView(detail)
+    const evidenceDeferred: Array<{
+      readonly resolve: (value: unknown) => void
+      readonly reject: (reason: unknown) => void
+    }> = []
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+    ): Promise<unknown> {
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: id,
+              assessmentRevision: 11,
+              findings: [summary],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getEvidenceView') {
+        return new Promise((resolve, reject) => { evidenceDeferred.push({ resolve, reject }) })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-evidence-race'),
+      assessmentId: id,
+    })
+    await controller.openFindings()
+    await controller.selectFinding(summary.recordId)
+
+    const first = controller.selectEvidence(view.evidence.artifactId)
+    expect(evidenceDeferred).toHaveLength(1)
+    controller.backToFindingDetail()
+    const second = controller.selectEvidence(view.evidence.artifactId)
+    expect(evidenceDeferred).toHaveLength(2)
+
+    evidenceDeferred[0]?.reject(new Error('The earlier authority context expired.'))
+    await first
+    expect(controller.getState()).toMatchObject({
+      kind: 'READY',
+      findings: {
+        kind: 'DETAIL_READY',
+        evidence: { kind: 'METADATA_LOADING', artifactId: view.evidence.artifactId },
+      },
+    })
+
+    controller.backToFindingDetail()
+    const third = controller.selectEvidence(view.evidence.artifactId)
+    expect(evidenceDeferred).toHaveLength(3)
+    evidenceDeferred[1]?.resolve({ ok: true, value: { ok: true, value: view } })
+    await second
+    expect(controller.getState()).toMatchObject({
+      kind: 'READY',
+      findings: {
+        kind: 'DETAIL_READY',
+        evidence: { kind: 'METADATA_LOADING', artifactId: view.evidence.artifactId },
+      },
+    })
+
+    evidenceDeferred[2]?.resolve({ ok: true, value: { ok: true, value: view } })
+    await expect(third).resolves.toMatchObject({
+      kind: 'READY',
+      findings: {
+        kind: 'DETAIL_READY',
+        evidence: {
+          kind: 'METADATA_READY',
+          view: { evidence: { artifactId: view.evidence.artifactId } },
+        },
+      },
+    })
+  })
+
+  it('fails closed without a Remote call for browser-authored Evidence identity', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000066')
+    const snapshot = snapshotAt(id, 9, 'SEALED')
+    const summary = findingSummary(id, 9, '9')
+    const detail = findingDetail(summary)
+    const endpoints: string[] = []
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+    ): Promise<unknown> {
+      endpoints.push(endpoint)
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: id,
+              assessmentRevision: 9,
+              findings: [summary],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+    const authorityId = authorityContextId('workbench-session-evidence-forgery')
+
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityId,
+      assessmentId: id,
+    })
+    await controller.openFindings()
+    await controller.selectFinding(summary.recordId)
+    await expect(controller.selectEvidence('evidence/browser-authored')).resolves.toMatchObject({
+      kind: 'FAILED',
+      assessmentId: id,
+      failure: { source: 'CLIENT', code: 'EVIDENCE_NOT_LISTED' },
+    })
+    expect(endpoints).toEqual([
+      'securityAssuranceWorkbench/getAssessment',
+      'securityAssuranceWorkbench/listFindings',
+      'securityAssuranceWorkbench/getFinding',
+    ])
+    expect(controller.getState()).not.toHaveProperty('snapshot')
+    expect(controller.getState()).not.toHaveProperty('findings')
+    expect(JSON.stringify(controller.getState())).not.toContain(authorityId)
+  })
+
+  it.each(evidenceBindingMismatches)(
+    'fails closed when Evidence metadata changes its %s binding',
+    async (_label, mutate, transportRejection = false) => {
+      const ctx = new Context()
+      contexts.push(ctx)
+      await ctx.plugin(TypertRegistry)
+      await installClientUiFoundation(ctx)
+
+      const id = assessmentId('asm-00000000-0000-0000-0000-000000000067')
+      const snapshot = snapshotAt(id, 10, 'SEALED')
+      const summary = findingSummary(id, 10, '7')
+      const detail = findingDetail(summary)
+      const view = mutate(evidenceMetadataView(detail))
+      ctx.provide('connection', { rpc: { call(
+        _path: string,
+        endpoint: string,
+      ): Promise<unknown> {
+        if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+          return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+        }
+        if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+          return Promise.resolve({
+            ok: true,
+            value: {
+              ok: true,
+              value: {
+                schemaVersion: 1,
+                assessmentId: id,
+                assessmentRevision: 10,
+                findings: [summary],
+                nextCursor: null,
+              },
+            },
+          })
+        }
+        if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+          return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+        }
+        if (endpoint === 'securityAssuranceWorkbench/getEvidenceView') {
+          return Promise.resolve({ ok: true, value: { ok: true, value: view } })
+        }
+        throw new Error(`Unexpected endpoint: ${endpoint}`)
+      } } } as never)
+      await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+      await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+      const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+      const authorityId = authorityContextId('workbench-session-evidence-binding')
+
+      await controller.openAssessment({
+        securityAssuranceWorkbenchContextId: authorityId,
+        assessmentId: id,
+      })
+      await controller.openFindings()
+      await controller.selectFinding(summary.recordId)
+      await expect(controller.selectEvidence(
+        detail.evidenceLinks[0]?.artifactId ?? 'missing',
+      )).resolves.toMatchObject({
+        kind: 'FAILED',
+        assessmentId: id,
+        failure: transportRejection
+          ? { source: 'TRANSPORT', code: 'internal' }
+          : { source: 'CLIENT', code: 'EVIDENCE_PROTOCOL_VIOLATION' },
+      })
+      expect(controller.getState()).not.toHaveProperty('snapshot')
+      expect(controller.getState()).not.toHaveProperty('findings')
+      expect(JSON.stringify(controller.getState())).not.toContain(authorityId)
+    },
+  )
 
   it('appends the next authority-bound Assessment page and stops at its stable end', async () => {
     const ctx = new Context()

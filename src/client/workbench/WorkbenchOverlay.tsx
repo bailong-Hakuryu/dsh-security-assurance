@@ -6,11 +6,13 @@ import type {
   PropsRuntime,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import { useEffect, useRef } from 'react'
-import type { KeyboardEvent, MouseEvent } from 'react'
+import type { KeyboardEvent, MouseEvent, RefObject } from 'react'
 import type {
   SecurityAssuranceWorkbenchStateV1,
+  WorkbenchEvidenceStateV1,
   WorkbenchFindingsStateV1,
 } from '../index.ts'
+import type { WorkbenchEvidenceMetadataViewV1 } from '../../workbench-remote.ts'
 import type {
   AssessmentAvailableActionV1,
   AssessmentId,
@@ -34,7 +36,9 @@ export interface WorkbenchOverlayInjected {
   readonly loadMoreFindings: () => void
   readonly openFindings: () => void
   readonly backToFindingList: () => void
+  readonly backToFindingDetail: () => void
   readonly selectAssessment: (assessmentId: AssessmentId) => void
+  readonly selectEvidence: (artifactId: string) => void
   readonly selectFinding: (recordId: string) => void
 }
 
@@ -54,7 +58,9 @@ export function WorkbenchOverlay({
   loadMoreFindings,
   openFindings,
   backToFindingList,
+  backToFindingDetail,
   selectAssessment,
+  selectEvidence,
   selectFinding,
 }: WorkbenchOverlayProps) {
   const open = usePresentation(snapshot => snapshot.open)
@@ -155,6 +161,8 @@ export function WorkbenchOverlay({
               loadMoreFindings={loadMoreFindings}
               selectFinding={selectFinding}
               backToFindingList={backToFindingList}
+              selectEvidence={selectEvidence}
+              backToFindingDetail={backToFindingDetail}
               t={t}
             />
           )}
@@ -255,6 +263,8 @@ function AssessmentDetail({
   loadMoreFindings,
   selectFinding,
   backToFindingList,
+  selectEvidence,
+  backToFindingDetail,
   t,
 }: {
   readonly snapshot: AssessmentSnapshotV1
@@ -263,6 +273,8 @@ function AssessmentDetail({
   readonly loadMoreFindings: () => void
   readonly selectFinding: (recordId: string) => void
   readonly backToFindingList: () => void
+  readonly selectEvidence: (artifactId: string) => void
+  readonly backToFindingDetail: () => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
   return (
@@ -328,6 +340,8 @@ function AssessmentDetail({
         loadMoreFindings={loadMoreFindings}
         selectFinding={selectFinding}
         backToFindingList={backToFindingList}
+        selectEvidence={selectEvidence}
+        backToFindingDetail={backToFindingDetail}
         t={t}
       />
     </div>
@@ -340,6 +354,8 @@ function FindingPanel({
   loadMoreFindings,
   selectFinding,
   backToFindingList,
+  selectEvidence,
+  backToFindingDetail,
   t,
 }: {
   readonly state: WorkbenchFindingsStateV1
@@ -347,10 +363,72 @@ function FindingPanel({
   readonly loadMoreFindings: () => void
   readonly selectFinding: (recordId: string) => void
   readonly backToFindingList: () => void
+  readonly selectEvidence: (artifactId: string) => void
+  readonly backToFindingDetail: () => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
+  const evidenceBackRef = useRef<HTMLButtonElement>(null)
+  const evidenceTriggerArtifactId = useRef<string | null>(null)
+  const evidenceTriggers = useRef(new Map<string, HTMLButtonElement>())
+  const previousEvidenceKind = useRef<WorkbenchEvidenceStateV1['kind'] | null>(null)
+
+  useEffect(() => {
+    if (state.kind !== 'DETAIL_READY') {
+      previousEvidenceKind.current = null
+      evidenceTriggerArtifactId.current = null
+      return
+    }
+    const currentKind = state.evidence.kind
+    if (currentKind === 'NOT_LOADED') {
+      if (
+        previousEvidenceKind.current !== null
+        && previousEvidenceKind.current !== 'NOT_LOADED'
+      ) {
+        const artifactId = evidenceTriggerArtifactId.current
+        if (artifactId !== null) evidenceTriggers.current.get(artifactId)?.focus()
+        evidenceTriggerArtifactId.current = null
+      }
+    } else if (previousEvidenceKind.current !== currentKind) {
+      evidenceBackRef.current?.focus()
+    }
+    previousEvidenceKind.current = currentKind
+  }, [state])
+
   if (state.kind === 'DETAIL_READY') {
-    return <FindingDetail detail={state.detail} backToFindingList={backToFindingList} t={t} />
+    if (state.evidence.kind === 'METADATA_LOADING') {
+      return (
+        <EvidenceLoading
+          backButtonRef={evidenceBackRef}
+          backToFindingDetail={backToFindingDetail}
+          t={t}
+        />
+      )
+    }
+    if (state.evidence.kind === 'METADATA_READY') {
+      return (
+        <EvidenceMetadata
+          view={state.evidence.view}
+          backButtonRef={evidenceBackRef}
+          backToFindingDetail={backToFindingDetail}
+          t={t}
+        />
+      )
+    }
+    return (
+      <FindingDetail
+        detail={state.detail}
+        backToFindingList={backToFindingList}
+        selectEvidence={artifactId => {
+          evidenceTriggerArtifactId.current = artifactId
+          selectEvidence(artifactId)
+        }}
+        setEvidenceTrigger={(artifactId, trigger) => {
+          if (trigger === null) evidenceTriggers.current.delete(artifactId)
+          else evidenceTriggers.current.set(artifactId, trigger)
+        }}
+        t={t}
+      />
+    )
   }
   return (
     <section className="dsh-security-section dsh-security-findings" aria-labelledby="dsh-security-findings-title">
@@ -444,10 +522,14 @@ function FindingList({
 function FindingDetail({
   detail,
   backToFindingList,
+  selectEvidence,
+  setEvidenceTrigger,
   t,
 }: {
   readonly detail: FindingDetailViewV1
   readonly backToFindingList: () => void
+  readonly selectEvidence: (artifactId: string) => void
+  readonly setEvidenceTrigger: (artifactId: string, trigger: HTMLButtonElement | null) => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
   return (
@@ -499,14 +581,111 @@ function FindingDetail({
               <ul className="dsh-security-metadata-list">
                 {detail.evidenceLinks.map(link => (
                   <li key={`${link.artifactId}:${link.digest.value}`}>
-                    <code>{link.artifactId}</code>
-                    <span>{link.purpose}</span>
-                    <MachineBadge value={link.eligibilityDecision} />
+                    <button
+                      ref={trigger => { setEvidenceTrigger(link.artifactId, trigger) }}
+                      type="button"
+                      className="dsh-security-evidence-link"
+                      aria-label={`${t('evidence.open')} ${link.artifactId}`}
+                      onClick={() => { selectEvidence(link.artifactId) }}
+                    >
+                      <code>{link.artifactId}</code>
+                      <span>{link.purpose}</span>
+                      <MachineBadge value={link.eligibilityDecision} />
+                    </button>
                   </li>
                 ))}
               </ul>
             )}
       </div>
+    </section>
+  )
+}
+
+function EvidenceLoading({
+  backButtonRef,
+  backToFindingDetail,
+  t,
+}: {
+  readonly backButtonRef: RefObject<HTMLButtonElement>
+  readonly backToFindingDetail: () => void
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  return (
+    <section className="dsh-security-section dsh-security-finding-detail" aria-labelledby="dsh-security-evidence-title">
+      <div className="dsh-security-section__header">
+        <h2 id="dsh-security-evidence-title">{t('evidence.title')}</h2>
+        <button
+          ref={backButtonRef}
+          type="button"
+          className="dsh-security-secondary-action"
+          onClick={backToFindingDetail}
+        >
+          {t('evidence.back')}
+        </button>
+      </div>
+      <p className="dsh-security-muted" role="status" aria-live="polite">
+        {t('evidence.loading')}
+      </p>
+    </section>
+  )
+}
+
+function EvidenceMetadata({
+  view,
+  backButtonRef,
+  backToFindingDetail,
+  t,
+}: {
+  readonly view: WorkbenchEvidenceMetadataViewV1
+  readonly backButtonRef: RefObject<HTMLButtonElement>
+  readonly backToFindingDetail: () => void
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  return (
+    <section className="dsh-security-section dsh-security-finding-detail" aria-labelledby="dsh-security-evidence-title">
+      <div className="dsh-security-section__header">
+        <h2 id="dsh-security-evidence-title">{t('evidence.title')}</h2>
+        <button
+          ref={backButtonRef}
+          type="button"
+          className="dsh-security-secondary-action"
+          onClick={backToFindingDetail}
+        >
+          {t('evidence.back')}
+        </button>
+      </div>
+      <code className="dsh-security-finding-detail__id">{view.evidence.artifactId}</code>
+      <dl className="dsh-security-facts">
+        <Fact label={t('evidence.artifact')} value={view.evidence.artifactId} machine />
+        <Fact label={t('evidence.schema')} value={view.evidence.schemaId} machine />
+        <Fact label={t('evidence.digest')} value={view.evidence.digest.value} machine />
+        <Fact
+          label={t('evidence.digestSchemaVersion')}
+          value={String(view.evidence.digest.schemaVersion)}
+          machine
+        />
+        <Fact label={t('evidence.digestAlgorithm')} value={view.evidence.digest.algorithm} machine />
+        <Fact label={t('evidence.digestMediaType')} value={view.evidence.digest.mediaType} machine />
+        <Fact
+          label={t('evidence.digestByteLength')}
+          value={String(view.evidence.digest.byteLength)}
+          machine
+        />
+        <Fact label={t('evidence.digestCanonicalization')} value={view.evidence.digest.canonicalization} machine />
+        <Fact label={t('evidence.classification')} value={view.evidence.classification} machine />
+        <Fact label={t('evidence.linkPurpose')} value={view.link.purpose} machine />
+        <Fact label={t('evidence.eligibility')} value={view.link.eligibilityDecision} machine />
+        <Fact label={t('evidence.eligibilityArtifact')} value={view.link.eligibilityDecisionArtifactId} machine />
+        <Fact label={t('evidence.protectionPolicy')} value={view.protection.policyId} machine />
+        <Fact label={t('evidence.protectionStatus')} value={view.protection.status} machine />
+        <Fact label={t('evidence.retention')} value={view.retention.status} machine />
+        <Fact label={t('evidence.egressPolicy')} value={view.egress.policyId} machine />
+        <Fact label={t('evidence.egressStatus')} value={view.egress.status} machine />
+        <Fact label={t('evidence.requestPurpose')} value={view.purpose} machine />
+        <Fact label={t('evidence.profile')} value={view.viewProfileId} machine />
+        <Fact label={t('evidence.content')} value={view.content.kind} machine />
+        <Fact label={t('evidence.redactionReason')} value={view.content.reason} machine />
+      </dl>
     </section>
   )
 }
