@@ -6,7 +6,11 @@ import {
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import { SlotRegistry } from '../../deepseek-harness-master/packages/client/runtime/lib/types/client/slots.js'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { AssessmentId, AssessmentSnapshotV1 } from '../src/contracts.ts'
+import type {
+  AssessmentId,
+  AssessmentListItemV1,
+  AssessmentSnapshotV1,
+} from '../src/contracts.ts'
 import {
   apply as applyWorkbenchClient,
   inject as workbenchClientInject,
@@ -73,7 +77,185 @@ function snapshotAt(
   }
 }
 
+function assessmentListItem(id: AssessmentId, ordinal: number): AssessmentListItemV1 {
+  return {
+    schemaVersion: 1,
+    assessmentId: id,
+    assessmentRevision: ordinal,
+    state: 'SEALED',
+    repository: {
+      repositoryId: `repo-00000000-0000-0000-0000-${String(ordinal).padStart(12, '0')}`,
+      repositoryRevision: 1,
+    } as AssessmentListItemV1['repository'],
+    subjectKind: 'workspace_snapshot',
+    policyId: 'security/standard',
+    coverageStatus: 'COMPLETE',
+    verdict: 'SATISFIED',
+    createdAt: `2026-08-24T00:0${ordinal}:00.000Z`,
+    updatedAt: `2026-08-24T00:0${ordinal}:30.000Z`,
+  }
+}
+
 describe('Security Assurance Workbench Client', () => {
+  it('appends the next authority-bound Assessment page and stops at its stable end', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const firstId = assessmentId('asm-00000000-0000-0000-0000-000000000021')
+    const secondId = assessmentId('asm-00000000-0000-0000-0000-000000000022')
+    const listPayloads: unknown[] = []
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+    ): Promise<unknown> {
+      if (endpoint !== 'securityAssuranceWorkbench/listAssessments') {
+        throw new Error(`Unexpected endpoint: ${endpoint}`)
+      }
+      listPayloads.push(payload)
+      const firstPage = listPayloads.length === 1
+      return Promise.resolve({
+        ok: true,
+        value: {
+          ok: true,
+          value: {
+            schemaVersion: 1,
+            consistencyWatermark: 'watermark.signature',
+            assessments: [assessmentListItem(firstPage ? firstId : secondId, firstPage ? 1 : 2)],
+            nextCursor: firstPage ? 'cursor.signature' : null,
+          },
+        },
+      })
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+
+    await controller.openAssessmentSelection({
+      securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-pagination'),
+    })
+    await expect(controller.loadMoreAssessments()).resolves.toMatchObject({
+      kind: 'SELECTION_READY',
+      consistencyWatermark: 'watermark.signature',
+      assessments: [{ assessmentId: firstId }, { assessmentId: secondId }],
+      nextCursor: null,
+    })
+    expect(listPayloads[1]).toMatchObject({
+      args: {
+        request: { schemaVersion: 1, limit: 50, cursor: 'cursor.signature' },
+      },
+    })
+
+    await controller.loadMoreAssessments()
+    expect(listPayloads).toHaveLength(2)
+  })
+
+  it('fails closed when a continuation page leaves the first-page consistency window', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const firstId = assessmentId('asm-00000000-0000-0000-0000-000000000031')
+    const secondId = assessmentId('asm-00000000-0000-0000-0000-000000000032')
+    let page = 0
+    ctx.provide('connection', { rpc: { call(): Promise<unknown> {
+      page += 1
+      return Promise.resolve({
+        ok: true,
+        value: {
+          ok: true,
+          value: {
+            schemaVersion: 1,
+            consistencyWatermark: page === 1 ? 'first.signature' : 'different.signature',
+            assessments: [assessmentListItem(page === 1 ? firstId : secondId, page)],
+            nextCursor: page === 1 ? 'cursor.signature' : null,
+          },
+        },
+      })
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+    const authorityId = authorityContextId('workbench-session-protocol-fence')
+
+    await controller.openAssessmentSelection({
+      securityAssuranceWorkbenchContextId: authorityId,
+    })
+    await expect(controller.loadMoreAssessments()).resolves.toMatchObject({
+      kind: 'FAILED',
+      assessmentId: null,
+      failure: { source: 'CLIENT', code: 'SELECTION_PROTOCOL_VIOLATION' },
+    })
+    expect(controller.getState()).not.toHaveProperty('assessments')
+    expect(JSON.stringify(controller.getState())).not.toContain(authorityId)
+  })
+
+  it('admits only one continuation request for the current Assessment cursor', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const firstId = assessmentId('asm-00000000-0000-0000-0000-000000000041')
+    const secondId = assessmentId('asm-00000000-0000-0000-0000-000000000042')
+    let calls = 0
+    let resolveContinuation: ((value: unknown) => void) | undefined
+    ctx.provide('connection', { rpc: { call(): Promise<unknown> {
+      calls += 1
+      if (calls === 1) {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              consistencyWatermark: 'stable.signature',
+              assessments: [assessmentListItem(firstId, 1)],
+              nextCursor: 'cursor.signature',
+            },
+          },
+        })
+      }
+      return new Promise(resolve => { resolveContinuation = resolve })
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+
+    await controller.openAssessmentSelection({
+      securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-pagination-fence'),
+    })
+    const continuation = controller.loadMoreAssessments()
+    expect(controller.getState()).toMatchObject({
+      kind: 'SELECTION_LOADING_MORE',
+      assessments: [{ assessmentId: firstId }],
+    })
+    await expect(controller.loadMoreAssessments()).resolves.toMatchObject({
+      kind: 'SELECTION_LOADING_MORE',
+    })
+    expect(calls).toBe(2)
+
+    resolveContinuation?.({
+      ok: true,
+      value: {
+        ok: true,
+        value: {
+          schemaVersion: 1,
+          consistencyWatermark: 'stable.signature',
+          assessments: [assessmentListItem(secondId, 2)],
+          nextCursor: null,
+        },
+      },
+    })
+    await expect(continuation).resolves.toMatchObject({
+      kind: 'SELECTION_READY',
+      assessments: [{ assessmentId: firstId }, { assessmentId: secondId }],
+    })
+  })
+
   it('opens an authenticated selection session and selects only a listed Assessment', async () => {
     const ctx = new Context()
     contexts.push(ctx)

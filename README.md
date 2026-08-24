@@ -182,11 +182,12 @@ This repository is under active vertical-slice development, not at the
 
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
-model tools, Risk Decision forms, selector pagination beyond the newest bounded
-page, and the complete Workbench information architecture are deliberately not
-claimed as implemented yet. The Workbench Host Remote, authenticated redacted
-Assessment selection, generated Client contract, transient browser Controller,
-and read-only Assessment Detail visual foundation are implemented. This
+model tools, Risk Decision forms, Finding navigation in the Workbench, and the
+complete Workbench information architecture are deliberately not claimed as
+implemented yet. The Workbench Host Remote, authenticated redacted Assessment
+selection with stable cursor continuation, generated Client contract, transient
+browser Controller, and read-only Assessment Detail visual foundation are
+implemented. This
 repository ships no production external Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -373,14 +374,17 @@ or the root plugin.
 
 The package also publishes a Harness-discoverable `./client` entry. It mounts
 `./remote` through `ctx.remote.$mount()` and provides the browser-local
-`ctx.securityAssuranceWorkbench` Controller with six public operations:
-`openAssessmentSelection`, `selectAssessment`, `openAssessment`,
-`closeAssessment`, `getState`, and `subscribe`. The Host passes its current
-opaque authority-context ID to `openAssessmentSelection`; the browser receives
-only the newest bounded page of redacted, authority-visible identities and can
-open only an ID from that page. No credential, Principal, permission set, or
-Security Invocation is accepted by the selector. `openAssessment` remains the
-direct Host seam when the Assessment ID is already known. Either open path
+`ctx.securityAssuranceWorkbench` Controller with seven public operations:
+`openAssessmentSelection`, `loadMoreAssessments`, `selectAssessment`,
+`openAssessment`, `closeAssessment`, `getState`, and `subscribe`. The Host
+passes its current opaque authority-context ID to `openAssessmentSelection`;
+the browser receives a bounded page of redacted, authority-visible identities
+and can append continuation pages from the same signed consistency window.
+Only one continuation is admitted at a time, and a changed watermark fails
+closed without retaining the accumulated identities. The browser can open only
+an ID from the currently loaded window. No credential, Principal, permission
+set, or Security Invocation is accepted by the selector. `openAssessment`
+remains the direct Host seam when the Assessment ID is already known. Either open path
 loads the current immutable Snapshot and internally follows
 `waitForAssessmentRevision`; `CHANGED` fetches the next Snapshot, `TIMED_OUT`
 continues from the same committed revision, and close or Client disposal aborts
@@ -398,9 +402,9 @@ The Client entry also registers two additive Harness UI contributions. A
 launcher in `sidebar.footer.action` opens a frame-wide dialog in
 `shell.overlay`; neither replaces a single-owner Host shell slot. The overlay
 subscribes to the Controller through the Slot renderer's observable seam and
-renders `CLOSED`, `SELECTION_LOADING`, `SELECTION_READY`, `LOADING`, `READY`,
-and `FAILED` without duplicating Remote,
-polling, authorization, or revision logic. `READY` shows canonical machine IDs
+renders `CLOSED`, `SELECTION_LOADING`, `SELECTION_READY`,
+`SELECTION_LOADING_MORE`, `LOADING`, `READY`, and `FAILED` without duplicating
+Remote, polling, authorization, or revision logic. `READY` shows canonical machine IDs
 unchanged together with revision, state, Verdict, repository and policy
 bindings, mandatory Coverage, and the Service Snapshot's `availableActions`.
 Those actions are informational in this slice—there are no browser mutation

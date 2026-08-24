@@ -239,6 +239,7 @@ if (
   || workbenchClient.inject[1] !== 'slots'
   || workbenchClient.inject[2] !== 'locale'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController !== 'function'
+  || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.loadMoreAssessments !== 'function'
 ) {
   throw new Error('packed Workbench Client entry is incomplete')
 }

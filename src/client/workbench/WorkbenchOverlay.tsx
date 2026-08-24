@@ -25,6 +25,7 @@ export type WorkbenchOverlaySources = {
 export interface WorkbenchOverlayInjected {
   readonly hooks: WorkbenchOverlaySources
   readonly closeWorkbench: () => void
+  readonly loadMoreAssessments: () => void
   readonly selectAssessment: (assessmentId: AssessmentId) => void
 }
 
@@ -40,6 +41,7 @@ export function WorkbenchOverlay({
   usePresentation,
   useAssessment,
   closeWorkbench,
+  loadMoreAssessments,
   selectAssessment,
 }: WorkbenchOverlayProps) {
   const open = usePresentation(snapshot => snapshot.open)
@@ -106,9 +108,12 @@ export function WorkbenchOverlay({
           {state.kind === 'SELECTION_LOADING' && (
             <MessageState title={t('selection.loadingTitle')} body={t('selection.loadingBody')} role="status" />
           )}
-          {state.kind === 'SELECTION_READY' && (
+          {(state.kind === 'SELECTION_READY' || state.kind === 'SELECTION_LOADING_MORE') && (
             <AssessmentSelection
               assessments={state.assessments}
+              hasMore={state.nextCursor !== null}
+              loadingMore={state.kind === 'SELECTION_LOADING_MORE'}
+              loadMoreAssessments={loadMoreAssessments}
               selectAssessment={selectAssessment}
               t={t}
             />
@@ -136,8 +141,18 @@ export function WorkbenchOverlay({
   )
 }
 
-function AssessmentSelection({ assessments, selectAssessment, t }: {
+function AssessmentSelection({
+  assessments,
+  hasMore,
+  loadingMore,
+  loadMoreAssessments,
+  selectAssessment,
+  t,
+}: {
   readonly assessments: readonly AssessmentListItemV1[]
+  readonly hasMore: boolean
+  readonly loadingMore: boolean
+  readonly loadMoreAssessments: () => void
   readonly selectAssessment: (assessmentId: AssessmentId) => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
@@ -156,6 +171,7 @@ function AssessmentSelection({ assessments, selectAssessment, t }: {
                   <button
                     type="button"
                     aria-label={`${t('selection.open')} ${item.assessmentId}`}
+                    disabled={loadingMore}
                     onClick={() => { selectAssessment(item.assessmentId) }}
                   >
                     <span className="dsh-security-selection__identity">
@@ -171,6 +187,17 @@ function AssessmentSelection({ assessments, selectAssessment, t }: {
               ))}
             </ul>
           )}
+      {hasMore && (
+        <button
+          type="button"
+          className="dsh-security-selection__load-more"
+          aria-label={loadingMore ? t('selection.loadingMore') : t('selection.loadMore')}
+          disabled={loadingMore}
+          onClick={loadMoreAssessments}
+        >
+          {loadingMore ? t('selection.loadingMore') : t('selection.loadMore')}
+        </button>
+      )}
     </section>
   )
 }

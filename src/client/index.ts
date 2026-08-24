@@ -88,6 +88,12 @@ export type SecurityAssuranceWorkbenchStateV1 =
     readonly assessments: readonly AssessmentListItemV1[]
     readonly nextCursor: string | null
   }
+  | {
+    readonly kind: 'SELECTION_LOADING_MORE'
+    readonly consistencyWatermark: string
+    readonly assessments: readonly AssessmentListItemV1[]
+    readonly nextCursor: string
+  }
   | { readonly kind: 'LOADING'; readonly assessmentId: AssessmentId }
   | {
     readonly kind: 'READY'
@@ -165,6 +171,49 @@ export class SecurityAssuranceWorkbenchController extends Service {
     const page = this.readRemoteResult(session, result)
     if (page === undefined) return this.state
     return this.publishSelection(page)
+  }
+
+  /** Append the next page from the current authority-bound consistency window. */
+  async loadMoreAssessments(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'SELECTION_READY'
+      || current.nextCursor === null
+    ) return current
+    this.publish(Object.freeze({
+      kind: 'SELECTION_LOADING_MORE',
+      consistencyWatermark: current.consistencyWatermark,
+      assessments: current.assessments,
+      nextCursor: current.nextCursor,
+    }))
+
+    let result: RemoteResult<SecurityResult<AssessmentListPageV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.listAssessments(
+        session.contextId,
+        { schemaVersion: 1, limit: 50, cursor: current.nextCursor },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (!this.isActive(session)) return this.state
+    const page = this.readRemoteResult(session, result)
+    if (page === undefined) return this.state
+    if (page.consistencyWatermark !== current.consistencyWatermark) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'SELECTION_PROTOCOL_VIOLATION',
+        message: 'The Assessment continuation left its first-page consistency window.',
+        retryable: false,
+      })
+    }
+    return this.publishSelection({
+      ...page,
+      assessments: [...current.assessments, ...page.assessments],
+    })
   }
 
   /** Select one identity from the current authority-projected page. */
@@ -502,6 +551,7 @@ function installWorkbenchUi(
       inject: (): WorkbenchOverlayInjected => ({
         hooks: { presentation, assessment },
         closeWorkbench: () => { presentation.hide() },
+        loadMoreAssessments: () => { void controller.loadMoreAssessments() },
         selectAssessment: assessmentId => { void controller.selectAssessment(assessmentId) },
       }),
     }, WorkbenchOverlay))

@@ -10,7 +10,11 @@ import {
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import type { AssessmentId, AssessmentSnapshotV1 } from '../src/contracts.ts'
+import type {
+  AssessmentId,
+  AssessmentListItemV1,
+  AssessmentSnapshotV1,
+} from '../src/contracts.ts'
 import {
   apply as applyWorkbenchClient,
   inject as workbenchClientInject,
@@ -106,7 +110,97 @@ function readySnapshot(id: AssessmentId): AssessmentSnapshotV1 {
   }
 }
 
+function selectionItem(id: AssessmentId, ordinal: number): AssessmentListItemV1 {
+  return {
+    schemaVersion: 1,
+    assessmentId: id,
+    assessmentRevision: ordinal,
+    state: 'SEALED',
+    repository: {
+      repositoryId: `repo-00000000-0000-0000-0000-${String(ordinal).padStart(12, '0')}`,
+      repositoryRevision: 1,
+    } as AssessmentListItemV1['repository'],
+    subjectKind: 'workspace_snapshot',
+    policyId: 'security/standard',
+    coverageStatus: 'COMPLETE',
+    verdict: 'SATISFIED',
+    createdAt: `2026-08-24T00:0${ordinal}:00.000Z`,
+    updatedAt: `2026-08-24T00:0${ordinal}:30.000Z`,
+  }
+}
+
 describe('Security Assurance Workbench UI', () => {
+  it('loads the next Assessment page once without rendering authority or cursor material', async () => {
+    const firstId = assessmentId('asm-00000000-0000-0000-0000-000000000051')
+    const secondId = assessmentId('asm-00000000-0000-0000-0000-000000000052')
+    let calls = 0
+    let resolveContinuation: ((value: unknown) => void) | undefined
+    const b = await bench((_path, endpoint) => {
+      if (endpoint !== 'securityAssuranceWorkbench/listAssessments') {
+        return Promise.reject(new Error(`Unexpected endpoint: ${endpoint}`))
+      }
+      calls += 1
+      if (calls === 1) {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              consistencyWatermark: 'stable.signature',
+              assessments: [selectionItem(firstId, 1)],
+              nextCursor: 'cursor.signature',
+            },
+          },
+        })
+      }
+      return new Promise(resolve => { resolveContinuation = resolve })
+    })
+    const launcher = b.runtime.renderSlot('sidebar.footer.action', { wide: true })
+    const overlay = b.runtime.renderSlot('shell.overlay', {})
+    const authorityId = authorityContextId('workbench-session-pagination-ui')
+    await act(async () => {
+      await b.controller.openAssessmentSelection({
+        securityAssuranceWorkbenchContextId: authorityId,
+      })
+      fireEvent.click(launcher.view.getByRole('button', { name: '打开安全保障工作台' }))
+    })
+
+    expect(overlay.view.getByText(firstId)).toBeTruthy()
+    const loadMore = overlay.view.getByRole('button', { name: '加载更多 Assessment' })
+    await act(async () => { fireEvent.click(loadMore) })
+    expect(overlay.view.getByRole<HTMLButtonElement>(
+      'button',
+      { name: '正在加载更多 Assessment' },
+    ).disabled).toBe(true)
+    expect(calls).toBe(2)
+
+    await act(async () => {
+      resolveContinuation?.({
+        ok: true,
+        value: {
+          ok: true,
+          value: {
+            schemaVersion: 1,
+            consistencyWatermark: 'stable.signature',
+            assessments: [selectionItem(secondId, 2)],
+            nextCursor: null,
+          },
+        },
+      })
+      await Promise.resolve()
+    })
+    expect(overlay.view.getByText(firstId)).toBeTruthy()
+    expect(overlay.view.getByText(secondId)).toBeTruthy()
+    expect(overlay.view.queryByRole('button', { name: '加载更多 Assessment' })).toBeNull()
+    expect(overlay.view.queryByText('cursor.signature')).toBeNull()
+    expect(overlay.view.queryByText(authorityId)).toBeNull()
+
+    await b.feature.dispose()
+    await b.gateway.dispose()
+    await b.runtime.dispose()
+  })
+
   it('renders an authority-scoped Assessment selector without credential inputs', async () => {
     const id = assessmentId('asm-00000000-0000-0000-0000-000000000011')
     const snapshot = readySnapshot(id)
