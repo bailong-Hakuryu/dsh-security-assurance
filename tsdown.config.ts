@@ -3,6 +3,17 @@ import { typertPlugin } from '@deepseek-ai/dsh-typert-generator/tsdown'
 
 const decorators = typertPlugin({ faces: ['host'] })
 
+const clientExternals = new Set([
+  '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-runtime/client',
+  '@deepseek-ai/dsh-client-ui-primitives',
+  '@deepseek-ai/dsh-client-ui-slots',
+  'react',
+  'react/jsx-runtime',
+  'react-dom',
+  'react-dom/client',
+])
+
 /** Bundle implemented public entries from declaration-build JavaScript. */
 export default defineConfig([
   {
@@ -78,8 +89,8 @@ export default defineConfig([
     sourcemap: true,
     clean: false,
     deps: {
-      neverBundle: (specifier: string) => specifier === '@deepseek-ai/cordis',
-      alwaysBundle: (specifier: string) => specifier !== '@deepseek-ai/cordis',
+      neverBundle: (specifier: string) => clientExternals.has(specifier),
+      alwaysBundle: (specifier: string) => !clientExternals.has(specifier),
     },
     outputOptions: {
       entryFileNames: 'client.js',

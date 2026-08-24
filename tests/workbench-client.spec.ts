@@ -4,6 +4,7 @@ import {
   inject as clientRemoteInject,
 } from '../../deepseek-harness-master/packages/api/gateway/lib/types/client/index.js'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
+import { SlotRegistry } from '../../deepseek-harness-master/packages/client/runtime/lib/types/client/slots.js'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { AssessmentId, AssessmentSnapshotV1 } from '../src/contracts.ts'
 import {
@@ -25,6 +26,11 @@ function assessmentId(value: string): AssessmentId {
 
 function authorityContextId(value: string): WorkbenchAuthorityContextId {
   return value as WorkbenchAuthorityContextId
+}
+
+async function installClientUiFoundation(ctx: Context): Promise<void> {
+  await ctx.plugin(SlotRegistry)
+  ctx.provide('locale', { register: () => () => {} } as never)
 }
 
 function snapshotAt(
@@ -72,6 +78,7 @@ describe('Security Assurance Workbench Client', () => {
     const ctx = new Context()
     contexts.push(ctx)
     await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
 
     const id = assessmentId('asm-00000000-0000-0000-0000-000000000001')
     const first = snapshotAt(id, 1, 'RUNNING')
@@ -166,6 +173,7 @@ describe('Security Assurance Workbench Client', () => {
     const ctx = new Context()
     contexts.push(ctx)
     await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
 
     const id = assessmentId('asm-00000000-0000-0000-0000-000000000002')
     const authorityId = authorityContextId('workbench-session-expiring')

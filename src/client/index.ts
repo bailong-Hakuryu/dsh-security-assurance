@@ -3,6 +3,11 @@
  * strict Remote contribution and owns one transient Assessment view session.
  */
 import { Service, type Context } from '@deepseek-ai/cordis'
+import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
+import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {
   RemoteFailure,
   RemoteResult,
@@ -17,6 +22,22 @@ import type {
   SecurityResult,
 } from '../contracts.ts'
 import type { WorkbenchAuthorityContextId } from 'dsh-security-assurance/workbench-remote'
+import {
+  en,
+  WORKBENCH_LOCALE_NAMESPACE,
+  zh,
+  type WorkbenchKey,
+} from './workbench/locales.ts'
+import { WorkbenchPresentation } from './workbench/presentation.ts'
+import { installWorkbenchStyles } from './workbench/styles.ts'
+import {
+  WorkbenchLauncher,
+  type WorkbenchLauncherInjected,
+} from './workbench/WorkbenchLauncher.tsx'
+import {
+  WorkbenchOverlay,
+  type WorkbenchOverlayInjected,
+} from './workbench/WorkbenchOverlay.tsx'
 
 export type { WorkbenchAuthorityContextId } from 'dsh-security-assurance/workbench-remote'
 
@@ -26,6 +47,13 @@ declare module '@deepseek-ai/cordis' {
     remote: TypertClientRemote
     /** One transient, authority-bound Security Assessment Workbench session. */
     securityAssuranceWorkbench: SecurityAssuranceWorkbenchController
+  }
+}
+
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface LocaleNamespaceMap {
+    /** Security Assurance Workbench presentation copy. */
+    'security-assurance-workbench': WorkbenchKey
   }
 }
 
@@ -316,22 +344,80 @@ function securityFailure(error: PublicSecurityError): WorkbenchClientFailureV1 {
   })
 }
 
-/** Required Client service: the generated Remote mount. */
-export const inject = ['remote']
+/** Required Client services: Remote transport plus the Host-owned UI assembly seams. */
+export const inject = ['remote', 'slots', 'locale']
 
 /** Mount the strict contribution and install the transient Workbench Controller. */
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const unmount = await ctx.remote.$mount(workbenchRemote)
   const controller = ctx.plugin(SecurityAssuranceWorkbenchController)
+  let uninstallUi: (() => void) | undefined
   try {
     await controller
+    uninstallUi = installWorkbenchUi(
+      ctx as ClientContext,
+      ctx.get('securityAssuranceWorkbench') as SecurityAssuranceWorkbenchController,
+    )
   } catch (error) {
+    uninstallUi?.()
     await controller.dispose()
     await unmount()
     throw error
   }
   return async () => {
+    uninstallUi?.()
     await controller.dispose()
     await unmount()
+  }
+}
+
+/** Register the additive launcher/overlay pair around one presentation machine. */
+function installWorkbenchUi(
+  ctx: ClientContext,
+  controller: SecurityAssuranceWorkbenchController,
+): () => void {
+  const presentation = new WorkbenchPresentation(controller)
+  const assessment: HostObservable<SecurityAssuranceWorkbenchStateV1> = {
+    getSnapshot: () => controller.getState(),
+    subscribe: listener => controller.subscribe(() => { listener() }),
+  }
+  const removeStyles = installWorkbenchStyles()
+  const removeDictionary = ctx.locale.register(WORKBENCH_LOCALE_NAMESPACE, { zh, en })
+
+  let removeLauncher: (() => void) | undefined
+  let removeOverlay: (() => void) | undefined
+  try {
+    removeLauncher = ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
+      name: 'sidebar.footer.action',
+      id: 'security-assurance-workbench-launcher',
+      locale: WORKBENCH_LOCALE_NAMESPACE,
+      inject: (): WorkbenchLauncherInjected => ({
+        showWorkbench: returnFocus => { presentation.show(returnFocus) },
+      }),
+    }, WorkbenchLauncher))
+    removeOverlay = ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+      name: 'shell.overlay',
+      id: 'security-assurance-workbench-overlay',
+      locale: WORKBENCH_LOCALE_NAMESPACE,
+      inject: (): WorkbenchOverlayInjected => ({
+        hooks: { presentation, assessment },
+        closeWorkbench: () => { presentation.hide() },
+      }),
+    }, WorkbenchOverlay))
+  } catch (error) {
+    removeOverlay?.()
+    removeLauncher?.()
+    removeDictionary()
+    removeStyles()
+    presentation.dispose()
+    throw error
+  }
+
+  return () => {
+    removeOverlay?.()
+    removeLauncher?.()
+    removeDictionary()
+    removeStyles()
+    presentation.dispose()
   }
 }

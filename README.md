@@ -37,7 +37,11 @@ This repository is under active vertical-slice development, not at the
   generated Remote contribution and provides one transient
   `ctx.securityAssuranceWorkbench` Controller. It fetches immutable Snapshots,
   follows committed revisions through cancellable long-polling, fences stale
-  responses, and erases its authority context and Assessment payload on close;
+  responses, and erases its authority context and Assessment payload on close.
+  The same entry contributes an additive bilingual launcher at
+  `sidebar.footer.action` and a responsive read-only Assessment surface at
+  `shell.overlay`; the browser renders Service-projected state, Coverage,
+  Verdict, and available actions but exposes no Risk Decision mutation;
 - exact Git revision, Change, and Workspace Snapshot Subject selectors;
 - bounded content-addressed Subject materialization below
   `$DSH_HOME/security-assurance/subjects`, with canonical manifests and no
@@ -176,10 +180,11 @@ This repository is under active vertical-slice development, not at the
 
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
-model tools, and the browser-rendered Workbench UI are deliberately not claimed
-as implemented yet. The Workbench Host Remote, generated Client contract, and
-headless browser Controller are implemented, but no visual browser surface is
-shipped in this slice. This
+model tools, authenticated browser-side Assessment selection, Risk Decision
+forms, and the complete Workbench information architecture are deliberately not
+claimed as implemented yet. The Workbench Host Remote, generated Client
+contract, transient browser Controller, and read-only Assessment Detail visual
+foundation are implemented. This
 repository ships no production external Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -324,7 +329,7 @@ only its Cordis Service; durable Repository Registry history remains owned by
 the root Security Service, so an equal restart resolves the same Repository ID.
 Conflicting replay fails loudly instead of updating Host policy implicitly.
 
-## Workbench Remote foundation
+## Workbench Remote and read-only UI foundation
 
 The optional `dsh-security-assurance/workbench-remote` entry is a Host Adapter,
 not an authentication provider and not a second business Service. It injects
@@ -380,6 +385,24 @@ contains no `localStorage`, `sessionStorage`, IndexedDB, Service Worker cache,
 URL, or logging persistence for it, Findings, Evidence, rationale, or full
 Snapshots. Remote or Security failures fail closed to a payload-free `FAILED`
 state; reopening re-fetches Service truth by opaque Assessment ID.
+
+The Client entry also registers two additive Harness UI contributions. A
+launcher in `sidebar.footer.action` opens a frame-wide dialog in
+`shell.overlay`; neither replaces a single-owner Host shell slot. The overlay
+subscribes to the Controller through the Slot renderer's observable seam and
+renders `CLOSED`, `LOADING`, `READY`, and `FAILED` without duplicating Remote,
+polling, authorization, or revision logic. `READY` shows canonical machine IDs
+unchanged together with revision, state, Verdict, repository and policy
+bindings, mandatory Coverage, and the Service Snapshot's `availableActions`.
+Those actions are informational in this slice—there are no browser mutation
+controls.
+
+The surface ships complete English and Simplified Chinese copy, semantic dialog
+and status roles, keyboard dismissal and focus return, responsive layout, and
+text-bearing state indicators. It loads no third-party scripts, fonts, remote
+content, trackers, or analytics. Opening an Assessment still belongs to an
+authenticated Host integration calling `openAssessment`; the launcher does not
+accept, infer, persist, or mint an authority context.
 
 ## Optional Control Plane integration
 

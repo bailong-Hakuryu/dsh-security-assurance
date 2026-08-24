@@ -61,8 +61,8 @@
     "lib/typert.remote-client.d.ts",
     "lib/client.js",
     "lib/client.js.map",
-    "lib/types/client/index.d.ts",
-    "lib/types/client/index.d.ts.map",
+    "lib/types/client/**/*.d.ts",
+    "lib/types/client/**/*.d.ts.map",
     "lib/types/index.d.ts",
     "lib/types/index.d.ts.map",
     "lib/types/contracts.d.ts",
@@ -90,7 +90,11 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-api-gateway"
+        "@deepseek-ai/dsh-api-gateway",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
       ],
       "platform": "web",
       "immediately": true
@@ -107,9 +111,16 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-api-gateway": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-locale": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-layout": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-home-paths": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-typert-protocol": "^0.1.1-rc.2",
-    "dsh-engineering-control-plane": "^0.1.0"
+    "dsh-engineering-control-plane": "^0.1.0",
+    "react": "^18.2.0"
   },
   "peerDependenciesMeta": {
     "dsh-engineering-control-plane": {
@@ -124,15 +135,29 @@
     "@deepseek-ai/dsh-home-paths": "link:../deepseek-harness-master/packages/util/home-paths",
     "@deepseek-ai/dsh-agent": "link:../deepseek-harness-master/packages/core/agent",
     "@deepseek-ai/dsh-api-gateway": "link:../deepseek-harness-master/packages/api/gateway",
+    "@deepseek-ai/dsh-client-locale": "link:../deepseek-harness-master/packages/client/locale",
+    "@deepseek-ai/dsh-client-runtime": "link:../deepseek-harness-master/packages/client/runtime",
+    "@deepseek-ai/dsh-client-test-runtime": "link:../deepseek-harness-master/packages/test-support/client-runtime",
+    "@deepseek-ai/dsh-client-ui-layout": "link:../deepseek-harness-master/packages/client/ui-layout",
+    "@deepseek-ai/dsh-client-ui-primitives": "link:../deepseek-harness-master/packages/client/ui-primitives",
+    "@deepseek-ai/dsh-client-ui-renderer": "link:../deepseek-harness-master/packages/client/ui-renderer",
+    "@deepseek-ai/dsh-client-ui-sidebar": "link:../deepseek-harness-master/packages/client/ui-sidebar",
+    "@deepseek-ai/dsh-client-ui-slots": "link:../deepseek-harness-master/packages/client/ui-slots",
     "@deepseek-ai/dsh-subagent": "link:../deepseek-harness-master/packages/subagent/subagent",
     "@deepseek-ai/dsh-subprocess-local": "link:../deepseek-harness-master/packages/subprocess/subprocess-local",
     "@deepseek-ai/dsh-typert-generator": "link:../deepseek-harness-master/packages/typert/generator",
     "@deepseek-ai/dsh-typert-protocol": "link:../deepseek-harness-master/packages/typert/protocol",
     "@deepseek-ai/dsh-typert-registry": "link:../deepseek-harness-master/packages/typert/registry",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^22.20.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
+    "dsh-engineering-control-plane": "link:../DSH Engineering Control Plane",
+    "jsdom": "29.1.1",
+    "react": "link:../deepseek-harness-master/packages/test-support/client-runtime/node_modules/react",
+    "react-dom": "link:../deepseek-harness-master/packages/test-support/client-runtime/node_modules/react-dom",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8",
-    "dsh-engineering-control-plane": "link:../DSH Engineering Control Plane"
+    "vitest": "^4.1.8"
   }
 }

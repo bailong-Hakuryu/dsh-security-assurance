@@ -101,6 +101,12 @@ try {
       '@deepseek-ai/cordis': '4.0.1',
       '@deepseek-ai/dsh-agent': '0.1.1-rc.2',
       '@deepseek-ai/dsh-api-gateway': '0.1.1-rc.2',
+      '@deepseek-ai/dsh-client-locale': '0.1.1-rc.2',
+      '@deepseek-ai/dsh-client-runtime': '0.1.1-rc.2',
+      '@deepseek-ai/dsh-client-ui-layout': '0.1.1-rc.2',
+      '@deepseek-ai/dsh-client-ui-primitives': '0.1.1-rc.2',
+      '@deepseek-ai/dsh-client-ui-sidebar': '0.1.1-rc.2',
+      '@deepseek-ai/dsh-client-ui-slots': '0.1.1-rc.2',
       '@deepseek-ai/dsh-attachment': '0.1.1-rc.2',
       '@deepseek-ai/dsh-brand': '0.1.1-rc.2',
       '@deepseek-ai/dsh-code-runtime': '0.1.1-rc.2',
@@ -120,6 +126,8 @@ try {
       '@deepseek-ai/dsh-user-approval': '0.1.1-rc.2',
       '@deepseek-ai/schemastery': '3.18.1',
       'dsh-security-assurance': pathToFileURL(tarball).href,
+      'react': '^18.2.0',
+      'react-dom': '^18.2.0',
     },
   }, null, 2)}\n`, 'utf8')
 
@@ -194,6 +202,12 @@ if (
   throw new Error('packed Workbench Remote Typert artifacts are incomplete or non-strict')
 }
 const cordisClientRuntime = await import('@deepseek-ai/cordis')
+const reactClientRuntime = await import('react')
+const reactJsxRuntime = await import('react/jsx-runtime')
+const primitiveClientRuntime = {
+  IconCloseOutline16() { return null },
+  IconDataOutline16() { return null },
+}
 let clientRegistration
 globalThis.window = {
   __ModuleLoader__: {
@@ -207,12 +221,17 @@ if (clientRegistration?.id !== 'dsh-security-assurance') {
 }
 const workbenchClient = clientRegistration.factory(specifier => {
   if (specifier === '@deepseek-ai/cordis') return cordisClientRuntime
+  if (specifier === 'react') return reactClientRuntime
+  if (specifier === 'react/jsx-runtime') return reactJsxRuntime
+  if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return primitiveClientRuntime
   throw new Error('packed Workbench Client requested an undeclared external: ' + specifier)
 })
 if (
   typeof workbenchClient.apply !== 'function'
-  || workbenchClient.inject?.length !== 1
+  || workbenchClient.inject?.length !== 3
   || workbenchClient.inject[0] !== 'remote'
+  || workbenchClient.inject[1] !== 'slots'
+  || workbenchClient.inject[2] !== 'locale'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController !== 'function'
 ) {
   throw new Error('packed Workbench Client entry is incomplete')
