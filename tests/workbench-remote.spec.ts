@@ -11,6 +11,8 @@ import SecurityAssuranceService, {
   RISK_DECISION_WINDOW_CONTROL_ID,
   type AssessmentId,
   type AssessmentSnapshotV1,
+  type FindingDetailViewV1,
+  type FindingListPageV1,
   type SecurityResult,
 } from '../src/index.ts'
 import SecurityAssuranceWorkbenchRemote, {
@@ -150,6 +152,88 @@ describe('Security Assurance Workbench Remote', () => {
       },
     })
     expect(resolvedContextIds).toEqual([authorityId])
+  })
+
+  it('lists redacted Finding summaries through freshly resolved Host authority', async () => {
+    const { ctx, assessmentId, resolvedContextIds } = await harness()
+    const authorityId = authorityContextId('workbench-session-reviewer')
+
+    const listed = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'listFindings',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1, assessmentId, limit: 50 },
+      },
+    }) as SecurityResult<FindingListPageV1>
+
+    expect(listed).toMatchObject({
+      ok: true,
+      value: {
+        assessmentId,
+        findings: [{
+          recordKind: 'FINDING',
+          validationState: 'VALIDATED',
+          technicalSeverity: 'MEDIUM',
+          policySignificance: 'BLOCKING',
+          hasProtectedDetail: true,
+        }],
+        nextCursor: null,
+      },
+    })
+    expect(JSON.stringify(listed)).not.toContain('sourceAnchor')
+    expect(JSON.stringify(listed)).not.toContain('evidenceLinks')
+    expect(resolvedContextIds).toEqual([authorityId])
+  })
+
+  it('reads one exact revision-bound Finding Detail without Evidence payload', async () => {
+    const { ctx, assessmentId, resolvedContextIds } = await harness()
+    const authorityId = authorityContextId('workbench-session-reviewer')
+    const listed = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'listFindings',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1, assessmentId, limit: 50 },
+      },
+    }) as SecurityResult<FindingListPageV1>
+    if (!listed.ok || listed.value.findings[0] === undefined) {
+      throw new Error('Workbench fixture did not project a Finding')
+    }
+    const summary = listed.value.findings[0]
+
+    const detail = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getFinding',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        },
+      },
+    }) as SecurityResult<FindingDetailViewV1>
+
+    expect(detail).toMatchObject({
+      ok: true,
+      value: {
+        assessmentId,
+        assessmentRevision: summary.assessmentRevision,
+        recordId: summary.recordId,
+        recordRevision: summary.recordRevision,
+        sourceAnchor: { path: 'package.json' },
+        validation: { state: 'VALIDATED' },
+        technicalSeverity: { value: 'MEDIUM' },
+        evidenceConfidence: { value: 'HIGH' },
+        policySignificance: 'BLOCKING',
+      },
+    })
+    expect(JSON.stringify(detail)).not.toContain('contentBase64')
+    expect(JSON.stringify(detail)).not.toContain('storagePath')
+    expect(resolvedContextIds).toEqual([authorityId, authorityId])
   })
 
   it('exposes bounded revision signals through the authenticated Remote seam', async () => {

@@ -182,12 +182,12 @@ This repository is under active vertical-slice development, not at the
 
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
-model tools, Risk Decision forms, Finding navigation in the Workbench, and the
-complete Workbench information architecture are deliberately not claimed as
-implemented yet. The Workbench Host Remote, authenticated redacted Assessment
-selection with stable cursor continuation, generated Client contract, transient
-browser Controller, and read-only Assessment Detail visual foundation are
-implemented. This
+model tools, Risk Decision forms, Evidence disclosure UI, and the complete
+Workbench information architecture are deliberately not claimed as implemented
+yet. The Workbench Host Remote, authenticated redacted Assessment selection
+with stable cursor continuation, generated Client contract, transient browser
+Controller, read-only Assessment Detail, multidimensional Finding triage, and
+revision-bound Finding Detail navigation are implemented. This
 repository ships no production external Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -366,7 +366,7 @@ fails closed, and the dormant bundle row must not be enabled for an anonymous
 LAN deployment.
 
 The generated Host contribution is published at `./typert`; the generated
-Client contribution is published at `./remote`. All four operations use strict
+Client contribution is published at `./remote`. All six operations use strict
 generated request/result codecs. Cancellation is forwarded to the root Service,
 mutation retries retain the caller's original idempotency key, and Adapter
 disposal withdraws its lookup and Remote Service without altering Assessments
@@ -374,9 +374,10 @@ or the root plugin.
 
 The package also publishes a Harness-discoverable `./client` entry. It mounts
 `./remote` through `ctx.remote.$mount()` and provides the browser-local
-`ctx.securityAssuranceWorkbench` Controller with seven public operations:
+`ctx.securityAssuranceWorkbench` Controller with eleven public operations:
 `openAssessmentSelection`, `loadMoreAssessments`, `selectAssessment`,
-`openAssessment`, `closeAssessment`, `getState`, and `subscribe`. The Host
+`openAssessment`, `openFindings`, `loadMoreFindings`, `selectFinding`,
+`backToFindingList`, `closeAssessment`, `getState`, and `subscribe`. The Host
 passes its current opaque authority-context ID to `openAssessmentSelection`;
 the browser receives a bounded page of redacted, authority-visible identities
 and can append continuation pages from the same signed consistency window.
@@ -388,8 +389,10 @@ remains the direct Host seam when the Assessment ID is already known. Either ope
 loads the current immutable Snapshot and internally follows
 `waitForAssessmentRevision`; `CHANGED` fetches the next Snapshot, `TIMED_OUT`
 continues from the same committed revision, and close or Client disposal aborts
-the outstanding wait. A terminal Assessment keeps only the rendered Snapshot
-and immediately retires the authority context.
+the outstanding wait. The opaque authority context remains only in the live
+in-memory Workbench session so terminal Assessment Finding queries can be
+authorized; it is absent from observable state and is erased on close, failure,
+replacement, or Client disposal.
 
 This Controller owns no security decision or durable continuation state. The
 authority context is transient authentication material, and the implementation
@@ -407,8 +410,14 @@ renders `CLOSED`, `SELECTION_LOADING`, `SELECTION_READY`,
 Remote, polling, authorization, or revision logic. `READY` shows canonical machine IDs
 unchanged together with revision, state, Verdict, repository and policy
 bindings, mandatory Coverage, and the Service Snapshot's `availableActions`.
-Those actions are informational in this slice—there are no browser mutation
-controls.
+Its nested Finding states load redacted Summary pages against the rendered
+Assessment revision, admit one cursor continuation at a time, and open Detail
+only from an exact listed record revision. Triage keeps record kind, Validation,
+Technical Severity, Evidence Confidence, Policy Significance, weakness, and
+sensitivity visibly separate. Detail exposes canonical Subject-relative Source
+Anchor and Evidence Link metadata without Evidence payloads or read
+capabilities. Assessment actions remain informational—there are no browser
+mutation controls.
 
 The surface ships complete English and Simplified Chinese copy, semantic dialog
 and status roles, keyboard dismissal and focus return, responsive layout, and

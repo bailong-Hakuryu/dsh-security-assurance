@@ -8,7 +8,11 @@ import type {
   AssessmentRevisionSignalV1,
   AssessmentListPageV1,
   AssessmentSnapshotV1,
+  FindingDetailViewV1,
+  FindingListPageV1,
   GetAssessmentRequest,
+  GetFindingRequest,
+  ListFindingsRequest,
   ListAssessmentsRequest,
   RecordRiskDecisionRequest,
   RiskDecisionReceiptV1,
@@ -118,6 +122,34 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
     signal: AbortSignal,
   ): Promise<SecurityResult<AssessmentSnapshotV1>> {
     return this.ctx.securityAssurance.getAssessment(securityAssuranceWorkbenchContext, request, { signal })
+  }
+
+  /** List redacted Finding Summaries without Source Anchors or Evidence payloads. */
+  @Remote
+  listFindings(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: ListFindingsRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<FindingListPageV1>> {
+    return this.ctx.securityAssurance.listFindings(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
+  }
+
+  /** Read one exact revision-bound Finding Detail without Evidence payloads. */
+  @Remote
+  getFinding(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: GetFindingRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<FindingDetailViewV1>> {
+    return this.ctx.securityAssurance.getFinding(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
   }
 
   /** Wait for one later committed Assessment revision without holding a Store transaction. */

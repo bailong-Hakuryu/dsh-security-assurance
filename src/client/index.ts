@@ -20,6 +20,9 @@ import type {
   AssessmentListPageV1,
   AssessmentRevisionSignalV1,
   AssessmentSnapshotV1,
+  FindingDetailViewV1,
+  FindingListPageV1,
+  FindingSummaryV1,
   PublicSecurityError,
   SecurityResult,
 } from '../contracts.ts'
@@ -78,6 +81,37 @@ export interface WorkbenchClientFailureV1 {
   readonly retryable: boolean
 }
 
+/** Transient Finding projection nested under one revision-bound Assessment view. */
+export type WorkbenchFindingsStateV1 =
+  | { readonly kind: 'NOT_LOADED' }
+  | { readonly kind: 'LIST_LOADING' }
+  | {
+    readonly kind: 'LIST_READY'
+    readonly assessmentRevision: number
+    readonly items: readonly FindingSummaryV1[]
+    readonly nextCursor: string | null
+  }
+  | {
+    readonly kind: 'LIST_LOADING_MORE'
+    readonly assessmentRevision: number
+    readonly items: readonly FindingSummaryV1[]
+    readonly nextCursor: string
+  }
+  | {
+    readonly kind: 'DETAIL_LOADING'
+    readonly assessmentRevision: number
+    readonly items: readonly FindingSummaryV1[]
+    readonly nextCursor: string | null
+    readonly recordId: string
+  }
+  | {
+    readonly kind: 'DETAIL_READY'
+    readonly assessmentRevision: number
+    readonly items: readonly FindingSummaryV1[]
+    readonly nextCursor: string | null
+    readonly detail: FindingDetailViewV1
+  }
+
 /** Immutable observable state of the browser-owned Workbench session. */
 export type SecurityAssuranceWorkbenchStateV1 =
   | { readonly kind: 'CLOSED' }
@@ -99,6 +133,7 @@ export type SecurityAssuranceWorkbenchStateV1 =
     readonly kind: 'READY'
     readonly assessmentId: AssessmentId
     readonly snapshot: AssessmentSnapshotV1
+    readonly findings: WorkbenchFindingsStateV1
   }
   | {
     readonly kind: 'FAILED'
@@ -119,6 +154,7 @@ interface LiveAssessmentSession {
 }
 
 const CLOSED_STATE: SecurityAssuranceWorkbenchStateV1 = Object.freeze({ kind: 'CLOSED' })
+const FINDINGS_NOT_LOADED: WorkbenchFindingsStateV1 = Object.freeze({ kind: 'NOT_LOADED' })
 const LONG_POLL_TIMEOUT_MS = 25_000
 
 /**
@@ -235,6 +271,206 @@ export class SecurityAssuranceWorkbenchController extends Service {
     return this.loadAssessment(session, assessmentId)
   }
 
+  /** Load the first redacted Finding page for the exact rendered Assessment revision. */
+  async openFindings(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'READY'
+      || current.findings.kind !== 'NOT_LOADED'
+    ) return current
+
+    this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      kind: 'LIST_LOADING',
+    }))
+    let result: RemoteResult<SecurityResult<FindingListPageV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.listFindings(
+        session.contextId,
+        { schemaVersion: 1, assessmentId: current.assessmentId, limit: 50 },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (
+      !this.isActive(session)
+      || this.state.kind !== 'READY'
+      || this.state.snapshot.assessmentRevision !== current.snapshot.assessmentRevision
+      || this.state.findings.kind !== 'LIST_LOADING'
+    ) return this.state
+    const page = this.readRemoteResult(session, result)
+    if (page === undefined) return this.state
+    if (
+      page.assessmentId !== current.assessmentId
+      || page.assessmentRevision !== current.snapshot.assessmentRevision
+      || page.findings.some(item =>
+        item.assessmentId !== page.assessmentId
+        || item.assessmentRevision !== page.assessmentRevision)
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'FINDING_PROTOCOL_VIOLATION',
+        message: 'The Finding page is not bound to the rendered Assessment revision.',
+        retryable: false,
+      })
+    }
+    return this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      kind: 'LIST_READY',
+      assessmentRevision: page.assessmentRevision,
+      items: Object.freeze([...page.findings]),
+      nextCursor: page.nextCursor,
+    }))
+  }
+
+  /** Append one cursor-bound Finding page while preserving the exact Assessment revision. */
+  async loadMoreFindings(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'READY'
+      || current.findings.kind !== 'LIST_READY'
+    ) return current
+    const currentFindings = current.findings
+    const nextCursor = currentFindings.nextCursor
+    if (nextCursor === null) return current
+    this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      kind: 'LIST_LOADING_MORE',
+      assessmentRevision: currentFindings.assessmentRevision,
+      items: currentFindings.items,
+      nextCursor,
+    }))
+
+    let result: RemoteResult<SecurityResult<FindingListPageV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.listFindings(
+        session.contextId,
+        {
+          schemaVersion: 1,
+          assessmentId: current.assessmentId,
+          limit: 50,
+          cursor: nextCursor,
+        },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (
+      !this.isActive(session)
+      || this.state.kind !== 'READY'
+      || this.state.snapshot.assessmentRevision !== current.snapshot.assessmentRevision
+      || this.state.findings.kind !== 'LIST_LOADING_MORE'
+    ) return this.state
+    const page = this.readRemoteResult(session, result)
+    if (page === undefined) return this.state
+    if (
+      page.assessmentId !== current.assessmentId
+      || page.assessmentRevision !== currentFindings.assessmentRevision
+      || page.findings.some(item =>
+        item.assessmentId !== page.assessmentId
+        || item.assessmentRevision !== page.assessmentRevision)
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'FINDING_PROTOCOL_VIOLATION',
+        message: 'The Finding continuation left its Assessment revision.',
+        retryable: false,
+      })
+    }
+    return this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      kind: 'LIST_READY',
+      assessmentRevision: currentFindings.assessmentRevision,
+      items: Object.freeze([...currentFindings.items, ...page.findings]),
+      nextCursor: page.nextCursor,
+    }))
+  }
+
+  /** Open one exact Finding revision selected from the current redacted list. */
+  async selectFinding(recordId: string): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (session === undefined || current.kind !== 'READY') return current
+    if (current.findings.kind !== 'LIST_READY') return current
+    const summary = current.findings.items.find(item => item.recordId === recordId)
+    if (summary === undefined) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'FINDING_NOT_LISTED',
+        message: 'The Finding is not present in the current revision-bound list.',
+        retryable: false,
+      })
+    }
+    const currentFindings = current.findings
+    this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      kind: 'DETAIL_LOADING',
+      assessmentRevision: currentFindings.assessmentRevision,
+      items: currentFindings.items,
+      nextCursor: currentFindings.nextCursor,
+      recordId,
+    }))
+
+    let result: RemoteResult<SecurityResult<FindingDetailViewV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.getFinding(
+        session.contextId,
+        {
+          schemaVersion: 1,
+          assessmentId: current.assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (
+      !this.isActive(session)
+      || this.state.kind !== 'READY'
+      || this.state.snapshot.assessmentRevision !== current.snapshot.assessmentRevision
+      || this.state.findings.kind !== 'DETAIL_LOADING'
+      || this.state.findings.recordId !== recordId
+    ) return this.state
+    const detail = this.readRemoteResult(session, result)
+    if (detail === undefined) return this.state
+    if (
+      detail.assessmentId !== summary.assessmentId
+      || detail.assessmentRevision !== summary.assessmentRevision
+      || detail.recordId !== summary.recordId
+      || detail.recordRevision !== summary.recordRevision
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'FINDING_PROTOCOL_VIOLATION',
+        message: 'The Finding Detail does not match the selected revision.',
+        retryable: false,
+      })
+    }
+    return this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      kind: 'DETAIL_READY',
+      assessmentRevision: currentFindings.assessmentRevision,
+      items: currentFindings.items,
+      nextCursor: currentFindings.nextCursor,
+      detail,
+    }))
+  }
+
+  /** Return from Finding Detail to the already authorized redacted list. */
+  backToFindingList(): SecurityAssuranceWorkbenchStateV1 {
+    const current = this.state
+    if (current.kind !== 'READY' || current.findings.kind !== 'DETAIL_READY') return current
+    return this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      kind: 'LIST_READY',
+      assessmentRevision: current.findings.assessmentRevision,
+      items: current.findings.items,
+      nextCursor: current.findings.nextCursor,
+    }))
+  }
+
   /** Open one Assessment, replacing and erasing any prior in-memory session. */
   async openAssessment(
     request: OpenAssessmentWorkbenchRequestV1,
@@ -271,8 +507,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
     if (snapshot === undefined) return this.state
 
     const ready = this.publishReady(assessmentId, snapshot)
-    if (isTerminal(snapshot)) this.retireAuthority(session)
-    else void this.monitor(session, assessmentId, snapshot.assessmentRevision)
+    if (!isTerminal(snapshot)) void this.monitor(session, assessmentId, snapshot.assessmentRevision)
     return ready
   }
 
@@ -351,7 +586,6 @@ export class SecurityAssuranceWorkbenchController extends Service {
       afterRevision = snapshot.assessmentRevision
       this.publishReady(assessmentId, snapshot)
       if (isTerminal(snapshot)) {
-        this.retireAuthority(session)
         return
       }
     }
@@ -375,11 +609,13 @@ export class SecurityAssuranceWorkbenchController extends Service {
   private publishReady(
     assessmentId: AssessmentId,
     snapshot: AssessmentSnapshotV1,
+    findings: WorkbenchFindingsStateV1 = FINDINGS_NOT_LOADED,
   ): SecurityAssuranceWorkbenchStateV1 {
     const ready = Object.freeze({
       kind: 'READY' as const,
       assessmentId,
       snapshot,
+      findings,
     })
     this.publish(ready)
     return ready
@@ -550,9 +786,13 @@ function installWorkbenchUi(
       locale: WORKBENCH_LOCALE_NAMESPACE,
       inject: (): WorkbenchOverlayInjected => ({
         hooks: { presentation, assessment },
+        backToFindingList: () => { controller.backToFindingList() },
         closeWorkbench: () => { presentation.hide() },
         loadMoreAssessments: () => { void controller.loadMoreAssessments() },
+        loadMoreFindings: () => { void controller.loadMoreFindings() },
+        openFindings: () => { void controller.openFindings() },
         selectAssessment: assessmentId => { void controller.selectAssessment(assessmentId) },
+        selectFinding: recordId => { void controller.selectFinding(recordId) },
       }),
     }, WorkbenchOverlay))
   } catch (error) {

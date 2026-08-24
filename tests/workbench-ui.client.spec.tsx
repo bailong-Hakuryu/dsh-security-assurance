@@ -14,6 +14,8 @@ import type {
   AssessmentId,
   AssessmentListItemV1,
   AssessmentSnapshotV1,
+  FindingDetailViewV1,
+  FindingSummaryV1,
 } from '../src/contracts.ts'
 import {
   apply as applyWorkbenchClient,
@@ -129,7 +131,191 @@ function selectionItem(id: AssessmentId, ordinal: number): AssessmentListItemV1 
   }
 }
 
+function findingSummaryItem(id: AssessmentId): FindingSummaryV1 {
+  return {
+    schemaVersion: 1,
+    assessmentId: id,
+    assessmentRevision: 7,
+    recordKind: 'FINDING',
+    recordId: `finding-${'f'.repeat(64)}`,
+    candidateId: `candidate-${'f'.repeat(64)}`,
+    recordRevision: 1,
+    validationState: 'VALIDATED',
+    validationContractId: 'security/validation/reference-v1',
+    weaknessClassification: { primary: 'cwe/79', secondary: [] },
+    technicalSeverity: 'HIGH',
+    evidenceConfidence: 'HIGH',
+    policySignificance: 'BLOCKING',
+    hasProtectedDetail: true,
+  }
+}
+
+function findingDetailView(summary: FindingSummaryV1): FindingDetailViewV1 {
+  const digest = {
+    schemaVersion: 1 as const,
+    algorithm: 'sha256' as const,
+    mediaType: 'application/vnd.dsh.canonical-json',
+    byteLength: 42,
+    canonicalization: 'dsh-canonical-json-v1' as const,
+    value: 'e'.repeat(64),
+  }
+  return {
+    schemaVersion: 1,
+    assessmentId: summary.assessmentId,
+    assessmentRevision: summary.assessmentRevision,
+    recordKind: summary.recordKind,
+    recordId: summary.recordId,
+    candidateId: summary.candidateId,
+    recordRevision: summary.recordRevision,
+    revisionChain: [{ recordRevision: 1, supersedesRecordRevision: null, isCurrent: true }],
+    weaknessClassification: summary.weaknessClassification,
+    affectedControlId: 'security/control/output-encoding',
+    sourceAnchor: {
+      path: 'src/render.ts',
+      fileDigest: digest,
+      locator: { kind: 'JSON_POINTER', value: '/render/html' },
+    },
+    validation: {
+      state: 'VALIDATED',
+      contractId: 'security/validation/reference-v1',
+      contractVersion: 1,
+      outcomeArtifactId: 'validation/outcome/reference',
+      rejectionCondition: null,
+      proofGaps: [],
+      negativeControls: ['security/negative-control/encoded-output'],
+    },
+    technicalSeverity: {
+      value: 'HIGH',
+      methodVersion: 'security/severity/v1',
+      inputs: [{ dimension: 'impact', value: 'account-takeover' }],
+    },
+    evidenceConfidence: {
+      value: 'HIGH',
+      methodVersion: 'security/confidence/v1',
+      rubric: [{ dimension: 'reproducible', value: true }],
+    },
+    policySignificance: 'BLOCKING',
+    coverageRelations: [{
+      obligationId: 'security/output-encoding',
+      state: 'SATISFIED',
+      reason: 'ELIGIBLE_EVIDENCE',
+    }],
+    riskDecision: { state: 'NOT_RECORDED' },
+    evidenceLinks: [{
+      artifactId: 'evidence/reference-output-encoding',
+      schemaId: 'security/evidence/reference-v1',
+      digest,
+      purpose: 'VALIDATION_EVIDENCE',
+      eligibilityDecision: 'ELIGIBLE',
+      eligibilityDecisionArtifactId: 'eligibility/reference-output-encoding',
+    }],
+    attackPath: { state: 'NOT_AVAILABLE' },
+  }
+}
+
 describe('Security Assurance Workbench UI', () => {
+  it('navigates from multidimensional Finding triage to revision-bound Detail and back', async () => {
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000071')
+    const snapshot = readySnapshot(id)
+    const summary = findingSummaryItem(id)
+    const unresolved: FindingSummaryV1 = {
+      ...summary,
+      recordKind: 'UNRESOLVED_CANDIDATE',
+      recordId: `candidate-${'1'.repeat(64)}`,
+      candidateId: `candidate-${'1'.repeat(64)}`,
+      validationState: 'UNRESOLVED',
+      technicalSeverity: null,
+      evidenceConfidence: 'LOW',
+      policySignificance: null,
+      hasProtectedDetail: false,
+    }
+    const detail = findingDetailView(summary)
+    let findingPage = 0
+    const b = await bench((_path, endpoint, _payload, signal) => {
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/waitForAssessmentRevision') {
+        return new Promise(resolve => {
+          signal.addEventListener('abort', () => {
+            resolve({ ok: false, error: { code: 'aborted' } })
+          }, { once: true })
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        findingPage += 1
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: id,
+              assessmentRevision: 7,
+              findings: [findingPage === 1 ? summary : unresolved],
+              nextCursor: findingPage === 1 ? 'finding.cursor' : null,
+            },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+      }
+      return Promise.reject(new Error(`Unexpected endpoint: ${endpoint}`))
+    })
+    const launcher = b.runtime.renderSlot('sidebar.footer.action', { wide: true })
+    const overlay = b.runtime.renderSlot('shell.overlay', {})
+    await act(async () => {
+      fireEvent.click(launcher.view.getByRole('button', { name: '打开安全保障工作台' }))
+      await b.controller.openAssessment({
+        securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-finding-ui'),
+        assessmentId: id,
+      })
+    })
+
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '查看 Findings' }))
+    })
+    expect(overlay.view.getByRole('heading', { name: 'Findings' })).toBeTruthy()
+    expect(overlay.view.getByText('cwe/79')).toBeTruthy()
+    expect(overlay.view.getAllByText('HIGH').length).toBeGreaterThanOrEqual(2)
+    expect(overlay.view.getByText('BLOCKING')).toBeTruthy()
+    expect(overlay.view.getByText('VALIDATED')).toBeTruthy()
+    expect(overlay.view.getByText('包含受保护详情')).toBeTruthy()
+    expect(overlay.view.queryByText('src/render.ts')).toBeNull()
+
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '加载更多 Findings' }))
+    })
+    expect(overlay.view.getByText(unresolved.recordId)).toBeTruthy()
+    expect(overlay.view.getByText('UNRESOLVED_CANDIDATE')).toBeTruthy()
+    expect(overlay.view.getByText('UNRESOLVED')).toBeTruthy()
+    expect(overlay.view.queryByRole('button', { name: '加载更多 Findings' })).toBeNull()
+
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', {
+        name: `打开 Finding ${summary.recordId}`,
+      }))
+    })
+    expect(overlay.view.getByRole('heading', { name: 'Finding 详情' })).toBeTruthy()
+    expect(overlay.view.getByText('src/render.ts')).toBeTruthy()
+    expect(overlay.view.getByText('/render/html')).toBeTruthy()
+    expect(overlay.view.getByText('evidence/reference-output-encoding')).toBeTruthy()
+    expect(overlay.view.getByText('NOT_RECORDED')).toBeTruthy()
+    expect(overlay.view.queryByText('contentBase64')).toBeNull()
+
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '返回 Finding 列表' }))
+    })
+    expect(overlay.view.getByRole('button', {
+      name: `打开 Finding ${summary.recordId}`,
+    })).toBeTruthy()
+
+    await b.feature.dispose()
+    await b.gateway.dispose()
+    await b.runtime.dispose()
+  })
+
   it('loads the next Assessment page once without rendering authority or cursor material', async () => {
     const firstId = assessmentId('asm-00000000-0000-0000-0000-000000000051')
     const secondId = assessmentId('asm-00000000-0000-0000-0000-000000000052')
@@ -337,7 +523,9 @@ describe('Security Assurance Workbench UI', () => {
     expect(overlay.view.getByText('RESUME_ASSESSMENT')).toBeTruthy()
     expect(overlay.view.getByText('CANCEL_ASSESSMENT')).toBeTruthy()
     expect(overlay.view.getByText('可用操作由 Security Service 快照决定；当前工作台为只读。')).toBeTruthy()
-    expect(overlay.view.getAllByRole('button')).toHaveLength(1)
+    expect(overlay.view.getByRole('button', { name: '查看 Findings' })).toBeTruthy()
+    expect(overlay.view.queryByRole('button', { name: 'RESUME_ASSESSMENT' })).toBeNull()
+    expect(overlay.view.queryByRole('button', { name: 'CANCEL_ASSESSMENT' })).toBeNull()
 
     await b.feature.dispose()
     await b.gateway.dispose()

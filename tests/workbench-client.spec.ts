@@ -10,6 +10,8 @@ import type {
   AssessmentId,
   AssessmentListItemV1,
   AssessmentSnapshotV1,
+  FindingDetailViewV1,
+  FindingSummaryV1,
 } from '../src/contracts.ts'
 import {
   apply as applyWorkbenchClient,
@@ -96,7 +98,388 @@ function assessmentListItem(id: AssessmentId, ordinal: number): AssessmentListIt
   }
 }
 
+function findingSummary(
+  id: AssessmentId,
+  assessmentRevision: number,
+  hex: string,
+): FindingSummaryV1 {
+  return {
+    schemaVersion: 1,
+    assessmentId: id,
+    assessmentRevision,
+    recordKind: 'FINDING',
+    recordId: `finding-${hex.repeat(64)}`,
+    candidateId: `candidate-${hex.repeat(64)}`,
+    recordRevision: 1,
+    validationState: 'VALIDATED',
+    validationContractId: 'security/validation/reference-v1',
+    weaknessClassification: {
+      primary: 'cwe/79',
+      secondary: [],
+    },
+    technicalSeverity: 'HIGH',
+    evidenceConfidence: 'HIGH',
+    policySignificance: 'BLOCKING',
+    hasProtectedDetail: true,
+  }
+}
+
+function findingDetail(summary: FindingSummaryV1): FindingDetailViewV1 {
+  const digest = {
+    schemaVersion: 1 as const,
+    algorithm: 'sha256' as const,
+    mediaType: 'application/vnd.dsh.canonical-json',
+    byteLength: 42,
+    canonicalization: 'dsh-canonical-json-v1' as const,
+    value: 'd'.repeat(64),
+  }
+  return {
+    schemaVersion: 1,
+    assessmentId: summary.assessmentId,
+    assessmentRevision: summary.assessmentRevision,
+    recordKind: summary.recordKind,
+    recordId: summary.recordId,
+    candidateId: summary.candidateId,
+    recordRevision: summary.recordRevision,
+    revisionChain: [{
+      recordRevision: summary.recordRevision,
+      supersedesRecordRevision: null,
+      isCurrent: true,
+    }],
+    weaknessClassification: summary.weaknessClassification,
+    affectedControlId: 'security/control/output-encoding',
+    sourceAnchor: {
+      path: 'src/render.ts',
+      fileDigest: digest,
+      locator: { kind: 'JSON_POINTER', value: '/render/html' },
+    },
+    validation: {
+      state: summary.validationState,
+      contractId: summary.validationContractId,
+      contractVersion: 1,
+      outcomeArtifactId: 'validation/outcome/reference',
+      rejectionCondition: null,
+      proofGaps: [],
+      negativeControls: ['security/negative-control/encoded-output'],
+    },
+    technicalSeverity: {
+      value: 'HIGH',
+      methodVersion: 'security/severity/v1',
+      inputs: [{ dimension: 'impact', value: 'account-takeover' }],
+    },
+    evidenceConfidence: {
+      value: 'HIGH',
+      methodVersion: 'security/confidence/v1',
+      rubric: [{ dimension: 'reproducible', value: true }],
+    },
+    policySignificance: 'BLOCKING',
+    coverageRelations: [{
+      obligationId: 'security/output-encoding',
+      state: 'SATISFIED',
+      reason: 'ELIGIBLE_EVIDENCE',
+    }],
+    riskDecision: { state: 'NOT_RECORDED' },
+    evidenceLinks: [{
+      artifactId: 'evidence/reference-output-encoding',
+      schemaId: 'security/evidence/reference-v1',
+      digest,
+      purpose: 'VALIDATION_EVIDENCE',
+      eligibilityDecision: 'ELIGIBLE',
+      eligibilityDecisionArtifactId: 'eligibility/reference-output-encoding',
+    }],
+    attackPath: { state: 'NOT_AVAILABLE' },
+  }
+}
+
 describe('Security Assurance Workbench Client', () => {
+  it('loads a revision-bound Finding list while the terminal Assessment view remains open', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000061')
+    const snapshot = snapshotAt(id, 3, 'SEALED')
+    const summary = findingSummary(id, 3, 'a')
+    const authorityId = authorityContextId('workbench-session-finding-list')
+    const payloads: unknown[] = []
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+    ): Promise<unknown> {
+      payloads.push(payload)
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: id,
+              assessmentRevision: 3,
+              findings: [summary],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityId,
+      assessmentId: id,
+    })
+    await expect(controller.openFindings()).resolves.toMatchObject({
+      kind: 'READY',
+      snapshot: { assessmentId: id, assessmentRevision: 3 },
+      findings: {
+        kind: 'LIST_READY',
+        assessmentRevision: 3,
+        items: [{ recordId: summary.recordId }],
+        nextCursor: null,
+      },
+    })
+    expect(payloads[1]).toMatchObject({
+      args: { request: { schemaVersion: 1, assessmentId: id, limit: 50 } },
+    })
+    expect(JSON.stringify(controller.getState())).not.toContain(authorityId)
+  })
+
+  it('fails closed when a Finding Summary crosses the page Assessment revision', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000064')
+    const snapshot = snapshotAt(id, 6, 'SEALED')
+    const authorityId = authorityContextId('workbench-session-finding-protocol')
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+    ): Promise<unknown> {
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: id,
+              assessmentRevision: 6,
+              findings: [findingSummary(id, 5, '6')],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityId,
+      assessmentId: id,
+    })
+    await expect(controller.openFindings()).resolves.toMatchObject({
+      kind: 'FAILED',
+      assessmentId: id,
+      failure: { source: 'CLIENT', code: 'FINDING_PROTOCOL_VIOLATION' },
+    })
+    expect(controller.getState()).not.toHaveProperty('snapshot')
+    expect(JSON.stringify(controller.getState())).not.toContain(authorityId)
+  })
+
+  it('appends one Finding continuation at a time inside the original Assessment revision', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000062')
+    const snapshot = snapshotAt(id, 4, 'SEALED')
+    const first = findingSummary(id, 4, 'b')
+    const second = findingSummary(id, 4, 'c')
+    let findingCalls = 0
+    const findingPayloads: unknown[] = []
+    let resolveContinuation: ((value: unknown) => void) | undefined
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+    ): Promise<unknown> {
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        findingCalls += 1
+        findingPayloads.push(payload)
+        if (findingCalls === 1) {
+          return Promise.resolve({
+            ok: true,
+            value: {
+              ok: true,
+              value: {
+                schemaVersion: 1,
+                assessmentId: id,
+                assessmentRevision: 4,
+                findings: [first],
+                nextCursor: 'finding.cursor',
+              },
+            },
+          })
+        }
+        return new Promise(resolve => { resolveContinuation = resolve })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-finding-pagination'),
+      assessmentId: id,
+    })
+    await controller.openFindings()
+    const continuation = controller.loadMoreFindings()
+    expect(controller.getState()).toMatchObject({
+      kind: 'READY',
+      findings: {
+        kind: 'LIST_LOADING_MORE',
+        items: [{ recordId: first.recordId }],
+      },
+    })
+    await controller.loadMoreFindings()
+    expect(findingCalls).toBe(2)
+    expect(findingPayloads[1]).toMatchObject({
+      args: {
+        request: {
+          schemaVersion: 1,
+          assessmentId: id,
+          limit: 50,
+          cursor: 'finding.cursor',
+        },
+      },
+    })
+
+    resolveContinuation?.({
+      ok: true,
+      value: {
+        ok: true,
+        value: {
+          schemaVersion: 1,
+          assessmentId: id,
+          assessmentRevision: 4,
+          findings: [second],
+          nextCursor: null,
+        },
+      },
+    })
+    await expect(continuation).resolves.toMatchObject({
+      kind: 'READY',
+      findings: {
+        kind: 'LIST_READY',
+        items: [{ recordId: first.recordId }, { recordId: second.recordId }],
+        nextCursor: null,
+      },
+    })
+  })
+
+  it('opens only an exact listed Finding revision and returns to its redacted list', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000063')
+    const snapshot = snapshotAt(id, 5, 'SEALED')
+    const summary = findingSummary(id, 5, 'e')
+    const detail = findingDetail(summary)
+    const payloads: unknown[] = []
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+    ): Promise<unknown> {
+      payloads.push(payload)
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: id,
+              assessmentRevision: 5,
+              findings: [summary],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-finding-detail'),
+      assessmentId: id,
+    })
+    await controller.openFindings()
+    await expect(controller.selectFinding(summary.recordId)).resolves.toMatchObject({
+      kind: 'READY',
+      findings: {
+        kind: 'DETAIL_READY',
+        detail: {
+          recordId: summary.recordId,
+          sourceAnchor: { path: 'src/render.ts' },
+          evidenceLinks: [{ artifactId: 'evidence/reference-output-encoding' }],
+        },
+      },
+    })
+    expect(payloads[2]).toMatchObject({
+      args: {
+        request: {
+          schemaVersion: 1,
+          assessmentId: id,
+          assessmentRevision: 5,
+          recordId: summary.recordId,
+          recordRevision: 1,
+        },
+      },
+    })
+    expect(controller.backToFindingList()).toMatchObject({
+      kind: 'READY',
+      findings: {
+        kind: 'LIST_READY',
+        items: [{ recordId: summary.recordId }],
+      },
+    })
+    expect(payloads).toHaveLength(3)
+  })
+
   it('appends the next authority-bound Assessment page and stops at its stable end', async () => {
     const ctx = new Context()
     contexts.push(ctx)

@@ -194,10 +194,14 @@ const typertContribution = await import('dsh-security-assurance/typert')
 const clientRemoteContribution = await import('dsh-security-assurance/remote')
 if (
   typeof workbenchRemote.default !== 'function'
-  || typertContribution.TYPERT?.invocations?.length !== 4
-  || clientRemoteContribution.default?.descriptors?.length !== 4
+  || typertContribution.TYPERT?.invocations?.length !== 6
+  || clientRemoteContribution.default?.descriptors?.length !== 6
   || !clientRemoteContribution.default.descriptors.some(descriptor =>
     descriptor.method === 'listAssessments')
+  || !clientRemoteContribution.default.descriptors.some(descriptor =>
+    descriptor.method === 'listFindings')
+  || !clientRemoteContribution.default.descriptors.some(descriptor =>
+    descriptor.method === 'getFinding')
   || !clientRemoteContribution.default.descriptors.some(descriptor =>
     descriptor.method === 'waitForAssessmentRevision')
   || typertContribution.TYPERT.invocations.some(invocation =>
@@ -240,6 +244,10 @@ if (
   || workbenchClient.inject[2] !== 'locale'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.loadMoreAssessments !== 'function'
+  || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openFindings !== 'function'
+  || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.loadMoreFindings !== 'function'
+  || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectFinding !== 'function'
+  || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.backToFindingList !== 'function'
 ) {
   throw new Error('packed Workbench Client entry is incomplete')
 }
@@ -308,6 +316,40 @@ const missingAssessment = await ctx.typertGateway.invoke({
 })
 if (missingAssessment?.ok !== false || missingAssessment.error?.code !== 'NOT_FOUND') {
   throw new Error('packed strict Workbench Remote did not delegate to the root Service')
+}
+const missingFindingList = await ctx.typertGateway.invoke({
+  namespace: 'securityAssuranceWorkbench',
+  method: 'listFindings',
+  args: {
+    securityAssuranceWorkbenchContextId: 'packed-workbench-context-v1',
+    request: {
+      schemaVersion: 1,
+      assessmentId: 'asm-00000000-0000-0000-0000-000000000000',
+      limit: 50,
+    },
+  },
+})
+const missingFinding = await ctx.typertGateway.invoke({
+  namespace: 'securityAssuranceWorkbench',
+  method: 'getFinding',
+  args: {
+    securityAssuranceWorkbenchContextId: 'packed-workbench-context-v1',
+    request: {
+      schemaVersion: 1,
+      assessmentId: 'asm-00000000-0000-0000-0000-000000000000',
+      assessmentRevision: 1,
+      recordId: 'finding-${'0'.repeat(64)}',
+      recordRevision: 1,
+    },
+  },
+})
+if (
+  missingFindingList?.ok !== false
+  || missingFindingList.error?.code !== 'NOT_FOUND'
+  || missingFinding?.ok !== false
+  || missingFinding.error?.code !== 'NOT_FOUND'
+) {
+  throw new Error('packed strict Workbench Remote did not expose Finding queries')
 }
 await workbenchFiber.dispose()
 if (ctx.typert.lookups.get('securityAssuranceWorkbenchContext') !== undefined) {
