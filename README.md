@@ -42,12 +42,15 @@ This repository is under active vertical-slice development, not at the
   follows committed revisions through cancellable long-polling, fences stale
   responses and disclosure attempts, opens metadata only from an exact Finding
   Evidence Link, separately reauthorizes purpose-bound bounded content,
-  validates every returned identity, byte, and expiry binding, and erases its
-  authority context and Assessment payload on close.
+  validates every returned identity, byte, and expiry binding, and submits only
+  exact Service-projected Risk Decision options with fresh idempotency before
+  refetching committed truth. It erases its authority context and Assessment
+  payload on close.
   The same entry contributes an additive bilingual launcher at
-  `sidebar.footer.action` and a responsive read-only Assessment surface at
+  `sidebar.footer.action` and a responsive Assessment surface at
   `shell.overlay`; the browser renders Service-projected state, Coverage,
-  Verdict, and available actions but exposes no Risk Decision mutation;
+  Verdict, available actions, bounded Evidence disclosure, and the governed
+  Risk Decision form without accepting a browser-authored decision-maker;
 - exact Git revision, Change, and Workspace Snapshot Subject selectors;
 - bounded content-addressed Subject materialization below
   `$DSH_HOME/security-assurance/subjects`, with canonical manifests and no
@@ -129,8 +132,8 @@ This repository is under active vertical-slice development, not at the
   attestation actions carry exact expected revisions and Finding identities.
   Risk options state their effect, authorization mode, control minimum, expiry
   ceiling, completed/required attestations, and whether the pending form must
-  match exactly. These are Service projections for future Workbench rendering,
-  not browser-inferred authority or a model Risk Acceptance tool;
+  match exactly. The Workbench renders these Service projections directly;
+  they are not browser-inferred authority or a model Risk Acceptance tool;
 - revision-bound `getEvidenceView` projections that require exact Assessment,
   consuming Finding revision, Evidence artifact, and digest identity. The
   metadata-only Profile needs Assessment read authority and always redacts
@@ -186,12 +189,13 @@ This repository is under active vertical-slice development, not at the
 
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
-model tools, Risk Decision forms, and the complete Workbench information architecture are deliberately not claimed
+model tools, and the complete Workbench information architecture are deliberately not claimed
 as implemented yet. The Workbench Host Remote, authenticated redacted Assessment selection
 with stable cursor continuation, generated Client contract, transient browser
 Controller, read-only Assessment Detail, multidimensional Finding triage,
 revision-bound Finding Detail navigation, bilingual metadata-first Evidence,
-and explicit expiring bounded-content disclosure are implemented. This repository ships no production external
+explicit expiring bounded-content disclosure, and a governed Risk Decision form
+with Critical Dual Authority completion are implemented. This repository ships no production external
 Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -337,7 +341,7 @@ only its Cordis Service; durable Repository Registry history remains owned by
 the root Security Service, so an equal restart resolves the same Repository ID.
 Conflicting replay fails loudly instead of updating Host policy implicitly.
 
-## Workbench Remote and explicit bounded Evidence UI
+## Workbench Remote, bounded Evidence, and governed Risk Decision UI
 
 The optional `dsh-security-assurance/workbench-remote` entry is a Host Adapter,
 not an authentication provider and not a second business Service. It injects
@@ -379,10 +383,10 @@ or the root plugin.
 
 The package also publishes a Harness-discoverable `./client` entry. It mounts
 `./remote` through `ctx.remote.$mount()` and provides the browser-local
-`ctx.securityAssuranceWorkbench` Controller with fifteen public operations:
+`ctx.securityAssuranceWorkbench` Controller with sixteen public operations:
 `openAssessmentSelection`, `loadMoreAssessments`, `selectAssessment`,
 `openAssessment`, `openFindings`, `loadMoreFindings`, `selectFinding`,
-`backToFindingList`, `selectEvidence`, `discloseEvidence`,
+`backToFindingList`, `recordRiskDecision`, `selectEvidence`, `discloseEvidence`,
 `hideEvidenceDisclosure`, `backToFindingDetail`, `closeAssessment`, `getState`,
 and `subscribe`. The Host
 passes its current opaque authority-context ID to `openAssessmentSelection`;
@@ -447,7 +451,19 @@ sensitive and time-limited, renders purpose, Profile, size, and expiry, and
 provides an explicit hide-and-discard control. Evidence transitions move focus
 to the new panel, return it to the metadata action after hide or expiry, and
 return it to the originating Link after leaving Evidence.
-Assessment actions remain informational—there are no browser mutation controls.
+The Risk Decision form appears only beside an exact Finding Detail with a
+matching `RECORD_RISK_DECISION` action in the current Snapshot. It renders the
+immutable Finding and revisions, every exact consequence, authority mode,
+compensating-control minimum, expiry ceiling, and completed/required
+attestations. The browser selects only a projected decision and supplies its
+rationale, controls, and expiry; the
+Controller derives Assessment and Finding bindings from retained Service truth,
+generates a fresh idempotency identity, and never accepts a Principal or
+permission. Critical second authority shows the first immutable attestation and
+submits only its exact rationale, controls, and expiry through a separately
+resolved Host context. A matching receipt is followed by an Assessment refetch,
+and local form input is discarded. Resume and Cancel remain informational until
+their separate vertical slice is implemented.
 
 The surface ships complete English and Simplified Chinese copy, semantic dialog
 and status roles, keyboard dismissal and focus return, responsive layout, and

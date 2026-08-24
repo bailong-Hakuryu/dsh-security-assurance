@@ -1512,6 +1512,164 @@ describe('Security Assurance Workbench Client', () => {
     ])
   })
 
+  it('records only the service-projected Risk Decision and refetches the committed Snapshot', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000081')
+    const summary = findingSummary(id, 7, '8')
+    const detail = findingDetail(summary)
+    const blocked: AssessmentSnapshotV1 = {
+      ...snapshotAt(id, 7, 'BLOCKED'),
+      availableActions: [{
+        kind: 'RECORD_RISK_DECISION',
+        expectedAssessmentRevision: 7,
+        finding: {
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        },
+        options: [{
+          decision: 'DENY',
+          consequence: 'KEEPS_FINDING_BLOCKING',
+        }],
+      }],
+    }
+    const committed: AssessmentSnapshotV1 = {
+      ...snapshotAt(id, 8, 'BLOCKED'),
+      availableActions: [],
+    }
+    const endpoints: string[] = []
+    const riskPayloads: unknown[] = []
+    let assessmentReads = 0
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+      signal: AbortSignal,
+    ): Promise<unknown> {
+      endpoints.push(endpoint)
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        assessmentReads += 1
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: assessmentReads === 1 ? blocked : committed },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/waitForAssessmentRevision') {
+        return new Promise(resolve => {
+          signal.addEventListener('abort', () => {
+            resolve({ ok: false, error: { code: 'aborted' } })
+          }, { once: true })
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: id,
+              assessmentRevision: 7,
+              findings: [summary],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/recordRiskDecision') {
+        riskPayloads.push(payload)
+        const request = (payload as {
+          readonly args: {
+            readonly request: {
+              readonly idempotencyKey: string
+            }
+          }
+        }).args.request
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              operation: 'record_risk_decision',
+              assessmentId: id,
+              assessmentRevision: 8,
+              acceptedState: 'BLOCKED',
+              decisionId: 'risk-decision-00000000-0000-0000-0000-000000000081',
+              finding: {
+                recordId: summary.recordId,
+                recordRevision: summary.recordRevision,
+              },
+              decision: 'DENY',
+              resolution: 'DENIED',
+              idempotencyKey: request.idempotencyKey,
+              recordedAt: '2026-08-24T00:08:00.000Z',
+              correlationId: 'sec-00000000-0000-0000-0000-000000000081',
+            },
+          },
+        })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+    const authorityId = authorityContextId('workbench-session-risk-decision')
+
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityId,
+      assessmentId: id,
+    })
+    await controller.openFindings()
+    await controller.selectFinding(summary.recordId)
+    await expect(controller.recordRiskDecision({
+      decision: 'DENY',
+      rationale: 'The validated risk must remain blocking for this release.',
+      compensatingControls: [],
+      expiresAt: null,
+    })).resolves.toMatchObject({
+      kind: 'READY',
+      snapshot: { assessmentRevision: 8, availableActions: [] },
+      findings: { kind: 'NOT_LOADED' },
+    })
+
+    expect(riskPayloads).toHaveLength(1)
+    expect(riskPayloads[0]).toMatchObject({
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          schemaVersion: 1,
+          idempotencyKey: expect.stringMatching(/^workbench-risk-decision:[0-9a-f-]{36}$/),
+          assessmentId: id,
+          expectedAssessmentRevision: 7,
+          finding: {
+            recordId: summary.recordId,
+            recordRevision: summary.recordRevision,
+          },
+          decision: 'DENY',
+          rationale: 'The validated risk must remain blocking for this release.',
+          compensatingControls: [],
+          expiresAt: null,
+        },
+      },
+    })
+    expect(JSON.stringify(riskPayloads[0])).not.toContain('principalId')
+    expect(endpoints).toEqual([
+      'securityAssuranceWorkbench/getAssessment',
+      'securityAssuranceWorkbench/waitForAssessmentRevision',
+      'securityAssuranceWorkbench/listFindings',
+      'securityAssuranceWorkbench/getFinding',
+      'securityAssuranceWorkbench/recordRiskDecision',
+      'securityAssuranceWorkbench/getAssessment',
+    ])
+  })
+
   it('keeps one in-memory Snapshot current by revision and erases it on close', async () => {
     const ctx = new Context()
     contexts.push(ctx)

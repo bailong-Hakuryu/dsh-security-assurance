@@ -25,6 +25,8 @@ import type {
   FindingListPageV1,
   FindingSummaryV1,
   PublicSecurityError,
+  RiskDecisionKindV1,
+  RiskDecisionReceiptV1,
   SecurityResult,
 } from '../contracts.ts'
 import type {
@@ -86,6 +88,19 @@ export interface WorkbenchClientFailureV1 {
   readonly retryable: boolean
 }
 
+/** Sensitive browser-authored fields for one Service-projected Risk Decision option. */
+export interface WorkbenchRiskDecisionSubmissionV1 {
+  readonly decision: RiskDecisionKindV1
+  readonly rationale: string
+  readonly compensatingControls: readonly string[]
+  readonly expiresAt: string | null
+}
+
+/** Non-sensitive command progress retained beside one exact Finding revision. */
+export type WorkbenchRiskDecisionSubmissionStateV1 =
+  | { readonly kind: 'IDLE' }
+  | { readonly kind: 'SUBMITTING'; readonly decision: RiskDecisionKindV1 }
+
 /** Transient metadata disclosure nested under one exact Finding Detail. */
 export type WorkbenchEvidenceStateV1 =
   | { readonly kind: 'NOT_LOADED' }
@@ -135,6 +150,7 @@ export type WorkbenchFindingsStateV1 =
     readonly nextCursor: string | null
     readonly detail: FindingDetailViewV1
     readonly evidence: WorkbenchEvidenceStateV1
+    readonly riskDecisionSubmission: WorkbenchRiskDecisionSubmissionStateV1
   }
 
 /** Immutable observable state of the browser-owned Workbench session. */
@@ -183,6 +199,7 @@ interface LiveAssessmentSession {
 const CLOSED_STATE: SecurityAssuranceWorkbenchStateV1 = Object.freeze({ kind: 'CLOSED' })
 const FINDINGS_NOT_LOADED: WorkbenchFindingsStateV1 = Object.freeze({ kind: 'NOT_LOADED' })
 const EVIDENCE_NOT_LOADED: WorkbenchEvidenceStateV1 = Object.freeze({ kind: 'NOT_LOADED' })
+const RISK_DECISION_IDLE: WorkbenchRiskDecisionSubmissionStateV1 = Object.freeze({ kind: 'IDLE' })
 const LONG_POLL_TIMEOUT_MS = 25_000
 
 /**
@@ -488,7 +505,139 @@ export class SecurityAssuranceWorkbenchController extends Service {
       nextCursor: currentFindings.nextCursor,
       detail,
       evidence: EVIDENCE_NOT_LOADED,
+      riskDecisionSubmission: RISK_DECISION_IDLE,
     }))
+  }
+
+  /** Submit one exact Service-projected Risk Decision without accepting browser authority fields. */
+  async recordRiskDecision(
+    submission: WorkbenchRiskDecisionSubmissionV1,
+  ): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'READY'
+      || current.findings.kind !== 'DETAIL_READY'
+      || current.findings.riskDecisionSubmission.kind !== 'IDLE'
+    ) return current
+
+    const currentFindings = current.findings
+    const detail = currentFindings.detail
+    const action = current.snapshot.availableActions.find(candidate => (
+      candidate.kind === 'RECORD_RISK_DECISION'
+      && candidate.finding.recordId === detail.recordId
+      && candidate.finding.recordRevision === detail.recordRevision
+    ))
+    const normalized = normalizeRiskDecisionSubmission(submission)
+    if (
+      action?.kind !== 'RECORD_RISK_DECISION'
+      || !matchesRiskDecisionAction(current.snapshot, detail, action, normalized)
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'RISK_DECISION_ACTION_MISMATCH',
+        message: 'The Risk Decision does not match an option projected for this Finding revision.',
+        retryable: false,
+      })
+    }
+
+    let idempotencyKey: string
+    try {
+      idempotencyKey = nextRiskDecisionIdempotencyKey()
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    this.evidenceRequestGeneration += 1
+    this.cancelEvidenceRequest(session)
+    this.clearEvidenceExpiry(session)
+    this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      ...currentFindings,
+      evidence: EVIDENCE_NOT_LOADED,
+      riskDecisionSubmission: Object.freeze({
+        kind: 'SUBMITTING' as const,
+        decision: normalized.decision,
+      }),
+    }))
+
+    let result: RemoteResult<SecurityResult<RiskDecisionReceiptV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.recordRiskDecision(
+        session.contextId,
+        {
+          schemaVersion: 1,
+          idempotencyKey,
+          assessmentId: current.assessmentId,
+          expectedAssessmentRevision: action.expectedAssessmentRevision,
+          finding: action.finding,
+          ...normalized,
+        },
+        session.abort.signal,
+      )
+    } catch (error) {
+      if (!this.isActiveRiskDecisionRequest(
+        session,
+        current.snapshot.assessmentRevision,
+        detail.recordId,
+      )) return this.state
+      return this.failClient(session, error)
+    }
+    if (!this.isActiveRiskDecisionRequest(
+      session,
+      current.snapshot.assessmentRevision,
+      detail.recordId,
+    )) return this.state
+    const receipt = this.readRemoteResult(session, result)
+    if (receipt === undefined) return this.state
+    if (!matchesRiskDecisionReceipt(
+      receipt,
+      current.assessmentId,
+      action,
+      normalized,
+      idempotencyKey,
+    )) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'RISK_DECISION_PROTOCOL_VIOLATION',
+        message: 'The Risk Decision receipt does not match the submitted Service action.',
+        retryable: false,
+      })
+    }
+
+    let refreshed: RemoteResult<SecurityResult<AssessmentSnapshotV1>>
+    try {
+      refreshed = await this.ownerCtx.remote.securityAssuranceWorkbench.getAssessment(
+        session.contextId,
+        { schemaVersion: 1, assessmentId: current.assessmentId },
+        session.abort.signal,
+      )
+    } catch (error) {
+      if (!this.isActiveRiskDecisionRequest(
+        session,
+        current.snapshot.assessmentRevision,
+        detail.recordId,
+      )) return this.state
+      return this.failClient(session, error)
+    }
+    if (!this.isActiveRiskDecisionRequest(
+      session,
+      current.snapshot.assessmentRevision,
+      detail.recordId,
+    )) return this.state
+    const snapshot = this.readRemoteResult(session, refreshed)
+    if (snapshot === undefined) return this.state
+    if (
+      snapshot.assessmentId !== current.assessmentId
+      || snapshot.assessmentRevision < receipt.assessmentRevision
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'RISK_DECISION_PROTOCOL_VIOLATION',
+        message: 'The refreshed Assessment does not include the committed Risk Decision revision.',
+        retryable: false,
+      })
+    }
+    return this.publishReady(current.assessmentId, snapshot)
   }
 
   /** Open metadata for one Evidence Link retained by the exact Finding Detail. */
@@ -500,6 +649,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
       || current.kind !== 'READY'
       || current.findings.kind !== 'DETAIL_READY'
       || current.findings.evidence.kind !== 'NOT_LOADED'
+      || current.findings.riskDecisionSubmission.kind !== 'IDLE'
     ) return current
     const link = current.findings.detail.evidenceLinks.find(candidate =>
       candidate.artifactId === evidenceArtifactId)
@@ -726,7 +876,11 @@ export class SecurityAssuranceWorkbenchController extends Service {
   /** Return from Finding Detail to the already authorized redacted list. */
   backToFindingList(): SecurityAssuranceWorkbenchStateV1 {
     const current = this.state
-    if (current.kind !== 'READY' || current.findings.kind !== 'DETAIL_READY') return current
+    if (
+      current.kind !== 'READY'
+      || current.findings.kind !== 'DETAIL_READY'
+      || current.findings.riskDecisionSubmission.kind !== 'IDLE'
+    ) return current
     this.evidenceRequestGeneration += 1
     if (this.session !== undefined) {
       this.cancelEvidenceRequest(this.session)
@@ -997,6 +1151,19 @@ export class SecurityAssuranceWorkbenchController extends Service {
       && this.state.findings.evidence.metadata.evidence.artifactId === evidenceArtifactId
   }
 
+  private isActiveRiskDecisionRequest(
+    session: LiveAssessmentSession,
+    assessmentRevision: number,
+    recordId: string,
+  ): boolean {
+    return this.isActive(session)
+      && this.state.kind === 'READY'
+      && this.state.snapshot.assessmentRevision === assessmentRevision
+      && this.state.findings.kind === 'DETAIL_READY'
+      && this.state.findings.detail.recordId === recordId
+      && this.state.findings.riskDecisionSubmission.kind === 'SUBMITTING'
+  }
+
   private scheduleEvidenceExpiry(
     session: LiveAssessmentSession,
     requestGeneration: number,
@@ -1151,6 +1318,97 @@ function sameDigest(
     && left.value === right.value
 }
 
+function normalizeRiskDecisionSubmission(
+  submission: WorkbenchRiskDecisionSubmissionV1,
+): WorkbenchRiskDecisionSubmissionV1 {
+  return Object.freeze({
+    decision: submission.decision,
+    rationale: submission.rationale.trim(),
+    compensatingControls: Object.freeze(
+      submission.compensatingControls.map(control => control.trim()),
+    ),
+    expiresAt: submission.expiresAt,
+  })
+}
+
+function matchesRiskDecisionAction(
+  snapshot: AssessmentSnapshotV1,
+  detail: FindingDetailViewV1,
+  action: Extract<AssessmentSnapshotV1['availableActions'][number], {
+    readonly kind: 'RECORD_RISK_DECISION'
+  }>,
+  submission: WorkbenchRiskDecisionSubmissionV1,
+): boolean {
+  if (
+    snapshot.state !== 'BLOCKED'
+    || action.expectedAssessmentRevision !== snapshot.assessmentRevision
+    || detail.assessmentId !== snapshot.assessmentId
+    || detail.assessmentRevision !== snapshot.assessmentRevision
+    || action.finding.recordId !== detail.recordId
+    || action.finding.recordRevision !== detail.recordRevision
+    || submission.rationale.length < 20
+    || submission.rationale.length > 2_000
+    || submission.compensatingControls.length > 16
+    || submission.compensatingControls.some(control => control.length < 3 || control.length > 256)
+  ) return false
+  const option = action.options.find(candidate => candidate.decision === submission.decision)
+  if (option === undefined) return false
+  if (option.decision === 'DENY') {
+    return detail.riskDecision.state === 'NOT_RECORDED'
+      && submission.compensatingControls.length === 0
+      && submission.expiresAt === null
+  }
+  if (
+    submission.expiresAt === null
+    || !Number.isFinite(Date.parse(submission.expiresAt))
+    || submission.compensatingControls.length < option.minimumCompensatingControls
+  ) return false
+  if (!option.exactMatchRequired) return detail.riskDecision.state === 'NOT_RECORDED'
+  return detail.riskDecision.state === 'PENDING_DUAL_AUTHORITY'
+    && detail.riskDecision.authorizationMode === 'CRITICAL_DUAL_AUTHORITY'
+    && (detail.riskDecision.attestations ?? []).length === 1
+    && detail.riskDecision.rationale === submission.rationale
+    && detail.riskDecision.expiresAt === submission.expiresAt
+    && sameStrings(detail.riskDecision.compensatingControls, submission.compensatingControls)
+}
+
+function matchesRiskDecisionReceipt(
+  receipt: RiskDecisionReceiptV1,
+  assessmentId: AssessmentId,
+  action: Extract<AssessmentSnapshotV1['availableActions'][number], {
+    readonly kind: 'RECORD_RISK_DECISION'
+  }>,
+  submission: WorkbenchRiskDecisionSubmissionV1,
+  idempotencyKey: string,
+): boolean {
+  const option = action.options.find(candidate => candidate.decision === submission.decision)
+  if (option === undefined) return false
+  const expectedResolution = option.decision === 'DENY'
+    ? 'DENIED'
+    : option.consequence === 'REQUIRES_SECOND_AUTHORITY'
+      ? 'PENDING_DUAL_AUTHORITY'
+      : 'ACCEPTED'
+  return receipt.assessmentId === assessmentId
+    && receipt.assessmentRevision > action.expectedAssessmentRevision
+    && receipt.acceptedState === 'BLOCKED'
+    && receipt.finding.recordId === action.finding.recordId
+    && receipt.finding.recordRevision === action.finding.recordRevision
+    && receipt.decision === submission.decision
+    && receipt.resolution === expectedResolution
+    && receipt.idempotencyKey === idempotencyKey
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function nextRiskDecisionIdempotencyKey(): string {
+  if (typeof globalThis.crypto?.randomUUID !== 'function') {
+    throw new Error('The browser cannot generate a Risk Decision idempotency identity.')
+  }
+  return `workbench-risk-decision:${globalThis.crypto.randomUUID()}`
+}
+
 function remoteFailure(error: RemoteFailure): WorkbenchClientFailureV1 {
   return Object.freeze({
     source: 'TRANSPORT',
@@ -1234,6 +1492,7 @@ function installWorkbenchUi(
         loadMoreAssessments: () => { void controller.loadMoreAssessments() },
         loadMoreFindings: () => { void controller.loadMoreFindings() },
         openFindings: () => { void controller.openFindings() },
+        recordRiskDecision: submission => { void controller.recordRiskDecision(submission) },
         selectAssessment: assessmentId => { void controller.selectAssessment(assessmentId) },
         selectEvidence: artifactId => { void controller.selectEvidence(artifactId) },
         selectFinding: recordId => { void controller.selectFinding(recordId) },

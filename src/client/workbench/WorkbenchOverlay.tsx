@@ -5,12 +5,14 @@ import type {
   PropsLocale,
   PropsRuntime,
 } from '@deepseek-ai/dsh-client-ui-slots'
-import { useEffect, useRef } from 'react'
-import type { KeyboardEvent, MouseEvent, RefObject } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { FormEvent, KeyboardEvent, MouseEvent, RefObject } from 'react'
 import type {
   SecurityAssuranceWorkbenchStateV1,
   WorkbenchEvidenceStateV1,
   WorkbenchFindingsStateV1,
+  WorkbenchRiskDecisionSubmissionStateV1,
+  WorkbenchRiskDecisionSubmissionV1,
 } from '../index.ts'
 import type {
   WorkbenchEvidenceDisclosureViewV1,
@@ -38,6 +40,7 @@ export interface WorkbenchOverlayInjected {
   readonly loadMoreAssessments: () => void
   readonly loadMoreFindings: () => void
   readonly openFindings: () => void
+  readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
   readonly backToFindingList: () => void
   readonly backToFindingDetail: () => void
   readonly discloseEvidence: () => void
@@ -62,6 +65,7 @@ export function WorkbenchOverlay({
   loadMoreAssessments,
   loadMoreFindings,
   openFindings,
+  recordRiskDecision,
   backToFindingList,
   backToFindingDetail,
   discloseEvidence,
@@ -91,8 +95,8 @@ export function WorkbenchOverlay({
       return
     }
     if (event.key === 'Tab') {
-      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLButtonElement>(
-        'button:not([disabled])',
+      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled])',
       ) ?? [])]
       const first = focusable.at(0)
       const last = focusable.at(-1)
@@ -165,6 +169,7 @@ export function WorkbenchOverlay({
               snapshot={state.snapshot}
               findings={state.findings}
               openFindings={openFindings}
+              recordRiskDecision={recordRiskDecision}
               loadMoreFindings={loadMoreFindings}
               selectFinding={selectFinding}
               backToFindingList={backToFindingList}
@@ -269,6 +274,7 @@ function AssessmentDetail({
   snapshot,
   findings,
   openFindings,
+  recordRiskDecision,
   loadMoreFindings,
   selectFinding,
   backToFindingList,
@@ -281,6 +287,7 @@ function AssessmentDetail({
   readonly snapshot: AssessmentSnapshotV1
   readonly findings: WorkbenchFindingsStateV1
   readonly openFindings: () => void
+  readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
   readonly loadMoreFindings: () => void
   readonly selectFinding: (recordId: string) => void
   readonly backToFindingList: () => void
@@ -349,7 +356,9 @@ function AssessmentDetail({
 
       <FindingPanel
         state={findings}
+        availableActions={snapshot.availableActions}
         openFindings={openFindings}
+        recordRiskDecision={recordRiskDecision}
         loadMoreFindings={loadMoreFindings}
         selectFinding={selectFinding}
         backToFindingList={backToFindingList}
@@ -365,7 +374,9 @@ function AssessmentDetail({
 
 function FindingPanel({
   state,
+  availableActions,
   openFindings,
+  recordRiskDecision,
   loadMoreFindings,
   selectFinding,
   backToFindingList,
@@ -376,7 +387,9 @@ function FindingPanel({
   t,
 }: {
   readonly state: WorkbenchFindingsStateV1
+  readonly availableActions: AssessmentSnapshotV1['availableActions']
   readonly openFindings: () => void
+  readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
   readonly loadMoreFindings: () => void
   readonly selectFinding: (recordId: string) => void
   readonly backToFindingList: () => void
@@ -474,6 +487,13 @@ function FindingPanel({
     return (
       <FindingDetail
         detail={state.detail}
+        riskDecisionAction={availableActions.find((action): action is RiskDecisionActionV1 => (
+          action.kind === 'RECORD_RISK_DECISION'
+          && action.finding.recordId === state.detail.recordId
+          && action.finding.recordRevision === state.detail.recordRevision
+        ))}
+        riskDecisionSubmission={state.riskDecisionSubmission}
+        recordRiskDecision={recordRiskDecision}
         backToFindingList={backToFindingList}
         selectEvidence={artifactId => {
           evidenceTriggerArtifactId.current = artifactId
@@ -578,12 +598,18 @@ function FindingList({
 
 function FindingDetail({
   detail,
+  riskDecisionAction,
+  riskDecisionSubmission,
+  recordRiskDecision,
   backToFindingList,
   selectEvidence,
   setEvidenceTrigger,
   t,
 }: {
   readonly detail: FindingDetailViewV1
+  readonly riskDecisionAction: RiskDecisionActionV1 | undefined
+  readonly riskDecisionSubmission: WorkbenchRiskDecisionSubmissionStateV1
+  readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
   readonly backToFindingList: () => void
   readonly selectEvidence: (artifactId: string) => void
   readonly setEvidenceTrigger: (artifactId: string, trigger: HTMLButtonElement | null) => void
@@ -593,7 +619,12 @@ function FindingDetail({
     <section className="dsh-security-section dsh-security-finding-detail" aria-labelledby="dsh-security-finding-detail-title">
       <div className="dsh-security-section__header">
         <h2 id="dsh-security-finding-detail-title">{t('findingDetail.title')}</h2>
-        <button type="button" className="dsh-security-secondary-action" onClick={backToFindingList}>
+        <button
+          type="button"
+          className="dsh-security-secondary-action"
+          disabled={riskDecisionSubmission.kind === 'SUBMITTING'}
+          onClick={backToFindingList}
+        >
           {t('findingDetail.back')}
         </button>
       </div>
@@ -609,6 +640,19 @@ function FindingDetail({
         <Fact label={t('findingDetail.riskDecision')} value={detail.riskDecision.state} machine />
         <Fact label={t('findingDetail.attackPath')} value={detail.attackPath.state} machine />
       </dl>
+      {detail.riskDecision.state !== 'NOT_RECORDED' && (
+        <RecordedRiskDecision detail={detail} t={t} />
+      )}
+      {riskDecisionAction !== undefined && (
+        <RiskDecisionForm
+          key={actionKey(riskDecisionAction)}
+          action={riskDecisionAction}
+          detail={detail}
+          submissionState={riskDecisionSubmission}
+          recordRiskDecision={recordRiskDecision}
+          t={t}
+        />
+      )}
       <div className="dsh-security-finding-detail__anchor">
         <strong>{t('findingDetail.sourceAnchor')}</strong>
         <code>{detail.sourceAnchor.path}</code>
@@ -643,6 +687,7 @@ function FindingDetail({
                       type="button"
                       className="dsh-security-evidence-link"
                       aria-label={`${t('evidence.open')} ${link.artifactId}`}
+                      disabled={riskDecisionSubmission.kind === 'SUBMITTING'}
                       onClick={() => { selectEvidence(link.artifactId) }}
                     >
                       <code>{link.artifactId}</code>
@@ -654,6 +699,219 @@ function FindingDetail({
               </ul>
             )}
       </div>
+    </section>
+  )
+}
+
+type RiskDecisionActionV1 = Extract<AssessmentAvailableActionV1, {
+  readonly kind: 'RECORD_RISK_DECISION'
+}>
+
+function RiskDecisionForm({
+  action,
+  detail,
+  submissionState,
+  recordRiskDecision,
+  t,
+}: {
+  readonly action: RiskDecisionActionV1
+  readonly detail: FindingDetailViewV1
+  readonly submissionState: WorkbenchRiskDecisionSubmissionStateV1
+  readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  const exactOption = action.options.find(option => (
+    option.decision === 'ACCEPT' && option.exactMatchRequired
+  ))
+  const onlyOption = action.options.length === 1 ? action.options[0] : undefined
+  const [decision, setDecision] = useState<'' | WorkbenchRiskDecisionSubmissionV1['decision']>(
+    exactOption?.decision ?? onlyOption?.decision ?? '',
+  )
+  const [rationale, setRationale] = useState('')
+  const [controls, setControls] = useState('')
+  const [expiresAt, setExpiresAt] = useState('')
+  const option = action.options.find(candidate => candidate.decision === decision)
+  const exactMatch = option?.decision === 'ACCEPT' && option.exactMatchRequired
+  const pending = exactMatch && detail.riskDecision.state === 'PENDING_DUAL_AUTHORITY'
+    ? detail.riskDecision
+    : undefined
+  const submitting = submissionState.kind === 'SUBMITTING'
+
+  const submit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    if (option === undefined) return
+    let submission: WorkbenchRiskDecisionSubmissionV1
+    if (option.decision === 'DENY') {
+      submission = {
+        decision: 'DENY',
+        rationale,
+        compensatingControls: [],
+        expiresAt: null,
+      }
+    } else if (pending !== undefined) {
+      submission = {
+        decision: 'ACCEPT',
+        rationale: pending.rationale,
+        compensatingControls: pending.compensatingControls,
+        expiresAt: pending.expiresAt,
+      }
+    } else {
+      const parsedExpiry = Date.parse(expiresAt)
+      if (!Number.isFinite(parsedExpiry)) return
+      submission = {
+        decision: 'ACCEPT',
+        rationale,
+        compensatingControls: controls
+          .split(/\r?\n/u)
+          .map(control => control.trim())
+          .filter(control => control.length > 0),
+        expiresAt: new Date(parsedExpiry).toISOString(),
+      }
+    }
+    recordRiskDecision(submission)
+    setRationale('')
+    setControls('')
+    setExpiresAt('')
+  }
+
+  return (
+    <section className="dsh-security-risk-decision" aria-labelledby="dsh-security-risk-decision-title">
+      <div className="dsh-security-section__header">
+        <h2 id="dsh-security-risk-decision-title">{t('riskDecision.title')}</h2>
+        <MachineBadge value={`revision:${action.expectedAssessmentRevision}`} />
+      </div>
+      <p className="dsh-security-readonly-note">{t('riskDecision.immutable')}</p>
+      <dl className="dsh-security-facts">
+        <Fact label={t('riskDecision.finding')} value={`${action.finding.recordId} @ ${action.finding.recordRevision}`} machine />
+        <Fact label={t('riskDecision.authority')} value={t('riskDecision.authorityDerived')} />
+      </dl>
+      <form className="dsh-security-risk-decision__form" onSubmit={submit}>
+        <fieldset disabled={submitting || exactMatch}>
+          <legend>{t('riskDecision.decision')}</legend>
+          <div className="dsh-security-risk-decision__options">
+            {action.options.map(candidate => (
+              <label key={`${candidate.decision}:${candidate.consequence}`}>
+                <input
+                  type="radio"
+                  name={`risk-decision-${action.finding.recordId}`}
+                  value={candidate.decision}
+                  checked={decision === candidate.decision}
+                  required
+                  onChange={() => { setDecision(candidate.decision) }}
+                />
+                <span>{candidate.decision === 'DENY' ? t('riskDecision.deny') : t('riskDecision.accept')}</span>
+                <code>{candidate.consequence}</code>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        {option?.decision === 'ACCEPT' && (
+          <dl className="dsh-security-facts">
+            <Fact label={t('riskDecision.authorizationMode')} value={option.authorizationMode} machine />
+            <Fact label={t('riskDecision.minimumControls')} value={String(option.minimumCompensatingControls)} />
+            <Fact label={t('riskDecision.maximumLifetime')} value={String(option.maximumLifetimeSeconds)} machine />
+            <Fact label={t('riskDecision.attestations')} value={`${option.completedAttestations} / ${option.requiredAttestations}`} />
+            <Fact label={t('riskDecision.exactMatch')} value={String(option.exactMatchRequired)} machine />
+          </dl>
+        )}
+
+        <label className="dsh-security-risk-decision__field">
+          <span>{t('riskDecision.rationale')}</span>
+          <textarea
+            value={pending?.rationale ?? rationale}
+            readOnly={pending !== undefined}
+            required
+            minLength={20}
+            maxLength={2_000}
+            rows={4}
+            onChange={event => { setRationale(event.currentTarget.value) }}
+          />
+        </label>
+
+        {option?.decision === 'ACCEPT' && (
+          <>
+            <label className="dsh-security-risk-decision__field">
+              <span>{t('riskDecision.controls')}</span>
+              <textarea
+                value={pending?.compensatingControls.join('\n') ?? controls}
+                readOnly={pending !== undefined}
+                required
+                rows={3}
+                onChange={event => { setControls(event.currentTarget.value) }}
+              />
+              <small>{t('riskDecision.controlsHint')}</small>
+            </label>
+            <label className="dsh-security-risk-decision__field">
+              <span>{t('riskDecision.expiry')}</span>
+              {pending === undefined
+                ? (
+                    <input
+                      type="datetime-local"
+                      value={expiresAt}
+                      required
+                      onChange={event => { setExpiresAt(event.currentTarget.value) }}
+                    />
+                  )
+                : <code>{pending.expiresAt}</code>}
+            </label>
+          </>
+        )}
+
+        <p className="dsh-security-risk-decision__consequence">
+          <strong>{t('riskDecision.consequence')}</strong>
+          <code>{option?.consequence ?? t('riskDecision.choose')}</code>
+        </p>
+        {exactMatch && <p className="dsh-security-risk-decision__warning">{t('riskDecision.secondAuthority')}</p>}
+        <button
+          type="submit"
+          className="dsh-security-risk-decision__submit"
+          disabled={submitting || option === undefined}
+        >
+          {submitting
+            ? t('riskDecision.submitting')
+            : exactMatch
+              ? t('riskDecision.attest')
+              : t('riskDecision.submit')}
+        </button>
+      </form>
+    </section>
+  )
+}
+
+function RecordedRiskDecision({
+  detail,
+  t,
+}: {
+  readonly detail: FindingDetailViewV1
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  const decision = detail.riskDecision
+  if (decision.state === 'NOT_RECORDED') return null
+  return (
+    <section className="dsh-security-risk-decision" aria-labelledby="dsh-security-recorded-risk-decision-title">
+      <div className="dsh-security-section__header">
+        <h2 id="dsh-security-recorded-risk-decision-title">{t('riskDecision.recordedTitle')}</h2>
+        <MachineBadge value={decision.state} />
+      </div>
+      <dl className="dsh-security-facts">
+        <Fact label={t('riskDecision.authorizationMode')} value={decision.authorizationMode ?? 'SINGLE_AUTHORITY'} machine />
+        <Fact label={t('riskDecision.recordedAt')} value={decision.recordedAt} machine />
+        <Fact label={t('riskDecision.expiry')} value={decision.expiresAt ?? t('value.notAvailable')} machine={decision.expiresAt !== null} />
+        <Fact label={t('riskDecision.rationale')} value={decision.rationale} />
+      </dl>
+      {decision.compensatingControls.length > 0 && (
+        <ul className="dsh-security-metadata-list">
+          {decision.compensatingControls.map(control => <li key={control}>{control}</li>)}
+        </ul>
+      )}
+      {(decision.attestations ?? []).map(attestation => (
+        <div className="dsh-security-risk-decision__attestation" key={attestation.sequence}>
+          <strong>{t('riskDecision.attestation')} {attestation.sequence}</strong>
+          <code>{attestation.decisionMaker.principalId}</code>
+          <code>{attestation.attestedAt}</code>
+        </div>
+      ))}
     </section>
   )
 }

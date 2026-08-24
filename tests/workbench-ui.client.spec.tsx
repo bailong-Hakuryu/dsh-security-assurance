@@ -760,10 +760,322 @@ describe('Security Assurance Workbench UI', () => {
     expect(overlay.view.getAllByText('尚未生成')).toHaveLength(2)
     expect(overlay.view.getByText('RESUME_ASSESSMENT')).toBeTruthy()
     expect(overlay.view.getByText('CANCEL_ASSESSMENT')).toBeTruthy()
-    expect(overlay.view.getByText('可用操作由 Security Service 快照决定；当前工作台为只读。')).toBeTruthy()
+    expect(overlay.view.getByText('操作入口严格来自 Security Service 快照；仅已实现的治理表单可提交。')).toBeTruthy()
     expect(overlay.view.getByRole('button', { name: '查看 Findings' })).toBeTruthy()
     expect(overlay.view.queryByRole('button', { name: 'RESUME_ASSESSMENT' })).toBeNull()
     expect(overlay.view.queryByRole('button', { name: 'CANCEL_ASSESSMENT' })).toBeNull()
+
+    await b.feature.dispose()
+    await b.gateway.dispose()
+    await b.runtime.dispose()
+  })
+
+  it('submits a governed Risk Decision without accepting browser-authored authority', async () => {
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000082')
+    const summary = findingSummaryItem(id)
+    const detail = findingDetailView(summary)
+    const snapshot: AssessmentSnapshotV1 = {
+      ...readySnapshot(id),
+      availableActions: [{
+        kind: 'RECORD_RISK_DECISION',
+        expectedAssessmentRevision: 7,
+        finding: {
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        },
+        options: [{
+          decision: 'DENY',
+          consequence: 'KEEPS_FINDING_BLOCKING',
+        }],
+      }],
+    }
+    const committed: AssessmentSnapshotV1 = {
+      ...snapshot,
+      assessmentRevision: 8,
+      availableActions: [],
+      updatedAt: '2026-08-24T00:08:00.000Z',
+    }
+    const riskPayloads: unknown[] = []
+    let assessmentReads = 0
+    const b = await bench((_path, endpoint, payload, signal) => {
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        assessmentReads += 1
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: assessmentReads === 1 ? snapshot : committed },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/waitForAssessmentRevision') {
+        return new Promise(resolve => {
+          signal.addEventListener('abort', () => {
+            resolve({ ok: false, error: { code: 'aborted' } })
+          }, { once: true })
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: id,
+              assessmentRevision: 7,
+              findings: [summary],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/recordRiskDecision') {
+        riskPayloads.push(payload)
+        const idempotencyKey = (payload as {
+          readonly args: { readonly request: { readonly idempotencyKey: string } }
+        }).args.request.idempotencyKey
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              operation: 'record_risk_decision',
+              assessmentId: id,
+              assessmentRevision: 8,
+              acceptedState: 'BLOCKED',
+              decisionId: 'risk-decision-00000000-0000-0000-0000-000000000082',
+              finding: {
+                recordId: summary.recordId,
+                recordRevision: summary.recordRevision,
+              },
+              decision: 'DENY',
+              resolution: 'DENIED',
+              idempotencyKey,
+              recordedAt: '2026-08-24T00:08:00.000Z',
+              correlationId: 'sec-00000000-0000-0000-0000-000000000082',
+            },
+          },
+        })
+      }
+      return Promise.reject(new Error(`Unexpected endpoint: ${endpoint}`))
+    })
+    const launcher = b.runtime.renderSlot('sidebar.footer.action', { wide: true })
+    const overlay = b.runtime.renderSlot('shell.overlay', {})
+    const authorityId = authorityContextId('workbench-session-risk-decision-ui')
+    await act(async () => {
+      fireEvent.click(launcher.view.getByRole('button', { name: '打开安全保障工作台' }))
+      await b.controller.openAssessment({
+        securityAssuranceWorkbenchContextId: authorityId,
+        assessmentId: id,
+      })
+      await b.controller.openFindings()
+      await b.controller.selectFinding(summary.recordId)
+    })
+
+    expect(overlay.view.getByRole('heading', { name: '风险决策' })).toBeTruthy()
+    expect(overlay.view.getAllByText('KEEPS_FINDING_BLOCKING')).toHaveLength(2)
+    expect(overlay.view.getByText('由当前宿主认证上下文派生')).toBeTruthy()
+    expect(overlay.view.queryByLabelText('决策者身份')).toBeNull()
+    const rationale = overlay.view.getByRole('textbox', { name: '理由' })
+    fireEvent.change(rationale, {
+      target: { value: 'The validated risk must remain blocking for this release.' },
+    })
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '记录风险决策' }))
+    })
+
+    expect(riskPayloads).toHaveLength(1)
+    expect(riskPayloads[0]).toMatchObject({
+      args: {
+        request: {
+          decision: 'DENY',
+          expectedAssessmentRevision: 7,
+          rationale: 'The validated risk must remain blocking for this release.',
+          compensatingControls: [],
+          expiresAt: null,
+        },
+      },
+    })
+    expect(JSON.stringify(riskPayloads[0])).not.toContain('principalId')
+    expect(overlay.view.queryByRole('heading', { name: '风险决策' })).toBeNull()
+    expect(overlay.view.queryByText('The validated risk must remain blocking for this release.')).toBeNull()
+    expect(overlay.view.getByRole('button', { name: '查看 Findings' })).toBeTruthy()
+
+    await b.feature.dispose()
+    await b.gateway.dispose()
+    await b.runtime.dispose()
+  })
+
+  it('completes Critical Dual Authority only with the exact prior attestation fields', async () => {
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000083')
+    const summary: FindingSummaryV1 = {
+      ...findingSummaryItem(id),
+      technicalSeverity: 'CRITICAL',
+    }
+    const snapshot: AssessmentSnapshotV1 = {
+      ...readySnapshot(id),
+      availableActions: [{
+        kind: 'RECORD_RISK_DECISION',
+        expectedAssessmentRevision: 7,
+        finding: {
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        },
+        options: [{
+          decision: 'ACCEPT',
+          consequence: 'MAKES_FINDING_NON_BLOCKING',
+          authorizationMode: 'CRITICAL_DUAL_AUTHORITY',
+          minimumCompensatingControls: 2,
+          maximumLifetimeSeconds: 86_400,
+          requiredAttestations: 2,
+          completedAttestations: 1,
+          exactMatchRequired: true,
+        }],
+      }],
+    }
+    const rationale = 'Two independent operators attest to this bounded critical exception.'
+    const compensatingControls = [
+      'Disable the affected route at the edge.',
+      'Monitor every attempted invocation.',
+    ]
+    const expiresAt = '2026-08-25T00:00:00.000Z'
+    const detail: FindingDetailViewV1 = {
+      ...findingDetailView(summary),
+      riskDecision: {
+        state: 'PENDING_DUAL_AUTHORITY',
+        decisionId: 'risk-decision-00000000-0000-0000-0000-000000000083',
+        authorizationMode: 'CRITICAL_DUAL_AUTHORITY',
+        rationale,
+        compensatingControls,
+        expiresAt,
+        decisionMaker: { kind: 'host-operator', principalId: 'operator-first' },
+        scope: {
+          subjectDigest: snapshot.subject.digest,
+          policyDigest: snapshot.policy.digest,
+        },
+        attestations: [{
+          sequence: 1,
+          decisionMaker: { kind: 'host-operator', principalId: 'operator-first' },
+          authorizationEvidence: {
+            permission: 'risk:break-glass',
+            invocationClass: 'independently-authenticated',
+          },
+          attestedAt: '2026-08-24T23:30:00.000Z',
+        }],
+        recordedAt: '2026-08-24T23:30:00.000Z',
+      },
+    }
+    const committed: AssessmentSnapshotV1 = {
+      ...snapshot,
+      assessmentRevision: 8,
+      availableActions: [],
+      updatedAt: '2026-08-24T23:31:00.000Z',
+    }
+    const riskPayloads: unknown[] = []
+    let assessmentReads = 0
+    const b = await bench((_path, endpoint, payload, signal) => {
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        assessmentReads += 1
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: assessmentReads === 1 ? snapshot : committed },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/waitForAssessmentRevision') {
+        return new Promise(resolve => {
+          signal.addEventListener('abort', () => {
+            resolve({ ok: false, error: { code: 'aborted' } })
+          }, { once: true })
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: id,
+              assessmentRevision: 7,
+              findings: [summary],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/recordRiskDecision') {
+        riskPayloads.push(payload)
+        const idempotencyKey = (payload as {
+          readonly args: { readonly request: { readonly idempotencyKey: string } }
+        }).args.request.idempotencyKey
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              operation: 'record_risk_decision',
+              assessmentId: id,
+              assessmentRevision: 8,
+              acceptedState: 'BLOCKED',
+              decisionId: 'risk-decision-00000000-0000-0000-0000-000000000083',
+              finding: {
+                recordId: summary.recordId,
+                recordRevision: summary.recordRevision,
+              },
+              decision: 'ACCEPT',
+              resolution: 'ACCEPTED',
+              idempotencyKey,
+              recordedAt: '2026-08-24T23:31:00.000Z',
+              correlationId: 'sec-00000000-0000-0000-0000-000000000083',
+            },
+          },
+        })
+      }
+      return Promise.reject(new Error(`Unexpected endpoint: ${endpoint}`))
+    })
+    const launcher = b.runtime.renderSlot('sidebar.footer.action', { wide: true })
+    const overlay = b.runtime.renderSlot('shell.overlay', {})
+    await act(async () => {
+      fireEvent.click(launcher.view.getByRole('button', { name: '打开安全保障工作台' }))
+      await b.controller.openAssessment({
+        securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-critical-second'),
+        assessmentId: id,
+      })
+      await b.controller.openFindings()
+      await b.controller.selectFinding(summary.recordId)
+    })
+
+    expect(overlay.view.getByRole('heading', { name: '已记录的风险决策' })).toBeTruthy()
+    expect(overlay.view.getByText('operator-first')).toBeTruthy()
+    expect(overlay.view.getByText('1 / 2')).toBeTruthy()
+    expect(overlay.view.getByText('必须精确匹配首次证明')).toBeTruthy()
+    expect(overlay.view.getByRole<HTMLInputElement>('radio').matches(':disabled')).toBe(true)
+    expect(overlay.view.getByRole<HTMLTextAreaElement>('textbox', { name: '理由' }).readOnly).toBe(true)
+    expect(overlay.view.getByRole<HTMLTextAreaElement>('textbox', { name: /^补偿控制/u }).readOnly).toBe(true)
+    expect(overlay.view.queryByLabelText('决策者身份')).toBeNull()
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '提交第二次独立证明' }))
+    })
+
+    expect(riskPayloads).toHaveLength(1)
+    expect(riskPayloads[0]).toMatchObject({
+      args: {
+        request: {
+          decision: 'ACCEPT',
+          rationale,
+          compensatingControls,
+          expiresAt,
+        },
+      },
+    })
+    expect(JSON.stringify(riskPayloads[0])).not.toContain('principalId')
+    expect(overlay.view.queryByRole('heading', { name: '风险决策' })).toBeNull()
 
     await b.feature.dispose()
     await b.gateway.dispose()

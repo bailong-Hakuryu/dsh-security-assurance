@@ -252,6 +252,7 @@ if (
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.loadMoreFindings !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectFinding !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.backToFindingList !== 'function'
+  || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.recordRiskDecision !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectEvidence !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.discloseEvidence !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.hideEvidenceDisclosure !== 'function'
