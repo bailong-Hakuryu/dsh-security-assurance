@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import SecurityAssuranceService, {
   analyzerContributionV1Schema,
   evidenceViewV1Schema,
+  riskDecisionRecordV1Schema,
   securityAssuranceSubmissionV1Schema,
   securitySubmissionJsonV1Schema,
 } from '../src/index.ts'
@@ -31,6 +32,7 @@ afterEach(async () => {
 
 async function validationRepositoryFixture(
   referenceControl: 'VIOLATED' | 'SATISFIED',
+  referenceImpact: 'HIGH' | 'CRITICAL' = 'HIGH',
 ): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-security-external-validation-'))
   temporaryRoots.push(root)
@@ -40,7 +42,7 @@ async function validationRepositoryFixture(
   await writeFile(join(root, 'package.json'), `${JSON.stringify({
     name: 'external-validation-fixture',
     version: '1.0.0',
-    dshSecurity: { referenceControl },
+    dshSecurity: { referenceControl, referenceImpact },
   }, null, 2)}\n`, 'utf8')
   await run('git', ['add', '.'], { cwd: root })
   await run('git', ['commit', '-m', 'external validation fixture'], { cwd: root })
@@ -51,6 +53,7 @@ interface ReferenceValidationScenario<Observation = undefined> {
   readonly id: string
   readonly referenceControl: 'VIOLATED' | 'SATISFIED'
   readonly observedValue: 'VIOLATED' | 'SATISFIED'
+  readonly technicalSeverity?: 'HIGH' | 'CRITICAL'
   readonly candidateHex: string
   readonly additionalCandidateHexes?: readonly string[]
   readonly additionalObservedValues?: readonly ('VIOLATED' | 'SATISFIED')[]
@@ -59,6 +62,12 @@ interface ReferenceValidationScenario<Observation = undefined> {
   readonly requestedStrongerControlIds?: readonly string[]
   readonly beforeInspectState?: 'SEALED' | 'BLOCKED'
   readonly skipSubmissionAfterInspect?: boolean
+  readonly restartBeforeInspect?: boolean
+  readonly beforeRestart?: (
+    service: SecurityAssuranceService,
+    invocation: SecurityInvocation,
+    assessmentId: AssessmentId,
+  ) => Promise<unknown>
   readonly inspect?: (
     service: SecurityAssuranceService,
     invocation: SecurityInvocation,
@@ -95,11 +104,15 @@ async function waitUntilAssessmentState(
 async function runReferenceValidationScenario<Observation = undefined>(
   scenario: ReferenceValidationScenario<Observation>,
 ) {
-  const repository = await validationRepositoryFixture(scenario.referenceControl)
+  const repository = await validationRepositoryFixture(
+    scenario.referenceControl,
+    scenario.technicalSeverity,
+  )
   const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-external-validation-home-'))
   temporaryRoots.push(dshHome)
   const ctx = new Context()
-  const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+  let activeFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+  let activeService = ctx.securityAssurance
   const descriptor: AnalyzerDescriptorV1 = {
     schemaVersion: 1,
     analyzerId: 'fixture/reference-validator',
@@ -225,6 +238,7 @@ async function runReferenceValidationScenario<Observation = undefined>(
               subjectDigest: input.subject.digest,
               sourceAnchor,
               observedValue: observedValues[index],
+              observedImpact: scenario.technicalSeverity ?? 'HIGH',
               ...(scenario.evidencePaddingBytes === undefined
                 ? {}
                 : { padding: 'x'.repeat(scenario.evidencePaddingBytes) }),
@@ -238,14 +252,22 @@ async function runReferenceValidationScenario<Observation = undefined>(
     }),
   )
   const disposeQualification = ctx.securityAssurance.registerAnalyzerQualification(qualification)
+  let registrationsDisposed = false
+
+  const disposeRegistrations = () => {
+    if (registrationsDisposed) return
+    registrationsDisposed = true
+    disposeQualification()
+    disposeAnalyzer()
+  }
 
   try {
-    const invocation = referenceHostInvocation(ctx.securityAssurance)
+    let invocation = referenceHostInvocation(activeService)
     const platform = process.platform
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)
     }
-    const registered = await ctx.securityAssurance.registerRepository(invocation, {
+    const registered = await activeService.registerRepository(invocation, {
       schemaVersion: 1,
       idempotencyKey: `external-validation-register-${scenario.id}`,
       root: repository,
@@ -260,7 +282,7 @@ async function runReferenceValidationScenario<Observation = undefined>(
       },
     })
     if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
-    const started = await ctx.securityAssurance.startAssessment(invocation, {
+    const started = await activeService.startAssessment(invocation, {
       schemaVersion: 1,
       idempotencyKey: `external-validation-assessment-${scenario.id}`,
       repositoryId: registered.value.repositoryId,
@@ -272,36 +294,86 @@ async function runReferenceValidationScenario<Observation = undefined>(
     })
     if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
     await waitUntilAssessmentState(
-      ctx.securityAssurance,
+      activeService,
       invocation,
       started.value.assessmentId,
       scenario.beforeInspectState ?? 'SEALED',
     )
+    const beforeRestartObservation = scenario.beforeRestart === undefined
+      ? undefined
+      : await scenario.beforeRestart(activeService, invocation, started.value.assessmentId)
+    if (scenario.restartBeforeInspect === true) {
+      disposeRegistrations()
+      await activeFiber.dispose()
+      const restartedContext = new Context()
+      activeFiber = await restartedContext.plugin(SecurityAssuranceService, { dshHome })
+      activeService = restartedContext.securityAssurance
+      invocation = referenceHostInvocation(activeService)
+    }
     const observation = scenario.inspect === undefined
       ? undefined
-      : await scenario.inspect(ctx.securityAssurance, invocation, started.value.assessmentId)
-    const assessment = await ctx.securityAssurance.getAssessment(invocation, {
+      : await scenario.inspect(activeService, invocation, started.value.assessmentId)
+    const assessment = await activeService.getAssessment(invocation, {
       schemaVersion: 1,
       assessmentId: started.value.assessmentId,
     })
     if (!assessment.ok) throw new Error(`query failed: ${assessment.error.code}`)
     if (scenario.skipSubmissionAfterInspect === true) {
-      return { assessment: assessment.value, candidateId, observation, submission: undefined }
+      return {
+        assessment: assessment.value,
+        candidateId,
+        beforeRestartObservation,
+        observation,
+        submission: undefined,
+      }
     }
-    const submission = await ctx.securityAssurance.getAssuranceSubmission(invocation, {
+    const submission = await activeService.getAssuranceSubmission(invocation, {
       schemaVersion: 1,
       assessmentId: started.value.assessmentId,
     })
     if (!submission.ok) throw new Error(`submission failed: ${submission.error.code}`)
-    return { assessment: assessment.value, candidateId, observation, submission: submission.value }
+    return {
+      assessment: assessment.value,
+      candidateId,
+      beforeRestartObservation,
+      observation,
+      submission: submission.value,
+    }
   } finally {
-    disposeQualification()
-    disposeAnalyzer()
-    await fiber.dispose()
+    disposeRegistrations()
+    await activeFiber.dispose()
   }
 }
 
 describe('external Analyzer Candidate validation', () => {
+  it('parses legacy single-authority Risk Decision v1 records without rewriting canonical fields', () => {
+    const legacyRecord = {
+      schemaVersion: 1 as const,
+      decisionId: 'risk-decision-00000000-0000-4000-8000-000000000001',
+      assessmentId: 'asm-00000000-0000-4000-8000-000000000001' as const,
+      finding: {
+        recordId: `finding-${'d'.repeat(64)}`,
+        recordRevision: 1,
+      },
+      decision: 'ACCEPT' as const,
+      resolution: 'ACCEPTED' as const,
+      rationale: 'A legacy ordinary acceptance remains readable without canonical field injection.',
+      compensatingControls: ['Keep the deployment behind the authenticated internal gateway.'],
+      expiresAt: '2026-08-25T00:00:00.000Z',
+      decisionMaker: {
+        kind: 'host-operator' as const,
+        principalId: 'legacy-risk-operator',
+      },
+      recordedAt: '2026-08-24T00:00:00.000Z',
+    }
+
+    const parsed = riskDecisionRecordV1Schema.parse(legacyRecord)
+
+    expect(parsed).toEqual(legacyRecord)
+    expect('authorizationMode' in parsed).toBe(false)
+    expect('attestations' in parsed).toBe(false)
+  })
+
   it('keeps Submission v1 readable when a pre-Risk-Decision sealed record has no decision artifact', async () => {
     const { submission } = await runReferenceValidationScenario({
       id: 'legacy-submission-without-risk-decisions',
@@ -445,6 +517,771 @@ describe('external Analyzer Candidate validation', () => {
       },
     })
     expect(submission).toBeUndefined()
+  })
+
+  it('opens a Critical Dual Authority window only when break-glass is explicitly frozen', async () => {
+    const { assessment, observation } = await runReferenceValidationScenario({
+      id: 'critical-break-glass-window',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      technicalSeverity: 'CRITICAL',
+      candidateHex: '4',
+      requestedStrongerControlIds: [
+        'security/risk-decision-window-v1',
+        'security/critical-break-glass-v1',
+      ],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: (service, invocation, assessmentId) => service.listFindings(invocation, {
+        schemaVersion: 1,
+        assessmentId,
+        limit: 10,
+      }),
+    })
+
+    expect(assessment).toMatchObject({
+      assessmentRevision: 3,
+      state: 'BLOCKED',
+      verdict: null,
+      seal: null,
+    })
+    expect(observation).toMatchObject({
+      ok: true,
+      value: {
+        assessmentRevision: 3,
+        findings: [{
+          technicalSeverity: 'CRITICAL',
+          policySignificance: 'BLOCKING',
+        }],
+      },
+    })
+  })
+
+  it('does not admit Critical acceptance under the ordinary Risk Decision control', async () => {
+    const { assessment, observation } = await runReferenceValidationScenario({
+      id: 'critical-without-break-glass-policy',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      technicalSeverity: 'CRITICAL',
+      candidateHex: '8',
+      requestedStrongerControlIds: ['security/risk-decision-window-v1'],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed }
+        const finding = listed.value.findings[0]
+        return service.recordRiskDecision(invocation, {
+          schemaVersion: 1,
+          idempotencyKey: 'critical-without-break-glass-policy-v1',
+          assessmentId,
+          expectedAssessmentRevision: listed.value.assessmentRevision,
+          finding: {
+            recordId: finding.recordId,
+            recordRevision: finding.recordRevision,
+          },
+          decision: 'ACCEPT',
+          rationale: 'Critical risk cannot be accepted when only the ordinary decision window was frozen.',
+          compensatingControls: [
+            'Keep the affected deployment isolated from every public ingress.',
+            'Require continuous operator monitoring until the emergency window closes.',
+          ],
+          expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1_000).toISOString(),
+        })
+      },
+    })
+
+    expect(observation).toMatchObject({ ok: false, error: { code: 'CONFLICT' } })
+    expect(assessment).toMatchObject({ assessmentRevision: 3, state: 'BLOCKED', seal: null })
+  })
+
+  it('allows ordinary Decision Authority to deny Critical risk without break-glass authority', async () => {
+    const { assessment, observation } = await runReferenceValidationScenario({
+      id: 'critical-denial-without-break-glass',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      technicalSeverity: 'CRITICAL',
+      candidateHex: 'b',
+      requestedStrongerControlIds: ['security/risk-decision-window-v1'],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed }
+        const finding = listed.value.findings[0]
+        const ordinaryDecisionInvocation = referenceHostInvocationWithPermissions(
+          service,
+          ['assessment:read', 'risk:decide'],
+          'critical-risk-denier',
+        )
+        const receipt = await service.recordRiskDecision(ordinaryDecisionInvocation, {
+          schemaVersion: 1,
+          idempotencyKey: 'critical-risk-denial-v1',
+          assessmentId,
+          expectedAssessmentRevision: listed.value.assessmentRevision,
+          finding: { recordId: finding.recordId, recordRevision: finding.recordRevision },
+          decision: 'DENY',
+          rationale: 'Critical risk is denied and must remain blocking until the affected Subject is remediated.',
+          compensatingControls: [],
+          expiresAt: null,
+        })
+        if (!receipt.ok) return { listed, receipt }
+        await waitUntilAssessmentState(service, invocation, assessmentId, 'SEALED')
+        return {
+          listed,
+          receipt,
+          sealed: await service.getAssessment(invocation, { schemaVersion: 1, assessmentId }),
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      receipt: {
+        ok: true,
+        value: { assessmentRevision: 4, decision: 'DENY', resolution: 'DENIED' },
+      },
+      sealed: {
+        ok: true,
+        value: { assessmentRevision: 5, state: 'SEALED', verdict: 'FAILED' },
+      },
+    })
+    expect(assessment).toMatchObject({
+      assessmentRevision: 5,
+      state: 'SEALED',
+      verdict: 'FAILED',
+    })
+  })
+
+  it('records the first Critical break-glass approval as pending without sealing', async () => {
+    const rationale = 'Critical exposure is temporarily accepted only for the isolated emergency recovery window.'
+    const controls = [
+      'Keep the affected deployment isolated from every public ingress.',
+      'Require continuous operator monitoring until the emergency window closes.',
+    ]
+    const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1_000).toISOString()
+    const { assessment, observation } = await runReferenceValidationScenario({
+      id: 'critical-first-attestation',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      technicalSeverity: 'CRITICAL',
+      candidateHex: '5',
+      requestedStrongerControlIds: [
+        'security/risk-decision-window-v1',
+        'security/critical-break-glass-v1',
+      ],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed }
+        const finding = listed.value.findings[0]
+        const receipt = await service.recordRiskDecision(invocation, {
+          schemaVersion: 1,
+          idempotencyKey: 'critical-first-attestation-v1',
+          assessmentId,
+          expectedAssessmentRevision: listed.value.assessmentRevision,
+          finding: {
+            recordId: finding.recordId,
+            recordRevision: finding.recordRevision,
+          },
+          decision: 'ACCEPT',
+          rationale,
+          compensatingControls: controls,
+          expiresAt,
+        })
+        const after = await service.getAssessment(invocation, { schemaVersion: 1, assessmentId })
+        const afterList = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!afterList.ok || afterList.value.findings[0] === undefined) {
+          return { listed, receipt, after, afterList }
+        }
+        const current = afterList.value.findings[0]
+        return {
+          listed,
+          receipt,
+          after,
+          afterList,
+          detail: await service.getFinding(invocation, {
+            schemaVersion: 1,
+            assessmentId,
+            assessmentRevision: afterList.value.assessmentRevision,
+            recordId: current.recordId,
+            recordRevision: current.recordRevision,
+          }),
+          submission: await service.getAssuranceSubmission(invocation, {
+            schemaVersion: 1,
+            assessmentId,
+          }),
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      receipt: {
+        ok: true,
+        value: {
+          assessmentRevision: 4,
+          decision: 'ACCEPT',
+          resolution: 'PENDING_DUAL_AUTHORITY',
+        },
+      },
+      after: {
+        ok: true,
+        value: {
+          assessmentRevision: 4,
+          state: 'BLOCKED',
+          verdict: null,
+          seal: null,
+        },
+      },
+      detail: {
+        ok: true,
+        value: {
+          technicalSeverity: { value: 'CRITICAL' },
+          policySignificance: 'BLOCKING',
+          riskDecision: {
+            state: 'PENDING_DUAL_AUTHORITY',
+            authorizationMode: 'CRITICAL_DUAL_AUTHORITY',
+            rationale,
+            compensatingControls: controls,
+            expiresAt,
+            attestations: [{
+              sequence: 1,
+              decisionMaker: {
+                kind: 'host-operator',
+                principalId: 'reference-host-operator',
+              },
+              authorizationEvidence: {
+                permission: 'risk:break-glass',
+                invocationClass: 'independently-authenticated',
+              },
+            }],
+          },
+        },
+      },
+      submission: { ok: false, error: { code: 'CONFLICT' } },
+    })
+    expect(assessment).toMatchObject({
+      assessmentRevision: 4,
+      state: 'BLOCKED',
+      verdict: null,
+      seal: null,
+    })
+  })
+
+  it('accepts Critical risk only after a distinct independently authenticated matching approval', async () => {
+    const rationale = 'Critical exposure is temporarily accepted only for the isolated emergency recovery window.'
+    const controls = [
+      'Keep the affected deployment isolated from every public ingress.',
+      'Require continuous operator monitoring until the emergency window closes.',
+    ]
+    const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1_000).toISOString()
+    const { observation } = await runReferenceValidationScenario({
+      id: 'critical-second-attestation',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      technicalSeverity: 'CRITICAL',
+      candidateHex: '6',
+      requestedStrongerControlIds: [
+        'security/risk-decision-window-v1',
+        'security/critical-break-glass-v1',
+      ],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: async (service, firstInvocation, assessmentId) => {
+        const initial = await service.listFindings(firstInvocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!initial.ok || initial.value.findings[0] === undefined) return { initial }
+        const finding = initial.value.findings[0]
+        const decisionCore = {
+          schemaVersion: 1,
+          assessmentId,
+          finding: {
+            recordId: finding.recordId,
+            recordRevision: finding.recordRevision,
+          },
+          decision: 'ACCEPT',
+          rationale,
+          compensatingControls: controls,
+          expiresAt,
+        } as const
+        const firstRequest = {
+          ...decisionCore,
+          idempotencyKey: 'critical-dual-first-v1',
+          expectedAssessmentRevision: initial.value.assessmentRevision,
+        } as const
+        const first = await service.recordRiskDecision(firstInvocation, firstRequest)
+        if (!first.ok) return { initial, first }
+        const pending = await service.listFindings(firstInvocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!pending.ok) return { initial, first, pending }
+        const secondInvocation = referenceHostInvocation(service, 'critical-second-operator')
+        const secondRequest = {
+          ...decisionCore,
+          idempotencyKey: 'critical-dual-second-v1',
+          expectedAssessmentRevision: pending.value.assessmentRevision,
+        } as const
+        const second = await service.recordRiskDecision(secondInvocation, secondRequest)
+        if (!second.ok) return { initial, first, pending, second }
+        await waitUntilAssessmentState(service, secondInvocation, assessmentId, 'SEALED')
+        const firstReplay = await service.recordRiskDecision(firstInvocation, firstRequest)
+        const secondReplay = await service.recordRiskDecision(secondInvocation, secondRequest)
+        const sealedList = await service.listFindings(secondInvocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!sealedList.ok || sealedList.value.findings[0] === undefined) {
+          return { initial, first, firstReplay, pending, second, secondReplay, sealedList }
+        }
+        const sealedFinding = sealedList.value.findings[0]
+        return {
+          initial,
+          first,
+          firstReplay,
+          pending,
+          second,
+          secondReplay,
+          assessment: await service.getAssessment(secondInvocation, {
+            schemaVersion: 1,
+            assessmentId,
+          }),
+          detail: await service.getFinding(secondInvocation, {
+            schemaVersion: 1,
+            assessmentId,
+            assessmentRevision: sealedList.value.assessmentRevision,
+            recordId: sealedFinding.recordId,
+            recordRevision: sealedFinding.recordRevision,
+          }),
+          submission: await service.getAssuranceSubmission(secondInvocation, {
+            schemaVersion: 1,
+            assessmentId,
+          }),
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      first: {
+        ok: true,
+        value: { assessmentRevision: 4, resolution: 'PENDING_DUAL_AUTHORITY' },
+      },
+      second: {
+        ok: true,
+        value: { assessmentRevision: 5, resolution: 'ACCEPTED' },
+      },
+      firstReplay: { ok: true },
+      secondReplay: { ok: true },
+      assessment: {
+        ok: true,
+        value: { assessmentRevision: 6, state: 'SEALED', verdict: 'SATISFIED' },
+      },
+      detail: {
+        ok: true,
+        value: {
+          technicalSeverity: { value: 'CRITICAL' },
+          policySignificance: 'NON_BLOCKING',
+          riskDecision: {
+            state: 'ACCEPTED',
+            authorizationMode: 'CRITICAL_DUAL_AUTHORITY',
+            rationale,
+            compensatingControls: controls,
+            expiresAt,
+            decisionMaker: {
+              kind: 'host-operator',
+              principalId: 'reference-host-operator',
+            },
+            attestations: [{
+              sequence: 1,
+              decisionMaker: { principalId: 'reference-host-operator' },
+            }, {
+              sequence: 2,
+              decisionMaker: { principalId: 'critical-second-operator' },
+            }],
+          },
+        },
+      },
+      submission: {
+        ok: true,
+        value: {
+          payload: {
+            assessment: { assessmentRevision: 6, verdict: 'SATISFIED' },
+            riskDecisions: {
+              value: {
+                decisions: [{
+                  authorizationMode: 'CRITICAL_DUAL_AUTHORITY',
+                  resolution: 'ACCEPTED',
+                  attestations: [{
+                    sequence: 1,
+                    decisionMaker: { principalId: 'reference-host-operator' },
+                  }, {
+                    sequence: 2,
+                    decisionMaker: { principalId: 'critical-second-operator' },
+                  }],
+                }],
+              },
+            },
+          },
+        },
+      },
+    })
+    if (
+      observation !== undefined
+      && typeof observation === 'object'
+      && 'first' in observation
+      && 'firstReplay' in observation
+      && 'second' in observation
+      && 'secondReplay' in observation
+    ) {
+      expect(observation.firstReplay).toEqual(observation.first)
+      expect(observation.secondReplay).toEqual(observation.second)
+    }
+  })
+
+  it('does not confuse repeated sessions, mismatched forms, or weak controls with Dual Authority', async () => {
+    const rationale = 'Critical exposure is temporarily accepted only for the isolated emergency recovery window.'
+    const controls = [
+      'Keep the affected deployment isolated from every public ingress.',
+      'Require continuous operator monitoring until the emergency window closes.',
+    ]
+    const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1_000).toISOString()
+    const { assessment, observation } = await runReferenceValidationScenario({
+      id: 'critical-dual-authority-boundaries',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      technicalSeverity: 'CRITICAL',
+      candidateHex: '7',
+      requestedStrongerControlIds: [
+        'security/risk-decision-window-v1',
+        'security/critical-break-glass-v1',
+      ],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: async (service, firstInvocation, assessmentId) => {
+        const initial = await service.listFindings(firstInvocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!initial.ok || initial.value.findings[0] === undefined) return { initial }
+        const finding = initial.value.findings[0]
+        const decisionCore = {
+          schemaVersion: 1,
+          assessmentId,
+          expectedAssessmentRevision: initial.value.assessmentRevision,
+          finding: {
+            recordId: finding.recordId,
+            recordRevision: finding.recordRevision,
+          },
+          decision: 'ACCEPT',
+          rationale,
+          compensatingControls: controls,
+          expiresAt,
+        } as const
+        const weakControls = await service.recordRiskDecision(firstInvocation, {
+          ...decisionCore,
+          idempotencyKey: 'critical-weak-controls-v1',
+          compensatingControls: ['Keep the affected deployment isolated from every public ingress.'],
+        })
+        const excessiveExpiry = await service.recordRiskDecision(firstInvocation, {
+          ...decisionCore,
+          idempotencyKey: 'critical-excessive-expiry-v1',
+          expiresAt: new Date(Date.now() + 25 * 60 * 60 * 1_000).toISOString(),
+        })
+        const firstRequest = {
+          ...decisionCore,
+          idempotencyKey: 'critical-boundary-first-v1',
+        }
+        const first = await service.recordRiskDecision(firstInvocation, firstRequest)
+        if (!first.ok) return { initial, weakControls, excessiveExpiry, first }
+        const firstReplay = await service.recordRiskDecision(firstInvocation, firstRequest)
+        const pending = await service.listFindings(firstInvocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!pending.ok) {
+          return { initial, weakControls, excessiveExpiry, first, firstReplay, pending }
+        }
+        const secondCore = {
+          ...decisionCore,
+          expectedAssessmentRevision: pending.value.assessmentRevision,
+        }
+        const samePrincipalNewInvocation = referenceHostInvocation(
+          service,
+          'reference-host-operator',
+        )
+        const repeatedPrincipal = await service.recordRiskDecision(samePrincipalNewInvocation, {
+          ...secondCore,
+          idempotencyKey: 'critical-repeated-principal-v1',
+        })
+        const distinctInvocation = referenceHostInvocation(service, 'critical-distinct-operator')
+        const mismatch = await service.recordRiskDecision(distinctInvocation, {
+          ...secondCore,
+          idempotencyKey: 'critical-mismatched-form-v1',
+          rationale: 'A different rationale cannot complete the pending Critical acceptance decision.',
+        })
+        const unqualifiedInvocation = referenceHostInvocationWithPermissions(
+          service,
+          ['assessment:read', 'risk:decide'],
+          'critical-unqualified-operator',
+        )
+        const unqualified = await service.recordRiskDecision(unqualifiedInvocation, {
+          ...secondCore,
+          idempotencyKey: 'critical-unqualified-second-v1',
+        })
+        return {
+          initial,
+          weakControls,
+          excessiveExpiry,
+          first,
+          firstReplay,
+          repeatedPrincipal,
+          mismatch,
+          unqualified,
+          after: await service.getAssessment(firstInvocation, { schemaVersion: 1, assessmentId }),
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      weakControls: { ok: false, error: { code: 'CONFLICT' } },
+      excessiveExpiry: { ok: false, error: { code: 'CONFLICT' } },
+      first: {
+        ok: true,
+        value: { assessmentRevision: 4, resolution: 'PENDING_DUAL_AUTHORITY' },
+      },
+      firstReplay: { ok: true },
+      repeatedPrincipal: { ok: false, error: { code: 'CONFLICT' } },
+      mismatch: { ok: false, error: { code: 'CONFLICT' } },
+      unqualified: { ok: false, error: { code: 'UNAUTHORIZED' } },
+      after: {
+        ok: true,
+        value: { assessmentRevision: 4, state: 'BLOCKED', verdict: null, seal: null },
+      },
+    })
+    if (
+      observation !== undefined
+      && typeof observation === 'object'
+      && 'first' in observation
+      && 'firstReplay' in observation
+    ) expect(observation.firstReplay).toEqual(observation.first)
+    expect(assessment).toMatchObject({
+      assessmentRevision: 4,
+      state: 'BLOCKED',
+      verdict: null,
+      seal: null,
+    })
+  })
+
+  it('leaves an expired first Critical attestation pending and auditable', async () => {
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString()
+    const { assessment, observation } = await runReferenceValidationScenario({
+      id: 'critical-expired-first-attestation',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      technicalSeverity: 'CRITICAL',
+      candidateHex: '9',
+      requestedStrongerControlIds: [
+        'security/risk-decision-window-v1',
+        'security/critical-break-glass-v1',
+      ],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: async (service, firstInvocation, assessmentId) => {
+        const listed = await service.listFindings(firstInvocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed }
+        const finding = listed.value.findings[0]
+        const decisionCore = {
+          schemaVersion: 1,
+          assessmentId,
+          finding: { recordId: finding.recordId, recordRevision: finding.recordRevision },
+          decision: 'ACCEPT',
+          rationale: 'Critical exposure is temporarily accepted only for the isolated emergency recovery window.',
+          compensatingControls: [
+            'Keep the affected deployment isolated from every public ingress.',
+            'Require continuous operator monitoring until the emergency window closes.',
+          ],
+          expiresAt,
+        } as const
+        const first = await service.recordRiskDecision(firstInvocation, {
+          ...decisionCore,
+          idempotencyKey: 'critical-expired-first-v1',
+          expectedAssessmentRevision: listed.value.assessmentRevision,
+        })
+        if (!first.ok) return { listed, first }
+        const secondInvocation = referenceHostInvocation(service, 'critical-late-second-operator')
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(new Date(Date.parse(expiresAt) + 1_000))
+          const second = await service.recordRiskDecision(secondInvocation, {
+            ...decisionCore,
+            idempotencyKey: 'critical-expired-second-v1',
+            expectedAssessmentRevision: first.value.assessmentRevision,
+          })
+          return {
+            listed,
+            first,
+            second,
+            after: await service.getAssessment(firstInvocation, { schemaVersion: 1, assessmentId }),
+          }
+        } finally {
+          vi.useRealTimers()
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      first: { ok: true, value: { resolution: 'PENDING_DUAL_AUTHORITY' } },
+      second: { ok: false, error: { code: 'CONFLICT' } },
+      after: {
+        ok: true,
+        value: { assessmentRevision: 4, state: 'BLOCKED', verdict: null, seal: null },
+      },
+    })
+    expect(assessment).toMatchObject({ assessmentRevision: 4, state: 'BLOCKED', seal: null })
+  })
+
+  it('recovers a pending Critical attestation across Service restart before the second approval', async () => {
+    const rationale = 'Critical exposure is temporarily accepted only for the isolated emergency recovery window.'
+    const controls = [
+      'Keep the affected deployment isolated from every public ingress.',
+      'Require continuous operator monitoring until the emergency window closes.',
+    ]
+    const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1_000).toISOString()
+    const { assessment, beforeRestartObservation, observation } = await runReferenceValidationScenario({
+      id: 'critical-pending-restart',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      technicalSeverity: 'CRITICAL',
+      candidateHex: 'a',
+      requestedStrongerControlIds: [
+        'security/risk-decision-window-v1',
+        'security/critical-break-glass-v1',
+      ],
+      beforeInspectState: 'BLOCKED',
+      restartBeforeInspect: true,
+      skipSubmissionAfterInspect: true,
+      beforeRestart: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed }
+        const finding = listed.value.findings[0]
+        return service.recordRiskDecision(invocation, {
+          schemaVersion: 1,
+          idempotencyKey: 'critical-restart-first-v1',
+          assessmentId,
+          expectedAssessmentRevision: listed.value.assessmentRevision,
+          finding: { recordId: finding.recordId, recordRevision: finding.recordRevision },
+          decision: 'ACCEPT',
+          rationale,
+          compensatingControls: controls,
+          expiresAt,
+        })
+      },
+      inspect: async (service, _restartedInvocation, assessmentId) => {
+        const secondInvocation = referenceHostInvocation(service, 'critical-restart-second-operator')
+        const pending = await service.listFindings(secondInvocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!pending.ok || pending.value.findings[0] === undefined) return { pending }
+        const finding = pending.value.findings[0]
+        const second = await service.recordRiskDecision(secondInvocation, {
+          schemaVersion: 1,
+          idempotencyKey: 'critical-restart-second-v1',
+          assessmentId,
+          expectedAssessmentRevision: pending.value.assessmentRevision,
+          finding: { recordId: finding.recordId, recordRevision: finding.recordRevision },
+          decision: 'ACCEPT',
+          rationale,
+          compensatingControls: controls,
+          expiresAt,
+        })
+        if (!second.ok) return { pending, second }
+        await waitUntilAssessmentState(service, secondInvocation, assessmentId, 'SEALED')
+        return {
+          pending,
+          second,
+          sealed: await service.getAssessment(secondInvocation, { schemaVersion: 1, assessmentId }),
+          submission: await service.getAssuranceSubmission(secondInvocation, {
+            schemaVersion: 1,
+            assessmentId,
+          }),
+        }
+      },
+    })
+
+    expect(beforeRestartObservation).toMatchObject({
+      ok: true,
+      value: { assessmentRevision: 4, resolution: 'PENDING_DUAL_AUTHORITY' },
+    })
+    expect(observation).toMatchObject({
+      pending: {
+        ok: true,
+        value: {
+          assessmentRevision: 4,
+          findings: [{ technicalSeverity: 'CRITICAL', policySignificance: 'BLOCKING' }],
+        },
+      },
+      second: {
+        ok: true,
+        value: { assessmentRevision: 5, resolution: 'ACCEPTED' },
+      },
+      sealed: {
+        ok: true,
+        value: { assessmentRevision: 6, state: 'SEALED', verdict: 'SATISFIED' },
+      },
+      submission: {
+        ok: true,
+        value: {
+          payload: {
+            riskDecisions: {
+              value: {
+                decisions: [{
+                  resolution: 'ACCEPTED',
+                  attestations: [{ sequence: 1 }, { sequence: 2 }],
+                }],
+              },
+            },
+          },
+        },
+      },
+    })
+    expect(assessment).toMatchObject({
+      assessmentRevision: 6,
+      state: 'SEALED',
+      verdict: 'SATISFIED',
+    })
   })
 
   it('fails closed at every Risk Decision authority, schema, revision, scope, and lifecycle boundary', async () => {

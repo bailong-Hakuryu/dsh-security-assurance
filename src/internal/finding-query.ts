@@ -277,10 +277,13 @@ function findingRiskDecision(
   return {
     state: decision.resolution,
     decisionId: decision.decisionId,
+    authorizationMode: decision.authorizationMode ?? 'SINGLE_AUTHORITY',
     rationale: decision.rationale,
     compensatingControls: decision.compensatingControls,
     expiresAt: decision.expiresAt,
     decisionMaker: decision.decisionMaker,
+    scope: decision.scope,
+    attestations: decision.attestations ?? [],
     recordedAt: decision.recordedAt,
   }
 }

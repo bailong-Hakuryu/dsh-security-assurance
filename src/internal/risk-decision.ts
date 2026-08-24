@@ -2,6 +2,7 @@ import { securitySubmissionJsonV1Schema } from '../contracts.ts'
 import type {
   FindingDetailViewV1,
   RecordRiskDecisionRequest,
+  RiskDecisionAuthorizationModeV1,
 } from '../contracts.ts'
 import type { InternalAssessmentRecordV1 } from './assessment-record.ts'
 import type { DeterministicAssessmentOutcomeV1 } from './deterministic-kernel.ts'
@@ -9,25 +10,45 @@ import type { EvidencePublicationInputV1 } from './evidence-persistence.ts'
 
 export class RiskDecisionPolicyError extends Error {}
 
+export interface RiskDecisionAdmissionContextV1 {
+  readonly criticalBreakGlassEnabled: boolean
+  readonly criticalBreakGlassAuthorized: boolean
+}
+
 /** Deep Module owning Risk Decision admission and its deterministic Verdict input. */
 export class RiskDecisionModule {
   admit(
     finding: FindingDetailViewV1,
     request: RecordRiskDecisionRequest,
     evaluationInstant: string,
-  ): void {
+    context: RiskDecisionAdmissionContextV1,
+  ): RiskDecisionAuthorizationModeV1 {
     if (finding.recordKind !== 'FINDING' || finding.validation.state !== 'VALIDATED') {
       throw new RiskDecisionPolicyError('Only a validated Security Finding admits a Risk Decision')
     }
     if (finding.riskDecision.state !== 'NOT_RECORDED') {
       throw new RiskDecisionPolicyError('The Finding already has an immutable Risk Decision')
     }
-    if (request.decision === 'DENY') return
+    if (request.decision === 'DENY') return 'SINGLE_AUTHORITY'
     if (finding.technicalSeverity === null) {
       throw new RiskDecisionPolicyError('Risk Acceptance requires a Technical Severity')
     }
     if (finding.technicalSeverity.value === 'CRITICAL') {
-      throw new RiskDecisionPolicyError('Critical Risk Acceptance requires independent dual authority')
+      if (!context.criticalBreakGlassEnabled || !context.criticalBreakGlassAuthorized) {
+        throw new RiskDecisionPolicyError('Critical Risk Acceptance requires enabled qualified break-glass authority')
+      }
+      if (request.compensatingControls.length < 2 || request.expiresAt === null) {
+        throw new RiskDecisionPolicyError('Critical Risk Acceptance requires tightly bounded compensating controls')
+      }
+      const evaluatedAt = Date.parse(evaluationInstant)
+      const expiresAt = Date.parse(request.expiresAt)
+      if (
+        !Number.isFinite(evaluatedAt)
+        || !Number.isFinite(expiresAt)
+        || expiresAt <= evaluatedAt
+        || expiresAt - evaluatedAt > 24 * 60 * 60 * 1_000
+      ) throw new RiskDecisionPolicyError('Critical Risk Acceptance exceeds its 24-hour ceiling')
+      return 'CRITICAL_DUAL_AUTHORITY'
     }
     if (request.expiresAt === null || request.compensatingControls.length === 0) {
       throw new RiskDecisionPolicyError('Risk Acceptance requires compensating controls and expiry')
@@ -45,6 +66,7 @@ export class RiskDecisionModule {
     ) {
       throw new RiskDecisionPolicyError('Risk Acceptance expiry exceeds its severity ceiling')
     }
+    return 'SINGLE_AUTHORITY'
   }
 
   finalizedOutcome(

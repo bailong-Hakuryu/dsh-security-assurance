@@ -11,6 +11,7 @@ export type SecurityPermission =
   | 'evidence:disclose:validation-review'
   | 'assurance-submission:read'
   | 'risk:decide'
+  | 'risk:break-glass'
 export type SecurityCallerChannelKind = 'harness-session' | 'host-operator' | 'control-plane'
 
 /** Package-private method key that Cordis traceable Service proxies can forward. */
@@ -53,6 +54,7 @@ export class SecurityAuthorityResolver {
       'evidence:disclose:validation-review',
       'assurance-submission:read',
       'risk:decide',
+      'risk:break-glass',
     ])
     if (
       channel.permissions.length === 0

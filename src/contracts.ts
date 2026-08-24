@@ -412,6 +412,7 @@ export interface StartAssessmentRequest {
 }
 
 export const RISK_DECISION_WINDOW_CONTROL_ID = 'security/risk-decision-window-v1' as const
+export const CRITICAL_BREAK_GLASS_CONTROL_ID = 'security/critical-break-glass-v1' as const
 
 export const startAssessmentRequestSchema: z.ZodType<StartAssessmentRequest> = z.strictObject({
   schemaVersion: z.literal(1),
@@ -757,6 +758,34 @@ export const getEvidenceViewRequestSchema: z.ZodType<GetEvidenceViewRequest> = z
 })
 
 export type RiskDecisionKindV1 = 'DENY' | 'ACCEPT'
+export type RiskDecisionResolutionV1 = 'DENIED' | 'ACCEPTED' | 'PENDING_DUAL_AUTHORITY'
+export type RiskDecisionAuthorizationModeV1 = 'SINGLE_AUTHORITY' | 'CRITICAL_DUAL_AUTHORITY'
+
+export interface RiskDecisionAttestationV1 {
+  readonly sequence: number
+  readonly decisionMaker: {
+    readonly kind: 'host-operator'
+    readonly principalId: string
+  }
+  readonly authorizationEvidence: {
+    readonly permission: 'risk:break-glass'
+    readonly invocationClass: 'independently-authenticated'
+  }
+  readonly attestedAt: string
+}
+
+export const riskDecisionAttestationV1Schema: z.ZodType<RiskDecisionAttestationV1> = z.strictObject({
+  sequence: z.number().int().min(1).max(2),
+  decisionMaker: z.strictObject({
+    kind: z.literal('host-operator'),
+    principalId: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/i),
+  }),
+  authorizationEvidence: z.strictObject({
+    permission: z.literal('risk:break-glass'),
+    invocationClass: z.literal('independently-authenticated'),
+  }),
+  attestedAt: z.iso.datetime({ offset: true }),
+})
 
 export interface RecordRiskDecisionRequest {
   readonly schemaVersion: 1
@@ -810,7 +839,8 @@ export interface RiskDecisionRecordV1 {
     readonly recordRevision: number
   }
   readonly decision: RiskDecisionKindV1
-  readonly resolution: 'DENIED' | 'ACCEPTED'
+  readonly resolution: RiskDecisionResolutionV1
+  readonly authorizationMode?: RiskDecisionAuthorizationModeV1 | undefined
   readonly rationale: string
   readonly compensatingControls: readonly string[]
   readonly expiresAt: string | null
@@ -818,6 +848,11 @@ export interface RiskDecisionRecordV1 {
     readonly kind: 'host-operator' | 'control-plane'
     readonly principalId: string
   }
+  readonly scope?: {
+    readonly subjectDigest: DigestEnvelopeV1
+    readonly policyDigest: DigestEnvelopeV1
+  } | undefined
+  readonly attestations?: readonly RiskDecisionAttestationV1[] | undefined
   readonly recordedAt: string
 }
 
@@ -830,7 +865,8 @@ export const riskDecisionRecordV1Schema: z.ZodType<RiskDecisionRecordV1> = z.str
     recordRevision: z.number().int().positive(),
   }),
   decision: z.enum(['DENY', 'ACCEPT']),
-  resolution: z.enum(['DENIED', 'ACCEPTED']),
+  resolution: z.enum(['DENIED', 'ACCEPTED', 'PENDING_DUAL_AUTHORITY']),
+  authorizationMode: z.enum(['SINGLE_AUTHORITY', 'CRITICAL_DUAL_AUTHORITY']).optional(),
   rationale: z.string().trim().min(20).max(2_000),
   compensatingControls: z.array(z.string().trim().min(3).max(256)).max(16),
   expiresAt: z.iso.datetime({ offset: true }).nullable(),
@@ -838,18 +874,45 @@ export const riskDecisionRecordV1Schema: z.ZodType<RiskDecisionRecordV1> = z.str
     kind: z.enum(['host-operator', 'control-plane']),
     principalId: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/i),
   }),
+  scope: z.strictObject({
+    subjectDigest: digestEnvelopeV1Schema,
+    policyDigest: digestEnvelopeV1Schema,
+  }).optional(),
+  attestations: z.array(riskDecisionAttestationV1Schema).max(2).optional(),
   recordedAt: z.iso.datetime({ offset: true }),
 }).superRefine((record, context) => {
+  const authorizationMode = record.authorizationMode ?? 'SINGLE_AUTHORITY'
+  const attestations = record.attestations ?? []
   if (record.decision === 'DENY' && (
     record.resolution !== 'DENIED'
+    || authorizationMode !== 'SINGLE_AUTHORITY'
     || record.expiresAt !== null
     || record.compensatingControls.length > 0
+    || attestations.length > 0
   )) context.addIssue({ code: 'custom', message: 'DENY Risk Decision fields disagree' })
   if (record.decision === 'ACCEPT' && (
-    record.resolution !== 'ACCEPTED'
-    || record.expiresAt === null
+    record.expiresAt === null
     || record.compensatingControls.length === 0
+    || (authorizationMode === 'SINGLE_AUTHORITY' && record.resolution !== 'ACCEPTED')
+    || (authorizationMode === 'CRITICAL_DUAL_AUTHORITY' && record.resolution === 'DENIED')
   )) context.addIssue({ code: 'custom', message: 'ACCEPT Risk Decision fields disagree' })
+  if (authorizationMode === 'SINGLE_AUTHORITY' && (
+    record.resolution === 'PENDING_DUAL_AUTHORITY'
+    || attestations.length > 0
+  )) context.addIssue({ code: 'custom', message: 'Single-authority Risk Decision fields disagree' })
+  if (authorizationMode === 'CRITICAL_DUAL_AUTHORITY') {
+    const expectedCount = record.resolution === 'PENDING_DUAL_AUTHORITY' ? 1 : 2
+    const principals = new Set(attestations.map(attestation => attestation.decisionMaker.principalId))
+    if (
+      record.decision !== 'ACCEPT'
+      || record.scope === undefined
+      || record.decisionMaker.kind !== 'host-operator'
+      || attestations.length !== expectedCount
+      || principals.size !== attestations.length
+      || attestations.some((attestation, index) => attestation.sequence !== index + 1)
+      || attestations[0]?.decisionMaker.principalId !== record.decisionMaker.principalId
+    ) context.addIssue({ code: 'custom', message: 'Critical Dual Authority fields disagree' })
+  }
 })
 
 export interface RiskDecisionReceiptV1 {
@@ -864,7 +927,7 @@ export interface RiskDecisionReceiptV1 {
     readonly recordRevision: number
   }
   readonly decision: RiskDecisionKindV1
-  readonly resolution: 'DENIED' | 'ACCEPTED'
+  readonly resolution: RiskDecisionResolutionV1
   readonly idempotencyKey: string
   readonly recordedAt: string
   readonly correlationId: string
@@ -882,7 +945,7 @@ export const riskDecisionReceiptV1Schema: z.ZodType<RiskDecisionReceiptV1> = z.s
     recordRevision: z.number().int().positive(),
   }),
   decision: z.enum(['DENY', 'ACCEPT']),
-  resolution: z.enum(['DENIED', 'ACCEPTED']),
+  resolution: z.enum(['DENIED', 'ACCEPTED', 'PENDING_DUAL_AUTHORITY']),
   idempotencyKey: z.string().min(1).max(128),
   recordedAt: z.iso.datetime({ offset: true }),
   correlationId: z.string().regex(/^sec-[0-9a-f-]{36}$/),
@@ -1009,7 +1072,7 @@ export interface FindingDetailViewV1 {
   readonly coverageRelations: readonly AssessmentCoverageResolutionV1[]
   readonly riskDecision:
     | { readonly state: 'NOT_RECORDED' }
-    | ({ readonly state: 'DENIED' | 'ACCEPTED' } & Omit<
+    | ({ readonly state: RiskDecisionResolutionV1 } & Omit<
         RiskDecisionRecordV1,
         'schemaVersion' | 'assessmentId' | 'finding' | 'decision' | 'resolution'
       >)
@@ -1091,8 +1154,9 @@ export const findingDetailViewV1Schema: z.ZodType<FindingDetailViewV1> = z.stric
   riskDecision: z.union([
     z.strictObject({ state: z.literal('NOT_RECORDED') }),
     z.strictObject({
-      state: z.enum(['DENIED', 'ACCEPTED']),
+      state: z.enum(['DENIED', 'ACCEPTED', 'PENDING_DUAL_AUTHORITY']),
       decisionId: z.string().regex(/^risk-decision-[0-9a-f-]{36}$/),
+      authorizationMode: z.enum(['SINGLE_AUTHORITY', 'CRITICAL_DUAL_AUTHORITY']),
       rationale: z.string().trim().min(20).max(2_000),
       compensatingControls: z.array(z.string().trim().min(3).max(256)).max(16),
       expiresAt: z.iso.datetime({ offset: true }).nullable(),
@@ -1100,6 +1164,11 @@ export const findingDetailViewV1Schema: z.ZodType<FindingDetailViewV1> = z.stric
         kind: z.enum(['host-operator', 'control-plane']),
         principalId: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/i),
       }),
+      scope: z.strictObject({
+        subjectDigest: digestEnvelopeV1Schema,
+        policyDigest: digestEnvelopeV1Schema,
+      }).optional(),
+      attestations: z.array(riskDecisionAttestationV1Schema).max(2),
       recordedAt: z.iso.datetime({ offset: true }),
     }),
   ]),

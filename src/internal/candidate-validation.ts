@@ -38,6 +38,7 @@ const referenceValidationEvidenceV1Schema = z.strictObject({
   subjectDigest: digestEnvelopeV1Schema,
   sourceAnchor: sourceAnchorSchema,
   observedValue: z.enum(['VIOLATED', 'SATISFIED']),
+  observedImpact: z.enum(['HIGH', 'CRITICAL']).default('HIGH'),
 })
 
 export interface CandidateValidationInputV1 {
@@ -62,7 +63,10 @@ function json(value: unknown): NonNullable<SecuritySubmissionJsonV1> {
 
 function referenceControlState(
   slice: VerifiedSubjectTextSliceV1,
-): 'VIOLATED' | 'SATISFIED' | undefined {
+): {
+  readonly value: 'VIOLATED' | 'SATISFIED'
+  readonly impact: 'HIGH' | 'CRITICAL'
+} | undefined {
   if ((slice.text.match(/"dshSecurity"\s*:/gu) ?? []).length !== 1) return undefined
   if ((slice.text.match(/"referenceControl"\s*:/gu) ?? []).length !== 1) return undefined
   try {
@@ -73,7 +77,11 @@ function referenceControlState(
       return undefined
     }
     const value = (dshSecurity as Record<string, unknown>).referenceControl
-    return value === 'VIOLATED' || value === 'SATISFIED' ? value : undefined
+    const impact = (dshSecurity as Record<string, unknown>).referenceImpact ?? 'HIGH'
+    return (value === 'VIOLATED' || value === 'SATISFIED')
+      && (impact === 'HIGH' || impact === 'CRITICAL')
+      ? { value, impact }
+      : undefined
   } catch {
     return undefined
   }
@@ -123,19 +131,24 @@ function validateCandidate(
     && canonicalJson(parsedEvidence.data.subjectDigest) === canonicalJson(input.contribution.subjectDigest)
     && canonicalJson(parsedEvidence.data.sourceAnchor) === canonicalJson(candidate.sourceAnchor)
   const observedEvidenceValue = parsedEvidence.success ? parsedEvidence.data.observedValue : undefined
+  const observedEvidenceImpact = parsedEvidence.success ? parsedEvidence.data.observedImpact : undefined
   const evidencePurpose = observedEvidenceValue === 'SATISFIED'
     ? 'COUNTER_EVIDENCE'
     : 'VALIDATION_EVIDENCE'
   const evidenceContradictsSubject = evidenceBound
     && observedEvidenceValue !== undefined
     && observedReferenceControl !== undefined
-    && observedEvidenceValue !== observedReferenceControl
+    && (
+      observedEvidenceValue !== observedReferenceControl.value
+      || observedEvidenceImpact !== observedReferenceControl.impact
+    )
   const evidenceEligible = input.portfolioEntry.eligibility.decision === 'ELIGIBLE'
     && contractResolved
     && sourceSlice !== undefined
     && observedReferenceControl !== undefined
     && evidenceBound
-    && observedEvidenceValue === observedReferenceControl
+    && observedEvidenceValue === observedReferenceControl.value
+    && observedEvidenceImpact === observedReferenceControl.impact
   const unresolvedReason = input.portfolioEntry.eligibility.reason
     ?? (!contractResolved
       ? 'VALIDATION_CONTRACT_UNAVAILABLE'
@@ -283,8 +296,10 @@ function validateCandidate(
     securityClaim: candidate.securityClaim,
     validation: validationOutcome,
     technicalSeverity: {
-      value: 'HIGH',
-      methodVersion: 'dsh/conformance/reference-control-severity-v1',
+      value: observedReferenceControl.impact,
+      methodVersion: observedReferenceControl.impact === 'CRITICAL'
+        ? 'dsh/conformance/reference-critical-severity-v1'
+        : 'dsh/conformance/reference-control-severity-v1',
       vector: {
         impact: 'SECURITY_CONTROL_BYPASS',
         reachability: 'DIRECT',
@@ -304,7 +319,9 @@ function validateCandidate(
     },
     policySignificance: 'BLOCKING',
     policySignificanceTrace: {
-      ruleId: 'baseline-high-severity-blocks-v1',
+      ruleId: observedReferenceControl.impact === 'CRITICAL'
+        ? 'baseline-critical-severity-blocks-v1'
+        : 'baseline-high-severity-blocks-v1',
       policyDigest: input.policyDigest,
       matched: true,
     },

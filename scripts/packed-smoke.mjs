@@ -149,8 +149,10 @@ if (
   || typeof contracts.evidenceViewV1Schema?.parse !== 'function'
   || typeof contracts.evidenceViewResultSchema?.parse !== 'function'
   || typeof contracts.recordRiskDecisionRequestSchema?.parse !== 'function'
+  || typeof contracts.riskDecisionAttestationV1Schema?.parse !== 'function'
   || typeof contracts.riskDecisionRecordV1Schema?.parse !== 'function'
   || typeof contracts.riskDecisionReceiptResultSchema?.parse !== 'function'
+  || contracts.CRITICAL_BREAK_GLASS_CONTROL_ID !== 'security/critical-break-glass-v1'
 ) {
   throw new Error('packed Finding, Evidence View, and Risk Decision contracts are incomplete')
 }

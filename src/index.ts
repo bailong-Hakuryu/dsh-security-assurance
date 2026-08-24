@@ -22,6 +22,7 @@ import {
   startAssessmentRequestSchema,
   updateRepositoryRequestSchema,
   REQUIRED_NODE_RANGE,
+  CRITICAL_BREAK_GLASS_CONTROL_ID,
   RISK_DECISION_WINDOW_CONTROL_ID,
   runtimeHealthSnapshotSchema,
   securitySubmissionArtifactV1Schema,
@@ -609,10 +610,17 @@ export class SecurityAssuranceService extends Service {
       }
       if (
         parsed.data.requestedStrongerControlIds.some(
-          controlId => controlId !== RISK_DECISION_WINDOW_CONTROL_ID,
+          controlId => (
+            controlId !== RISK_DECISION_WINDOW_CONTROL_ID
+            && controlId !== CRITICAL_BREAK_GLASS_CONTROL_ID
+          ),
         )
         || new Set(parsed.data.requestedStrongerControlIds).size
           !== parsed.data.requestedStrongerControlIds.length
+        || (
+          parsed.data.requestedStrongerControlIds.includes(CRITICAL_BREAK_GLASS_CONTROL_ID)
+          && !parsed.data.requestedStrongerControlIds.includes(RISK_DECISION_WINDOW_CONTROL_ID)
+        )
       ) {
         return failure('INVALID_REQUEST', 'The request contains an unknown or duplicate stronger control.')
       }
@@ -997,27 +1005,28 @@ export class SecurityAssuranceService extends Service {
         return failure('INVALID_REQUEST', 'The request does not match recordRiskDecision schema version 1.')
       }
       const persistence = await this.ready
-        if (persistence === undefined || this.disposed) {
-          return failure('UNAVAILABLE', 'Risk Decision mutations are unavailable in read-only-safe mode.', true)
+      if (persistence === undefined || this.disposed) {
+        return failure('UNAVAILABLE', 'Risk Decision mutations are unavailable in read-only-safe mode.', true)
+      }
+      const persistenceInput = {
+        principalId: authority.principalId,
+        authorityKind: authority.kind,
+        request: parsed.data,
+        canonicalRequest: parsed.data,
+      } as const
+      const replay = persistence.replayRiskDecision(persistenceInput)
+      if (replay !== undefined) {
+        try {
+          await this.finalizeResolvedRiskDecision(persistence, replay.assessmentId)
+        } catch {
+          // The immutable receipt remains replayable while a failed Seal stays BLOCKED for recovery.
         }
-        const persistenceInput = {
-          principalId: authority.principalId,
-          authorityKind: authority.kind,
-          request: parsed.data,
-          canonicalRequest: parsed.data,
-        } as const
-        const replay = persistence.replayRiskDecision(persistenceInput)
-        if (replay !== undefined) {
-          try {
-            await this.finalizeResolvedRiskDecision(persistence, replay.assessmentId)
-          } catch {
-            // The immutable receipt remains replayable while a failed Seal stays BLOCKED for recovery.
-          }
-          return deepFreeze({ ok: true, value: replay })
-        }
-        const source = await this.findingQuerySource(parsed.data.assessmentId)
+        return deepFreeze({ ok: true, value: replay })
+      }
+      const assessment = persistence.getAssessmentRecord(parsed.data.assessmentId)
+      const source = await this.findingQuerySource(parsed.data.assessmentId)
       if (source === undefined) {
-        if (persistence.getAssessmentRecord(parsed.data.assessmentId) === undefined) {
+        if (assessment === undefined) {
           return failure('NOT_FOUND', 'The Assessment does not exist.')
         }
         return failure('CONFLICT', 'The Assessment has no active or recorded Risk Decision context.')
@@ -1029,10 +1038,24 @@ export class SecurityAssuranceService extends Service {
         recordId: parsed.data.finding.recordId,
         recordRevision: parsed.data.finding.recordRevision,
       })
-      if (finding.riskDecision.state === 'NOT_RECORDED') {
-        this.riskDecisions.admit(finding, parsed.data, new Date().toISOString())
+      const criticalBreakGlassAuthorized = authority.kind === 'host-operator'
+        && authority.permissions.has('risk:break-glass')
+      if (
+        parsed.data.decision === 'ACCEPT'
+        && finding.technicalSeverity?.value === 'CRITICAL'
+        && !criticalBreakGlassAuthorized
+      ) {
+        return failure('UNAUTHORIZED', 'Critical Risk Acceptance requires qualified break-glass authority.')
       }
-        const receipt = persistence.recordRiskDecision(persistenceInput)
+      const authorizationMode = finding.riskDecision.state === 'NOT_RECORDED'
+        ? this.riskDecisions.admit(finding, parsed.data, new Date().toISOString(), {
+            criticalBreakGlassEnabled: assessment?.contract.requestedStrongerControlIds.includes(
+              CRITICAL_BREAK_GLASS_CONTROL_ID,
+            ) ?? false,
+            criticalBreakGlassAuthorized,
+          })
+        : finding.riskDecision.authorizationMode ?? 'SINGLE_AUTHORITY'
+      const receipt = persistence.recordRiskDecision({ ...persistenceInput, authorizationMode })
       try {
         await this.finalizeResolvedRiskDecision(persistence, receipt.assessmentId)
       } catch {

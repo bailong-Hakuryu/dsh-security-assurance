@@ -92,6 +92,14 @@ This repository is under active vertical-slice development, not at the
   Technical Severity, changes only Policy Significance to `NON_BLOCKING`, and
   may produce `SATISFIED` only with complete mandatory Coverage. Risk Decision
   records are digest-bound into the final Seal, Bundle, and Submission;
+- separately enabled Critical break-glass under the frozen
+  `security/critical-break-glass-v1` stronger control. The first qualified
+  human approval records only a durable `PENDING_DUAL_AUTHORITY` attestation;
+  acceptance becomes effective only after a second independently authenticated
+  Host Operator with a distinct principal submits the exact same rationale,
+  controls, expiry, Assessment revision successor, and Finding identity. Both
+  authorization attestations and the exact Subject/Policy scope survive restart
+  and are bound into the final Seal;
 - revision-bound `getEvidenceView` projections that require exact Assessment,
   consuming Finding revision, Evidence artifact, and digest identity. The
   metadata-only Profile needs Assessment read authority and always redacts
@@ -146,9 +154,8 @@ This repository is under active vertical-slice development, not at the
   mid-Attempt without falling back to another registered version.
 
 Production-qualified external Analyzers, process or agent Analyzers, general
-Node and application-security coverage, Critical Risk Acceptance with two
-independent Decision Authorities, the complete protected Evidence Store, tools,
-and Workbench are deliberately not claimed as implemented yet. This
+Node and application-security coverage, the complete protected Evidence Store,
+tools, and Workbench are deliberately not claimed as implemented yet. This
 repository ships no production external Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -216,9 +223,16 @@ accepts only trusted Host Operator or Control Plane Decision Authority with
 Denial cannot carry controls or expiry. Ordinary acceptance requires at least
 one compensating control and a future expiry; High severity is capped at seven
 days and other currently admitted non-Critical severities at thirty days.
-Critical acceptance fails closed because its two-independent-authority flow is
-not implemented in this slice. Exact replay returns the original Receipt even
-after sealing; key reuse with different content returns
+Critical acceptance additionally requires both frozen stronger controls,
+Host-derived `risk:break-glass` authority, at least two compensating controls,
+and an expiry of at most 24 hours. The first approval remains visibly pending
+and cannot seal. Completion requires a new Security Invocation for a different
+qualified Host principal and an exactly matching decision form; repeated
+sessions for one principal, Control Plane authority, mismatched fields, or an
+expired first attestation fail closed without advancing the revision. Critical
+denial remains an ordinary `risk:decide` operation and never requires
+break-glass authority. Exact replay returns each authority's original Receipt
+even after sealing; key reuse with different content returns
 `IDEMPOTENCY_CONFLICT`.
 
 `getEvidenceView` is also SEALED-only. Its request repeats the exact Assessment

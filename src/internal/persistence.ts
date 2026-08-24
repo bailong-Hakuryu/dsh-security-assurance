@@ -26,6 +26,7 @@ import type {
   RepositoryListSnapshotV1,
   RepositorySnapshotV1,
   RecordRiskDecisionRequest,
+  RiskDecisionAuthorizationModeV1,
   RiskDecisionReceiptV1,
   SecurityAssuranceSubmissionV1,
 } from '../contracts.ts'
@@ -160,6 +161,7 @@ export interface RecordRiskDecisionPersistenceInput {
   readonly authorityKind: 'host-operator' | 'control-plane'
   readonly request: RecordRiskDecisionRequest
   readonly canonicalRequest: unknown
+  readonly authorizationMode?: RiskDecisionAuthorizationModeV1
 }
 
 export interface SecurityPersistenceOptions {
@@ -1206,6 +1208,13 @@ export class SecurityPersistence {
       }
       const current = this.getAssessmentRecord(request.assessmentId)
       const window = current?.riskDecisionWindow
+      const existing = current?.riskDecisions.find(
+        decision => decision.finding.recordId === request.finding.recordId,
+      )
+      const completingCriticalDualAuthority = existing !== undefined
+        && existing.authorizationMode === 'CRITICAL_DUAL_AUTHORITY'
+        && existing.resolution === 'PENDING_DUAL_AUTHORITY'
+        && input.authorizationMode === 'CRITICAL_DUAL_AUTHORITY'
       if (
         current === undefined
         || current.state !== 'BLOCKED'
@@ -1216,31 +1225,101 @@ export class SecurityPersistence {
         || window.state !== 'OPEN'
         || !window.findingRecordIds.includes(request.finding.recordId)
         || request.finding.recordRevision !== 1
-        || current.riskDecisions.some(decision => decision.finding.recordId === request.finding.recordId)
+        || (existing !== undefined && !completingCriticalDualAuthority)
+        || input.authorizationMode === undefined
+        || (
+          input.authorizationMode === 'CRITICAL_DUAL_AUTHORITY'
+          && (
+            input.authorityKind !== 'host-operator'
+            || !current.contract.requestedStrongerControlIds.includes('security/critical-break-glass-v1')
+          )
+        )
       ) {
         throw new SecurityPersistenceError('revision_conflict', 'Risk Decision Window does not admit this decision')
       }
       const recordedAt = this.now()
-      const resolution = request.decision === 'DENY' ? 'DENIED' : 'ACCEPTED'
-      const decision = riskDecisionRecordV1Schema.parse({
-        schemaVersion: 1,
-        decisionId: this.nextRiskDecisionId(),
-        assessmentId: request.assessmentId,
-        finding: request.finding,
-        decision: request.decision,
-        resolution,
-        rationale: request.rationale,
-        compensatingControls: request.compensatingControls,
-        expiresAt: request.expiresAt,
-        decisionMaker: {
-          kind: input.authorityKind,
-          principalId: input.principalId,
-        },
-        recordedAt,
-      })
-      const decisions = [...current.riskDecisions, decision]
+      const decisionMaker = {
+        kind: input.authorityKind,
+        principalId: input.principalId,
+      }
+      const decision = completingCriticalDualAuthority
+        ? (() => {
+            if (
+              existing.decision !== 'ACCEPT'
+              || request.decision !== 'ACCEPT'
+              || existing.decisionMaker.principalId === input.principalId
+              || existing.rationale !== request.rationale
+              || canonicalJson(existing.compensatingControls) !== canonicalJson(request.compensatingControls)
+              || existing.expiresAt !== request.expiresAt
+              || existing.expiresAt === null
+              || Date.parse(existing.expiresAt) <= Date.parse(recordedAt)
+              || canonicalJson(existing.finding) !== canonicalJson(request.finding)
+            ) {
+              throw new SecurityPersistenceError(
+                'revision_conflict',
+                'Critical Dual Authority attestation does not independently match',
+              )
+            }
+            return riskDecisionRecordV1Schema.parse({
+              ...existing,
+              resolution: 'ACCEPTED',
+              attestations: [
+                ...(existing.attestations ?? []),
+                {
+                  sequence: 2,
+                  decisionMaker,
+                  authorizationEvidence: {
+                    permission: 'risk:break-glass',
+                    invocationClass: 'independently-authenticated',
+                  },
+                  attestedAt: recordedAt,
+                },
+              ],
+            })
+          })()
+        : riskDecisionRecordV1Schema.parse({
+            schemaVersion: 1,
+            decisionId: this.nextRiskDecisionId(),
+            assessmentId: request.assessmentId,
+            finding: request.finding,
+            decision: request.decision,
+            resolution: request.decision === 'DENY'
+              ? 'DENIED'
+              : input.authorizationMode === 'CRITICAL_DUAL_AUTHORITY'
+                ? 'PENDING_DUAL_AUTHORITY'
+                : 'ACCEPTED',
+            authorizationMode: input.authorizationMode,
+            rationale: request.rationale,
+            compensatingControls: request.compensatingControls,
+            expiresAt: request.expiresAt,
+            decisionMaker,
+            scope: {
+              subjectDigest: current.subject.digest,
+              policyDigest: current.contract.policy.digest,
+            },
+            attestations: input.authorizationMode === 'CRITICAL_DUAL_AUTHORITY'
+              ? [{
+                  sequence: 1,
+                  decisionMaker,
+                  authorizationEvidence: {
+                    permission: 'risk:break-glass',
+                    invocationClass: 'independently-authenticated',
+                  },
+                  attestedAt: recordedAt,
+                }]
+              : [],
+            recordedAt,
+          })
+      const decisions = completingCriticalDualAuthority
+        ? current.riskDecisions.map(candidate => (
+            candidate.decisionId === decision.decisionId ? decision : candidate
+          ))
+        : [...current.riskDecisions, decision]
       const resolved = window.findingRecordIds.every(recordId => (
-        decisions.some(candidate => candidate.finding.recordId === recordId)
+        decisions.some(candidate => (
+          candidate.finding.recordId === recordId
+          && candidate.resolution !== 'PENDING_DUAL_AUTHORITY'
+        ))
       ))
       const updated = internalAssessmentRecordV1Schema.parse({
         ...current,

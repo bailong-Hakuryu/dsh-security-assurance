@@ -15,6 +15,7 @@ const fullReferenceHostPermissions = [
   'evidence:disclose:validation-review',
   'assurance-submission:read',
   'risk:decide',
+  'risk:break-glass',
 ] as const satisfies readonly SecurityPermission[]
 
 export function referenceHostInvocationWithPermissions(
