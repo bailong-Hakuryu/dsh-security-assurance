@@ -695,6 +695,22 @@ export const findingListPageV1Schema: z.ZodType<FindingListPageV1> = z.strictObj
   nextCursor: z.string().min(1).max(2048).nullable(),
 })
 
+export interface GetFindingRequest {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly recordId: string
+  readonly recordRevision: number
+}
+
+export const getFindingRequestSchema: z.ZodType<GetFindingRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  recordId: findingRecordIdSchema,
+  recordRevision: z.number().int().positive(),
+})
+
 export interface WaitForAssessmentRevisionRequest {
   readonly schemaVersion: 1
   readonly assessmentId: AssessmentId
@@ -748,6 +764,151 @@ export const assessmentCoverageSnapshotV1Schema: z.ZodType<AssessmentCoverageSna
   gapObligations: z.number().int().nonnegative(),
   resolutions: z.array(assessmentCoverageResolutionV1Schema).max(256),
   digest: digestEnvelopeV1Schema,
+})
+
+export type FindingDetailDimensionValueV1 = string | number | boolean
+
+export interface FindingDetailDimensionV1 {
+  readonly dimension: string
+  readonly value: FindingDetailDimensionValueV1
+}
+
+export interface FindingSourceAnchorViewV1 {
+  readonly path: string
+  readonly fileDigest: DigestEnvelopeV1
+  readonly locator: {
+    readonly kind: 'JSON_POINTER'
+    readonly value: string
+  }
+}
+
+export interface FindingValidationOutcomeViewV1 {
+  readonly state: FindingValidationState
+  readonly contractId: string | null
+  readonly contractVersion: number | null
+  readonly outcomeArtifactId: string | null
+  readonly rejectionCondition: string | null
+  readonly proofGaps: readonly string[]
+  readonly negativeControls: readonly string[]
+}
+
+export interface FindingEvidenceLinkMetadataV1 {
+  readonly artifactId: string
+  readonly schemaId: string
+  readonly digest: DigestEnvelopeV1
+  readonly purpose: 'VALIDATION_EVIDENCE' | 'COUNTER_EVIDENCE'
+  readonly eligibilityDecision: 'ELIGIBLE' | 'INELIGIBLE'
+  readonly eligibilityDecisionArtifactId: string
+}
+
+export interface FindingDetailViewV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly recordKind: FindingRecordKind
+  readonly recordId: string
+  readonly candidateId: string
+  readonly recordRevision: number
+  readonly revisionChain: readonly {
+    readonly recordRevision: number
+    readonly supersedesRecordRevision: number | null
+    readonly isCurrent: boolean
+  }[]
+  readonly weaknessClassification: FindingWeaknessClassificationV1
+  readonly affectedControlId: string | null
+  readonly sourceAnchor: FindingSourceAnchorViewV1
+  readonly validation: FindingValidationOutcomeViewV1
+  readonly technicalSeverity: {
+    readonly value: TechnicalSeverity
+    readonly methodVersion: string
+    readonly inputs: readonly FindingDetailDimensionV1[]
+  } | null
+  readonly evidenceConfidence: {
+    readonly value: EvidenceConfidence
+    readonly methodVersion: string
+    readonly rubric: readonly FindingDetailDimensionV1[]
+  } | null
+  readonly policySignificance: PolicySignificance | null
+  readonly coverageRelations: readonly AssessmentCoverageResolutionV1[]
+  readonly riskDecision: { readonly state: 'NOT_RECORDED' }
+  readonly evidenceLinks: readonly FindingEvidenceLinkMetadataV1[]
+  readonly attackPath: { readonly state: 'NOT_AVAILABLE' }
+}
+
+const findingDetailDimensionValueV1Schema: z.ZodType<FindingDetailDimensionValueV1> = z.union([
+  z.string().min(1).max(128),
+  z.number().finite(),
+  z.boolean(),
+])
+
+const findingDetailDimensionV1Schema: z.ZodType<FindingDetailDimensionV1> = z.strictObject({
+  dimension: boundedBindingId,
+  value: findingDetailDimensionValueV1Schema,
+})
+
+const findingSourceAnchorViewV1Schema: z.ZodType<FindingSourceAnchorViewV1> = z.strictObject({
+  path: subjectRelativePathSchema,
+  fileDigest: digestEnvelopeV1Schema,
+  locator: z.strictObject({
+    kind: z.literal('JSON_POINTER'),
+    value: z.string().min(1).max(1024).startsWith('/'),
+  }),
+})
+
+const findingValidationOutcomeViewV1Schema: z.ZodType<FindingValidationOutcomeViewV1> = z.strictObject({
+  state: findingValidationStateSchema,
+  contractId: boundedBindingId.nullable(),
+  contractVersion: z.number().int().positive().nullable(),
+  outcomeArtifactId: boundedBindingId.nullable(),
+  rejectionCondition: boundedBindingId.nullable(),
+  proofGaps: z.array(boundedBindingId).max(32),
+  negativeControls: z.array(boundedBindingId).max(32),
+})
+
+const findingEvidenceSchemaId = z.string()
+  .regex(/^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*){1,7}$/)
+
+const findingEvidenceLinkMetadataV1Schema: z.ZodType<FindingEvidenceLinkMetadataV1> = z.strictObject({
+  artifactId: boundedBindingId,
+  schemaId: findingEvidenceSchemaId,
+  digest: digestEnvelopeV1Schema,
+  purpose: z.enum(['VALIDATION_EVIDENCE', 'COUNTER_EVIDENCE']),
+  eligibilityDecision: z.enum(['ELIGIBLE', 'INELIGIBLE']),
+  eligibilityDecisionArtifactId: boundedBindingId,
+})
+
+export const findingDetailViewV1Schema: z.ZodType<FindingDetailViewV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  recordKind: findingRecordKindSchema,
+  recordId: findingRecordIdSchema,
+  candidateId: candidateIdSchema,
+  recordRevision: z.number().int().positive(),
+  revisionChain: z.array(z.strictObject({
+    recordRevision: z.number().int().positive(),
+    supersedesRecordRevision: z.number().int().positive().nullable(),
+    isCurrent: z.boolean(),
+  })).min(1).max(128),
+  weaknessClassification: findingWeaknessClassificationV1Schema,
+  affectedControlId: boundedBindingId.nullable(),
+  sourceAnchor: findingSourceAnchorViewV1Schema,
+  validation: findingValidationOutcomeViewV1Schema,
+  technicalSeverity: z.strictObject({
+    value: technicalSeveritySchema,
+    methodVersion: boundedBindingId,
+    inputs: z.array(findingDetailDimensionV1Schema).max(32),
+  }).nullable(),
+  evidenceConfidence: z.strictObject({
+    value: evidenceConfidenceSchema,
+    methodVersion: boundedBindingId,
+    rubric: z.array(findingDetailDimensionV1Schema).max(32),
+  }).nullable(),
+  policySignificance: policySignificanceSchema.nullable(),
+  coverageRelations: z.array(assessmentCoverageResolutionV1Schema).max(256),
+  riskDecision: z.strictObject({ state: z.literal('NOT_RECORDED') }),
+  evidenceLinks: z.array(findingEvidenceLinkMetadataV1Schema).max(128),
+  attackPath: z.strictObject({ state: z.literal('NOT_AVAILABLE') }),
 })
 
 export interface AssessmentSealV1 {
@@ -976,6 +1137,12 @@ export const assessmentSnapshotResultSchema: z.ZodType<SecurityResult<Assessment
 export const findingListResultSchema: z.ZodType<SecurityResult<FindingListPageV1>> =
   z.discriminatedUnion('ok', [
     z.strictObject({ ok: z.literal(true), value: findingListPageV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
+
+export const findingDetailResultSchema: z.ZodType<SecurityResult<FindingDetailViewV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: findingDetailViewV1Schema }),
     z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
   ])
 

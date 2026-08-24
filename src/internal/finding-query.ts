@@ -1,14 +1,20 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import {
+  assessmentCoverageSnapshotV1Schema,
+  digestEnvelopeV1Schema,
   evidenceConfidenceSchema,
+  findingDetailViewV1Schema,
   findingListPageV1Schema,
   policySignificanceSchema,
   technicalSeveritySchema,
 } from '../contracts.ts'
 import type {
+  FindingDetailDimensionV1,
+  FindingDetailViewV1,
   FindingListPageV1,
   FindingSummaryV1,
+  GetFindingRequest,
   ListFindingsRequest,
   SecurityAssuranceSubmissionV1,
 } from '../contracts.ts'
@@ -21,6 +27,26 @@ const candidateIdSchema = z.string().regex(/^candidate-[0-9a-f]{64}$/)
 const findingIdSchema = z.string().regex(/^finding-[0-9a-f]{64}$/)
 const validationStates = ['VALIDATED', 'REJECTED', 'UNRESOLVED'] as const
 const validationStateSchema = z.enum(validationStates)
+const detailDimensionValueSchema = z.union([
+  z.string().min(1).max(128),
+  z.number().finite(),
+  z.boolean(),
+])
+const sourceAnchorSchema = z.union([
+  z.strictObject({
+    path: z.string().min(1).max(1024),
+    fileDigest: digestEnvelopeV1Schema,
+    locator: z.strictObject({
+      kind: z.literal('JSON_POINTER'),
+      value: z.string().min(1).max(1024).startsWith('/'),
+    }),
+  }),
+  z.strictObject({
+    path: z.string().min(1).max(1024),
+    fileDigest: digestEnvelopeV1Schema,
+    jsonPointer: z.string().min(1).max(1024).startsWith('/'),
+  }),
+])
 
 const validatedFindingSchema = z.object({
   findingId: findingIdSchema,
@@ -30,16 +56,40 @@ const validatedFindingSchema = z.object({
     secondary: z.array(boundedIdentity).max(16),
   }).optional(),
   weaknessId: boundedIdentity.optional(),
+  affectedControlId: boundedIdentity.optional(),
+  sourceAnchor: sourceAnchorSchema,
   validation: z.object({
     state: z.literal('VALIDATED'),
     contractId: boundedIdentity,
+    contractVersion: z.number().int().positive().optional(),
+    evidenceEligibilityArtifactId: boundedIdentity.optional(),
+    evidenceArtifactIds: z.array(boundedIdentity).min(1).max(128).optional(),
+    evidenceDigest: digestEnvelopeV1Schema.optional(),
+    proofGaps: z.array(boundedIdentity).max(32).optional(),
+    negativeControls: z.array(boundedIdentity).max(32).optional(),
   }),
-  technicalSeverity: z.object({ value: technicalSeveritySchema }),
-  evidenceConfidence: z.object({ value: evidenceConfidenceSchema }),
+  technicalSeverity: z.object({
+    value: technicalSeveritySchema,
+    methodVersion: boundedIdentity,
+    vector: z.record(boundedIdentity, detailDimensionValueSchema).optional(),
+  }),
+  evidenceConfidence: z.object({
+    value: evidenceConfidenceSchema,
+    methodVersion: boundedIdentity,
+    rubric: z.record(boundedIdentity, detailDimensionValueSchema).optional(),
+  }),
   policySignificance: policySignificanceSchema,
 }).refine(finding => (
   (finding.weaknessClassification === undefined) !== (finding.weaknessId === undefined)
-), { message: 'Finding must contain exactly one weakness representation' })
+), { message: 'Finding must contain exactly one weakness representation' }).refine(finding => {
+  const builtin = finding.validation.evidenceDigest !== undefined
+    && finding.validation.evidenceArtifactIds === undefined
+    && finding.validation.evidenceEligibilityArtifactId === undefined
+  const external = finding.validation.evidenceDigest === undefined
+    && finding.validation.evidenceArtifactIds !== undefined
+    && finding.validation.evidenceEligibilityArtifactId !== undefined
+  return builtin !== external
+}, { message: 'Finding must contain exactly one Evidence Link representation' })
 
 const findingsArtifactValueSchema = z.object({
   schemaVersion: z.literal(1),
@@ -54,6 +104,9 @@ const candidateAdmissionSchema = z.object({
     primary: boundedIdentity,
     secondary: z.array(boundedIdentity).max(16),
   }),
+  affectedControlId: boundedIdentity,
+  sourceAnchor: sourceAnchorSchema,
+  evidenceArtifactIds: z.array(boundedIdentity).min(1).max(128),
 })
 
 const outcomeStateSchema = z.object({
@@ -65,7 +118,52 @@ const candidateOutcomeSchema = z.object({
   candidateId: candidateIdSchema,
   state: z.enum(['REJECTED', 'UNRESOLVED']),
   contractId: boundedIdentity.nullable(),
+  contractVersion: z.number().int().positive().optional(),
+  evidenceEligibilityArtifactId: boundedIdentity,
+  rejectionCondition: boundedIdentity.optional(),
+  counterEvidenceArtifactIds: z.array(boundedIdentity).min(1).max(128).optional(),
+  proofGaps: z.array(boundedIdentity).max(32),
+  negativeControls: z.array(boundedIdentity).max(32).optional(),
 })
+
+const externalValidationOutcomeSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  candidateId: candidateIdSchema,
+  state: z.literal('VALIDATED'),
+  contractId: boundedIdentity,
+  contractVersion: z.number().int().positive(),
+  evidenceEligibilityArtifactId: boundedIdentity,
+  evidenceArtifactIds: z.array(boundedIdentity).min(1).max(128),
+  proofGaps: z.array(boundedIdentity).max(32),
+  negativeControls: z.array(boundedIdentity).max(32),
+})
+
+const validationEligibilitySchema = z.object({
+  schemaVersion: z.literal(1),
+  decision: z.enum(['ELIGIBLE', 'INELIGIBLE']),
+  purpose: z.enum(['VALIDATION_EVIDENCE', 'COUNTER_EVIDENCE']),
+  candidateId: candidateIdSchema,
+  evidenceArtifactIds: z.array(boundedIdentity).min(1).max(128),
+  negativeControls: z.array(boundedIdentity).max(32),
+})
+
+const builtinEvidenceEligibilitySchema = z.object({
+  schemaVersion: z.literal(1),
+  decision: z.literal('ELIGIBLE'),
+  evidenceDigest: digestEnvelopeV1Schema,
+})
+
+const validationContractResolutionSchema = z.object({
+  schemaVersion: z.literal(1),
+  candidateId: candidateIdSchema,
+  state: z.enum(['RESOLVED', 'UNRESOLVED']),
+  contractId: boundedIdentity.nullable(),
+  contractVersion: z.number().int().positive().nullable(),
+}).refine(resolution => (
+  resolution.state === 'RESOLVED'
+    ? resolution.contractId !== null && resolution.contractVersion !== null
+    : resolution.contractId === null && resolution.contractVersion === null
+), { message: 'Validation Contract Resolution state and identity disagree' })
 
 const cursorPayloadSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -114,6 +212,275 @@ function findingWeakness(
 }
 
 export class FindingQueryCursorError extends Error {}
+export class FindingQueryNotFoundError extends Error {}
+export class FindingQueryRevisionError extends Error {}
+
+function normalizedSourceAnchor(
+  sourceAnchor: z.infer<typeof sourceAnchorSchema>,
+): FindingDetailViewV1['sourceAnchor'] {
+  return 'locator' in sourceAnchor
+    ? sourceAnchor
+    : {
+        path: sourceAnchor.path,
+        fileDigest: sourceAnchor.fileDigest,
+        locator: { kind: 'JSON_POINTER', value: sourceAnchor.jsonPointer },
+      }
+}
+
+function sortedDimensions(
+  values: Readonly<Record<string, string | number | boolean>> | undefined,
+): readonly FindingDetailDimensionV1[] {
+  return Object.entries(values ?? {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([dimension, value]) => ({ dimension, value }))
+}
+
+function builtinValidatedFindingDetail(
+  submission: SecurityAssuranceSubmissionV1,
+  finding: z.infer<typeof validatedFindingSchema>,
+): FindingDetailViewV1 {
+  const evidenceDigest = finding.validation.evidenceDigest
+  if (evidenceDigest === undefined) throw new TypeError('Built-in Finding has no Evidence digest')
+  const evidenceArtifact = submission.payload.evidence.find(artifact => (
+    artifact.schemaId !== 'dsh/security-evidence-eligibility-decision'
+    && canonicalJson(artifact.digest) === canonicalJson(evidenceDigest)
+  ))
+  const eligibilityArtifact = submission.payload.evidence.find(artifact => {
+    if (artifact.schemaId !== 'dsh/security-evidence-eligibility-decision') return false
+    const parsed = builtinEvidenceEligibilitySchema.safeParse(artifact.value)
+    return parsed.success && canonicalJson(parsed.data.evidenceDigest) === canonicalJson(evidenceDigest)
+  })
+  if (evidenceArtifact === undefined || eligibilityArtifact === undefined) {
+    throw new TypeError('Built-in Finding Evidence Link is incomplete')
+  }
+  const eligibility = builtinEvidenceEligibilitySchema.parse(eligibilityArtifact.value)
+  const coverage = assessmentCoverageSnapshotV1Schema.parse(submission.payload.coverage.value)
+  return findingDetailViewV1Schema.parse({
+    schemaVersion: 1,
+    assessmentId: submission.payload.assessment.assessmentId,
+    assessmentRevision: submission.payload.assessment.assessmentRevision,
+    recordKind: 'FINDING',
+    recordId: finding.findingId,
+    candidateId: finding.candidateId,
+    recordRevision: 1,
+    revisionChain: [{
+      recordRevision: 1,
+      supersedesRecordRevision: null,
+      isCurrent: true,
+    }],
+    weaknessClassification: findingWeakness(finding),
+    affectedControlId: finding.affectedControlId ?? null,
+    sourceAnchor: normalizedSourceAnchor(finding.sourceAnchor),
+    validation: {
+      state: 'VALIDATED',
+      contractId: finding.validation.contractId,
+      contractVersion: finding.validation.contractVersion ?? null,
+      outcomeArtifactId: null,
+      rejectionCondition: null,
+      proofGaps: finding.validation.proofGaps ?? [],
+      negativeControls: finding.validation.negativeControls ?? [],
+    },
+    technicalSeverity: {
+      value: finding.technicalSeverity.value,
+      methodVersion: finding.technicalSeverity.methodVersion,
+      inputs: sortedDimensions(finding.technicalSeverity.vector),
+    },
+    evidenceConfidence: {
+      value: finding.evidenceConfidence.value,
+      methodVersion: finding.evidenceConfidence.methodVersion,
+      rubric: sortedDimensions(finding.evidenceConfidence.rubric),
+    },
+    policySignificance: finding.policySignificance,
+    coverageRelations: coverage.resolutions,
+    riskDecision: { state: 'NOT_RECORDED' },
+    evidenceLinks: [{
+      artifactId: evidenceArtifact.artifactId,
+      schemaId: evidenceArtifact.schemaId,
+      digest: evidenceArtifact.digest,
+      purpose: 'VALIDATION_EVIDENCE',
+      eligibilityDecision: eligibility.decision,
+      eligibilityDecisionArtifactId: eligibilityArtifact.artifactId,
+    }],
+    attackPath: { state: 'NOT_AVAILABLE' },
+  })
+}
+
+function validatedFindingDetail(
+  submission: SecurityAssuranceSubmissionV1,
+  finding: z.infer<typeof validatedFindingSchema>,
+): FindingDetailViewV1 {
+  if (finding.validation.evidenceDigest !== undefined) {
+    return builtinValidatedFindingDetail(submission, finding)
+  }
+  const outcomeArtifact = submission.payload.evidence.find(artifact => {
+    if (artifact.schemaId !== 'dsh/security-validation-outcome') return false
+    const parsed = externalValidationOutcomeSchema.safeParse(artifact.value)
+    return parsed.success && parsed.data.candidateId === finding.candidateId
+  })
+  if (outcomeArtifact === undefined) {
+    throw new TypeError('Validated Finding has no separate Validation Outcome artifact')
+  }
+  const outcome = externalValidationOutcomeSchema.parse(outcomeArtifact.value)
+  if (
+    outcome.contractId !== finding.validation.contractId
+    || outcome.evidenceEligibilityArtifactId !== finding.validation.evidenceEligibilityArtifactId
+    || canonicalJson(outcome.evidenceArtifactIds) !== canonicalJson(finding.validation.evidenceArtifactIds)
+  ) throw new TypeError('Validated Finding disagrees with its Validation Outcome artifact')
+  const eligibilityArtifact = submission.payload.evidence.find(
+    artifact => (
+      artifact.artifactId === outcome.evidenceEligibilityArtifactId
+      && artifact.schemaId === 'dsh/security-validation-evidence-eligibility-decision'
+    ),
+  )
+  if (eligibilityArtifact === undefined) {
+    throw new TypeError('Validated Finding has no Evidence Eligibility Decision')
+  }
+  const eligibility = validationEligibilitySchema.parse(eligibilityArtifact.value)
+  if (
+    eligibility.candidateId !== finding.candidateId
+    || canonicalJson(eligibility.evidenceArtifactIds) !== canonicalJson(outcome.evidenceArtifactIds)
+  ) throw new TypeError('Evidence Eligibility Decision does not bind the Finding')
+  const evidenceLinks = outcome.evidenceArtifactIds.map(artifactId => {
+    const artifact = submission.payload.evidence.find(value => value.artifactId === artifactId)
+    if (artifact === undefined) throw new TypeError('Finding Evidence Link target is missing')
+    return {
+      artifactId: artifact.artifactId,
+      schemaId: artifact.schemaId,
+      digest: artifact.digest,
+      purpose: eligibility.purpose,
+      eligibilityDecision: eligibility.decision,
+      eligibilityDecisionArtifactId: eligibilityArtifact.artifactId,
+    }
+  })
+  const coverage = assessmentCoverageSnapshotV1Schema.parse(submission.payload.coverage.value)
+  return findingDetailViewV1Schema.parse({
+    schemaVersion: 1,
+    assessmentId: submission.payload.assessment.assessmentId,
+    assessmentRevision: submission.payload.assessment.assessmentRevision,
+    recordKind: 'FINDING',
+    recordId: finding.findingId,
+    candidateId: finding.candidateId,
+    recordRevision: 1,
+    revisionChain: [{
+      recordRevision: 1,
+      supersedesRecordRevision: null,
+      isCurrent: true,
+    }],
+    weaknessClassification: findingWeakness(finding),
+    affectedControlId: finding.affectedControlId ?? null,
+    sourceAnchor: normalizedSourceAnchor(finding.sourceAnchor),
+    validation: {
+      state: 'VALIDATED',
+      contractId: outcome.contractId,
+      contractVersion: outcome.contractVersion,
+      outcomeArtifactId: outcomeArtifact.artifactId,
+      rejectionCondition: null,
+      proofGaps: outcome.proofGaps,
+      negativeControls: outcome.negativeControls,
+    },
+    technicalSeverity: {
+      value: finding.technicalSeverity.value,
+      methodVersion: finding.technicalSeverity.methodVersion,
+      inputs: sortedDimensions(finding.technicalSeverity.vector),
+    },
+    evidenceConfidence: {
+      value: finding.evidenceConfidence.value,
+      methodVersion: finding.evidenceConfidence.methodVersion,
+      rubric: sortedDimensions(finding.evidenceConfidence.rubric),
+    },
+    policySignificance: finding.policySignificance,
+    coverageRelations: coverage.resolutions,
+    riskDecision: { state: 'NOT_RECORDED' },
+    evidenceLinks,
+    attackPath: { state: 'NOT_AVAILABLE' },
+  })
+}
+
+function candidateFindingDetail(
+  submission: SecurityAssuranceSubmissionV1,
+  admission: z.infer<typeof candidateAdmissionSchema>,
+  outcome: z.infer<typeof candidateOutcomeSchema>,
+  outcomeArtifactId: string,
+): FindingDetailViewV1 {
+  const evidenceArtifactIds = outcome.state === 'REJECTED'
+    ? outcome.counterEvidenceArtifactIds
+    : admission.evidenceArtifactIds
+  if (evidenceArtifactIds === undefined) {
+    throw new TypeError('Rejected Candidate has no Counter-Evidence Links')
+  }
+  const eligibilityArtifact = submission.payload.evidence.find(
+    artifact => (
+      artifact.artifactId === outcome.evidenceEligibilityArtifactId
+      && artifact.schemaId === 'dsh/security-validation-evidence-eligibility-decision'
+    ),
+  )
+  if (eligibilityArtifact === undefined) {
+    throw new TypeError('Candidate Outcome has no Evidence Eligibility Decision')
+  }
+  const eligibility = validationEligibilitySchema.parse(eligibilityArtifact.value)
+  if (
+    eligibility.candidateId !== admission.candidateId
+    || canonicalJson(eligibility.evidenceArtifactIds) !== canonicalJson(evidenceArtifactIds)
+  ) throw new TypeError('Evidence Eligibility Decision does not bind the Candidate Outcome')
+  const resolutionArtifact = submission.payload.evidence.find(artifact => {
+    if (artifact.schemaId !== 'dsh/security-validation-contract-resolution') return false
+    const parsed = validationContractResolutionSchema.safeParse(artifact.value)
+    return parsed.success && parsed.data.candidateId === admission.candidateId
+  })
+  if (resolutionArtifact === undefined) {
+    throw new TypeError('Candidate Outcome has no Validation Contract Resolution')
+  }
+  const resolution = validationContractResolutionSchema.parse(resolutionArtifact.value)
+  if (resolution.contractId !== outcome.contractId) {
+    throw new TypeError('Validation Contract Resolution does not bind the Candidate Outcome')
+  }
+  const evidenceLinks = evidenceArtifactIds.map(artifactId => {
+    const artifact = submission.payload.evidence.find(value => value.artifactId === artifactId)
+    if (artifact === undefined) throw new TypeError('Candidate Evidence Link target is missing')
+    return {
+      artifactId: artifact.artifactId,
+      schemaId: artifact.schemaId,
+      digest: artifact.digest,
+      purpose: eligibility.purpose,
+      eligibilityDecision: eligibility.decision,
+      eligibilityDecisionArtifactId: eligibilityArtifact.artifactId,
+    }
+  })
+  const coverage = assessmentCoverageSnapshotV1Schema.parse(submission.payload.coverage.value)
+  return findingDetailViewV1Schema.parse({
+    schemaVersion: 1,
+    assessmentId: submission.payload.assessment.assessmentId,
+    assessmentRevision: submission.payload.assessment.assessmentRevision,
+    recordKind: outcome.state === 'REJECTED' ? 'REJECTED_CANDIDATE' : 'UNRESOLVED_CANDIDATE',
+    recordId: admission.candidateId,
+    candidateId: admission.candidateId,
+    recordRevision: 1,
+    revisionChain: [{
+      recordRevision: 1,
+      supersedesRecordRevision: null,
+      isCurrent: true,
+    }],
+    weaknessClassification: admission.weaknessClassification,
+    affectedControlId: admission.affectedControlId,
+    sourceAnchor: normalizedSourceAnchor(admission.sourceAnchor),
+    validation: {
+      state: outcome.state,
+      contractId: outcome.contractId,
+      contractVersion: outcome.contractVersion ?? resolution.contractVersion,
+      outcomeArtifactId,
+      rejectionCondition: outcome.rejectionCondition ?? null,
+      proofGaps: outcome.proofGaps,
+      negativeControls: outcome.negativeControls ?? eligibility.negativeControls,
+    },
+    technicalSeverity: null,
+    evidenceConfidence: null,
+    policySignificance: null,
+    coverageRelations: coverage.resolutions,
+    riskDecision: { state: 'NOT_RECORDED' },
+    evidenceLinks,
+    attackPath: { state: 'NOT_AVAILABLE' },
+  })
+}
 
 function projectFindingSummaries(
   submission: SecurityAssuranceSubmissionV1,
@@ -224,6 +591,46 @@ export class FindingQueryModule {
       findings: page,
       nextCursor,
     })
+  }
+
+  get(
+    submission: SecurityAssuranceSubmissionV1,
+    request: GetFindingRequest,
+  ): FindingDetailViewV1 {
+    if (request.assessmentRevision !== submission.payload.assessment.assessmentRevision) {
+      throw new FindingQueryRevisionError('Finding query Assessment revision is stale')
+    }
+    const summary = projectFindingSummaries(submission)
+      .find(item => item.recordId === request.recordId)
+    if (summary === undefined) throw new FindingQueryNotFoundError('Finding record does not exist')
+    if (request.recordRevision !== 1) {
+      throw new FindingQueryRevisionError('Finding record revision does not exist')
+    }
+    if (summary.recordKind === 'FINDING') {
+      const value = findingsArtifactValueSchema.parse(submission.payload.findings.value)
+      const finding = value.findings.find(item => item.findingId === request.recordId)
+      if (finding === undefined) throw new TypeError('Finding Summary has no sealed Finding record')
+      return validatedFindingDetail(submission, finding)
+    }
+    const admissionArtifact = submission.payload.evidence.find(artifact => {
+      if (artifact.schemaId !== 'dsh/security-candidate-admission') return false
+      const parsed = candidateAdmissionSchema.safeParse(artifact.value)
+      return parsed.success && parsed.data.candidateId === summary.candidateId
+    })
+    const outcomeArtifact = submission.payload.evidence.find(artifact => {
+      if (artifact.schemaId !== 'dsh/security-validation-outcome') return false
+      const parsed = candidateOutcomeSchema.safeParse(artifact.value)
+      return parsed.success && parsed.data.candidateId === summary.candidateId
+    })
+    if (admissionArtifact === undefined || outcomeArtifact === undefined) {
+      throw new TypeError('Candidate Summary has no sealed Admission or Outcome record')
+    }
+    return candidateFindingDetail(
+      submission,
+      candidateAdmissionSchema.parse(admissionArtifact.value),
+      candidateOutcomeSchema.parse(outcomeArtifact.value),
+      outcomeArtifact.artifactId,
+    )
   }
 
   #encodeCursor(payload: CursorPayloadV1): string {

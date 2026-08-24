@@ -13,7 +13,8 @@ This repository is under active vertical-slice development, not at the
 - real Cordis registration at `ctx.securityAssurance`;
 - an opaque, runtime-verified Security Invocation boundary;
 - authorized Runtime Health, Repository Registry, Assessment start/query/wait,
-  Finding Summary, Bundle Manifest, and Assurance Submission operations;
+  Finding Summary and Detail, Bundle Manifest, and Assurance Submission
+  operations;
 - versioned Zod-validated public contracts;
 - one `SecurityResult<T>` success/failure envelope;
 - redacted authorization, validation, cancellation, deadline, and internal
@@ -74,6 +75,11 @@ This repository is under active vertical-slice development, not at the
   occurs before bounded pagination, and HMAC-protected cursors bind the exact
   Assessment, Repository, sealed revision, page size, filter, and Security
   Principal;
+- revision-bound `getFinding` Detail Views that project canonical Subject-
+  relative Source Anchors, exact tri-state Validation Outcome and Contract
+  lineage, separate Severity/Confidence/Policy dimensions, Coverage and Risk
+  status, and digest-bound Evidence Link metadata without returning Evidence
+  values or read capabilities;
 - blocking-Finding precedence proving a qualified validated Reference Candidate
   seals as `FAILED` with complete Coverage without allowing the Analyzer to set
   Finding, Severity, Significance, or Verdict directly;
@@ -146,6 +152,7 @@ sole business Interface at `ctx.securityAssurance`. Implemented operations are:
 - `cancelAssessment`
 - `getAssessment`
 - `listFindings`
+- `getFinding`
 - `waitForAssessmentRevision`
 - `getBundleManifest`
 - `getAssuranceSubmission`
@@ -159,12 +166,21 @@ Factories, instances, disposal handles, and cancellation handles are never
 persisted.
 
 Repository roots remain private. Query Snapshots and command Receipts are
-versioned, JSON-safe, recursively immutable, bounded, and path-free.
+versioned, JSON-safe, recursively immutable, and bounded. Assessment and list
+projections are path-free; a Finding Detail View may contain only a canonical
+Subject-relative Source Anchor and never an absolute Host or Store path.
 
 `listFindings` is available only after the Assessment is sealed. It returns no
 total count and no Source or Evidence content. Its process-local cursor key is
 rotated when the Service restarts, so clients must restart pagination from the
 first page after reconnect instead of treating cursors as durable records.
+
+`getFinding` is also SEALED-only and requires the exact `assessmentRevision`,
+`recordId`, and `recordRevision` returned by `listFindings`. A mismatched
+revision fails with `CONFLICT`; an unknown record fails with `NOT_FOUND`.
+Evidence Links carry only artifact identity, schema, digest, purpose, and the
+bound Eligibility Decision. They never contain the Evidence payload and are
+not reusable disclosure capabilities.
 
 `startAssessment` returns the durable revision-1 `CREATED` Receipt; it does not
 transfer ownership of the continuing run to the caller. The Engine persists

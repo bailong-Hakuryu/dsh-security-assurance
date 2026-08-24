@@ -583,6 +583,7 @@ export function evaluateDeterministicAssessment(
     validation: {
       state: 'VALIDATED',
       contractId: 'dsh-node-package-install-lifecycle-validation-v1',
+      contractVersion: 1,
       evidenceDigest: candidate.evidenceDigest,
       negativeControls: ['exact-json-pointer', 'non-empty-string-value', 'verified-subject-file-digest'],
     },

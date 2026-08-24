@@ -278,11 +278,12 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
       })
       expect(JSON.stringify(submission)).not.toContain('node setup.js')
       expect(JSON.stringify(submission)).not.toContain(repository)
-      await expect(ctx.securityAssurance.listFindings(invocation, {
+      const listed = await ctx.securityAssurance.listFindings(invocation, {
         schemaVersion: 1,
         assessmentId: started.value.assessmentId,
         limit: 10,
-      })).resolves.toMatchObject({
+      })
+      expect(listed).toMatchObject({
         ok: true,
         value: {
           findings: [{
@@ -301,6 +302,70 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
           nextCursor: null,
         },
       })
+      if (!listed.ok || listed.value.findings[0] === undefined) {
+        throw new Error('sealed built-in Finding was not listed')
+      }
+      const summary = listed.value.findings[0]
+      const detail = await ctx.securityAssurance.getFinding(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+        assessmentRevision: summary.assessmentRevision,
+        recordId: summary.recordId,
+        recordRevision: summary.recordRevision,
+      })
+      expect(detail).toMatchObject({
+        ok: true,
+        value: {
+          recordKind: 'FINDING',
+          recordId: summary.recordId,
+          candidateId: summary.candidateId,
+          recordRevision: 1,
+          affectedControlId: null,
+          sourceAnchor: {
+            path: 'package.json',
+            locator: { kind: 'JSON_POINTER', value: '/scripts/postinstall' },
+          },
+          validation: {
+            state: 'VALIDATED',
+            contractId: 'dsh-node-package-install-lifecycle-validation-v1',
+            contractVersion: 1,
+            outcomeArtifactId: null,
+            rejectionCondition: null,
+            proofGaps: [],
+            negativeControls: [
+              'exact-json-pointer',
+              'non-empty-string-value',
+              'verified-subject-file-digest',
+            ],
+          },
+          technicalSeverity: {
+            value: 'MEDIUM',
+            methodVersion: 'dsh-node-install-lifecycle-severity-v1',
+            inputs: [],
+          },
+          evidenceConfidence: {
+            value: 'HIGH',
+            methodVersion: 'dsh-deterministic-manifest-evidence-confidence-v1',
+            rubric: [],
+          },
+          policySignificance: 'BLOCKING',
+          coverageRelations: [{
+            obligationId: 'node-package-install-lifecycle-policy',
+            state: 'GAP',
+            reason: 'ANALYZER_INCOMPLETE',
+          }],
+          evidenceLinks: [{
+            artifactId: 'node-package-manifest-evidence',
+            schemaId: 'dsh/security-node-package-manifest-evidence',
+            purpose: 'VALIDATION_EVIDENCE',
+            eligibilityDecision: 'ELIGIBLE',
+            eligibilityDecisionArtifactId: 'evidence-eligibility-decision',
+          }],
+          riskDecision: { state: 'NOT_RECORDED' },
+          attackPath: { state: 'NOT_AVAILABLE' },
+        },
+      })
+      expect(detail).not.toHaveProperty('value.evidenceLinks.0.value')
     } finally {
       await fiber.dispose()
     }

@@ -142,6 +142,9 @@ if ('SecurityAuthorityResolver' in contracts || 'resolveTrustedInvocation' in co
 if (
   typeof contracts.listFindingsRequestSchema?.parse !== 'function'
   || typeof contracts.findingListResultSchema?.parse !== 'function'
+  || typeof contracts.getFindingRequestSchema?.parse !== 'function'
+  || typeof contracts.findingDetailViewV1Schema?.parse !== 'function'
+  || typeof contracts.findingDetailResultSchema?.parse !== 'function'
 ) {
   throw new Error('packed Finding query contracts are incomplete')
 }
@@ -175,8 +178,9 @@ if (ctx.reflect.get('securityAssurance') === undefined) {
 if (
   typeof ctx.securityAssurance.registerAnalyzer !== 'function'
   || typeof ctx.securityAssurance.registerAnalyzerQualification !== 'function'
+  || typeof ctx.securityAssurance.getFinding !== 'function'
 ) {
-  throw new Error('Cordis activation did not expose local Analyzer composition')
+  throw new Error('Cordis activation did not expose Finding detail or local Analyzer composition')
 }
 const repositoryConfig = {
   repositories: [{

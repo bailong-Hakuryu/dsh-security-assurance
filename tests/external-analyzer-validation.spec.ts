@@ -415,6 +415,152 @@ describe('external Analyzer Candidate validation', () => {
     expect(observation).not.toHaveProperty('value.findings.0.evidence')
   })
 
+  it('returns a revision-bound VALIDATED Finding Detail View without Evidence payload', async () => {
+    const { assessment, candidateId, observation } = await runReferenceValidationScenario({
+      id: 'get-validated-finding-detail',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: 'c',
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed, detail: null }
+        const summary = listed.value.findings[0]
+        const detail = await service.getFinding(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        })
+        const staleAssessmentRevision = await service.getFinding(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision + 1,
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision,
+        })
+        const staleRecordRevision = await service.getFinding(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          recordId: summary.recordId,
+          recordRevision: summary.recordRevision + 1,
+        })
+        const missingRecord = await service.getFinding(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          assessmentRevision: summary.assessmentRevision,
+          recordId: `finding-${'0'.repeat(64)}`,
+          recordRevision: 1,
+        })
+        return { listed, detail, staleAssessmentRevision, staleRecordRevision, missingRecord }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      detail: {
+        ok: true,
+        value: {
+          schemaVersion: 1,
+          assessmentId: assessment.assessmentId,
+          assessmentRevision: assessment.assessmentRevision,
+          recordKind: 'FINDING',
+          recordId: expect.stringMatching(/^finding-[0-9a-f]{64}$/),
+          candidateId,
+          recordRevision: 1,
+          revisionChain: [{
+            recordRevision: 1,
+            supersedesRecordRevision: null,
+            isCurrent: true,
+          }],
+          weaknessClassification: {
+            primary: 'dsh/conformance/reference-control-violation',
+            secondary: [],
+          },
+          affectedControlId: 'dsh/conformance/reference-control',
+          sourceAnchor: {
+            path: 'package.json',
+            fileDigest: { algorithm: 'sha256' },
+            locator: {
+              kind: 'JSON_POINTER',
+              value: '/dshSecurity/referenceControl',
+            },
+          },
+          validation: {
+            state: 'VALIDATED',
+            contractId: 'dsh/conformance/reference-control-validation-v1',
+            contractVersion: 1,
+            outcomeArtifactId: 'validation-outcome-cccccccccccccccc',
+            rejectionCondition: null,
+            proofGaps: [],
+            negativeControls: [
+              'verified-subject-digest',
+              'exact-source-file-digest',
+              'unique-json-security-keys',
+              'exact-json-pointer',
+              'exact-reference-control-marker',
+              'observed-value-matches-subject',
+            ],
+          },
+          technicalSeverity: {
+            value: 'HIGH',
+            methodVersion: 'dsh/conformance/reference-control-severity-v1',
+            inputs: [
+              { dimension: 'affectedScope', value: 'APPLICATION' },
+              { dimension: 'impact', value: 'SECURITY_CONTROL_BYPASS' },
+              { dimension: 'reachability', value: 'DIRECT' },
+            ],
+          },
+          evidenceConfidence: {
+            value: 'HIGH',
+            methodVersion: 'dsh/conformance/deterministic-evidence-confidence-v1',
+            rubric: [
+              { dimension: 'negativeControls', value: 'PASS' },
+              { dimension: 'producerQualification', value: 'PASS' },
+              { dimension: 'proofGaps', value: 0 },
+              { dimension: 'reproducibility', value: 'PASS' },
+              { dimension: 'subjectBinding', value: 'PASS' },
+            ],
+          },
+          policySignificance: 'BLOCKING',
+          coverageRelations: [{
+            obligationId: 'application-security-analysis',
+            state: 'SATISFIED',
+            reason: 'ELIGIBLE_EVIDENCE',
+          }],
+          riskDecision: { state: 'NOT_RECORDED' },
+          evidenceLinks: [{
+            artifactId: 'reference-validation-evidence',
+            schemaId: 'fixture/reference-validation-evidence',
+            digest: { algorithm: 'sha256' },
+            purpose: 'VALIDATION_EVIDENCE',
+            eligibilityDecision: 'ELIGIBLE',
+            eligibilityDecisionArtifactId: 'validation-eligibility-cccccccccccccccc',
+          }],
+          attackPath: { state: 'NOT_AVAILABLE' },
+        },
+      },
+      staleAssessmentRevision: {
+        ok: false,
+        error: { code: 'CONFLICT' },
+      },
+      staleRecordRevision: {
+        ok: false,
+        error: { code: 'CONFLICT' },
+      },
+      missingRecord: {
+        ok: false,
+        error: { code: 'NOT_FOUND' },
+      },
+    })
+    expect(observation).not.toHaveProperty('detail.value.evidenceLinks.0.value')
+    expect(JSON.stringify(observation)).not.toContain('"observedValue":"VIOLATED"')
+  })
+
   it('paginates Finding Summaries with a stable opaque cursor', async () => {
     const firstCandidateId = `candidate-${'1'.repeat(64)}`
     const secondCandidateId = `candidate-${'2'.repeat(64)}`
@@ -650,6 +796,91 @@ describe('external Analyzer Candidate validation', () => {
     })
   })
 
+  it('returns REJECTED Candidate detail with eligible Counter-Evidence metadata', async () => {
+    const { assessment, candidateId, observation } = await runReferenceValidationScenario({
+      id: 'get-rejected-candidate-detail',
+      referenceControl: 'SATISFIED',
+      observedValue: 'SATISFIED',
+      candidateHex: 'b',
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed, detail: null }
+        const summary = listed.value.findings[0]
+        return {
+          listed,
+          detail: await service.getFinding(invocation, {
+            schemaVersion: 1,
+            assessmentId,
+            assessmentRevision: summary.assessmentRevision,
+            recordId: summary.recordId,
+            recordRevision: summary.recordRevision,
+          }),
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      detail: {
+        ok: true,
+        value: {
+          assessmentId: assessment.assessmentId,
+          assessmentRevision: assessment.assessmentRevision,
+          recordKind: 'REJECTED_CANDIDATE',
+          recordId: candidateId,
+          candidateId,
+          recordRevision: 1,
+          weaknessClassification: {
+            primary: 'dsh/conformance/reference-control-violation',
+            secondary: [],
+          },
+          affectedControlId: 'dsh/conformance/reference-control',
+          sourceAnchor: {
+            path: 'package.json',
+            locator: { kind: 'JSON_POINTER', value: '/dshSecurity/referenceControl' },
+          },
+          validation: {
+            state: 'REJECTED',
+            contractId: 'dsh/conformance/reference-control-validation-v1',
+            contractVersion: 1,
+            outcomeArtifactId: 'validation-outcome-bbbbbbbbbbbbbbbb',
+            rejectionCondition: 'EXACT_REFERENCE_CONTROL_SATISFIED',
+            proofGaps: [],
+            negativeControls: [
+              'verified-subject-digest',
+              'exact-source-file-digest',
+              'unique-json-security-keys',
+              'exact-json-pointer',
+              'exact-reference-control-marker',
+              'observed-value-matches-subject',
+            ],
+          },
+          technicalSeverity: null,
+          evidenceConfidence: null,
+          policySignificance: null,
+          coverageRelations: [{
+            obligationId: 'application-security-analysis',
+            state: 'SATISFIED',
+            reason: 'ELIGIBLE_EVIDENCE',
+          }],
+          riskDecision: { state: 'NOT_RECORDED' },
+          evidenceLinks: [{
+            artifactId: 'reference-validation-evidence',
+            schemaId: 'fixture/reference-validation-evidence',
+            purpose: 'COUNTER_EVIDENCE',
+            eligibilityDecision: 'ELIGIBLE',
+            eligibilityDecisionArtifactId: 'validation-eligibility-bbbbbbbbbbbbbbbb',
+          }],
+          attackPath: { state: 'NOT_AVAILABLE' },
+        },
+      },
+    })
+    expect(observation).not.toHaveProperty('detail.value.evidenceLinks.0.value')
+  })
+
   it('keeps a Candidate unresolved when proposed Counter-Evidence contradicts the Subject', async () => {
     const { assessment, candidateId, submission } = await runReferenceValidationScenario({
       id: 'contradictory-counter-evidence',
@@ -732,5 +963,70 @@ describe('external Analyzer Candidate validation', () => {
         nextCursor: null,
       },
     })
+  })
+
+  it('returns UNRESOLVED Candidate detail with its exact Contract and Proof Gap', async () => {
+    const { assessment, candidateId, observation } = await runReferenceValidationScenario({
+      id: 'get-unresolved-candidate-detail',
+      referenceControl: 'VIOLATED',
+      observedValue: 'SATISFIED',
+      candidateHex: 'd',
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed, detail: null }
+        const summary = listed.value.findings[0]
+        return {
+          listed,
+          detail: await service.getFinding(invocation, {
+            schemaVersion: 1,
+            assessmentId,
+            assessmentRevision: summary.assessmentRevision,
+            recordId: summary.recordId,
+            recordRevision: summary.recordRevision,
+          }),
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      detail: {
+        ok: true,
+        value: {
+          assessmentId: assessment.assessmentId,
+          assessmentRevision: assessment.assessmentRevision,
+          recordKind: 'UNRESOLVED_CANDIDATE',
+          recordId: candidateId,
+          candidateId,
+          recordRevision: 1,
+          validation: {
+            state: 'UNRESOLVED',
+            contractId: 'dsh/conformance/reference-control-validation-v1',
+            contractVersion: 1,
+            outcomeArtifactId: 'validation-outcome-dddddddddddddddd',
+            rejectionCondition: null,
+            proofGaps: ['VALIDATION_EVIDENCE_CONTRADICTS_SUBJECT'],
+          },
+          technicalSeverity: null,
+          evidenceConfidence: null,
+          policySignificance: null,
+          coverageRelations: [{
+            obligationId: 'application-security-analysis',
+            state: 'GAP',
+            reason: 'EVIDENCE_INELIGIBLE',
+          }],
+          evidenceLinks: [{
+            artifactId: 'reference-validation-evidence',
+            purpose: 'COUNTER_EVIDENCE',
+            eligibilityDecision: 'INELIGIBLE',
+            eligibilityDecisionArtifactId: 'validation-eligibility-dddddddddddddddd',
+          }],
+        },
+      },
+    })
+    expect(observation).not.toHaveProperty('detail.value.evidenceLinks.0.value')
   })
 })

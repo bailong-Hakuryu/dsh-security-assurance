@@ -9,6 +9,7 @@ import {
   getAssuranceSubmissionRequestSchema,
   getAssessmentRequestSchema,
   getBundleManifestRequestSchema,
+  getFindingRequestSchema,
   getRepositoryRequestSchema,
   getHealthRequestSchema,
   listFindingsRequestSchema,
@@ -40,9 +41,11 @@ import type {
   GetAssuranceSubmissionRequest,
   GetAssessmentRequest,
   GetBundleManifestRequest,
+  GetFindingRequest,
   GetHealthRequest,
   GetRepositoryRequest,
   InvocationOptions,
+  FindingDetailViewV1,
   FindingListPageV1,
   ListFindingsRequest,
   ListRepositoriesRequest,
@@ -82,7 +85,12 @@ import {
 import type { TrustedCallerChannel } from './internal/authority.ts'
 import { AnalyzerRegistry } from './internal/analyzer-registry.ts'
 import { deepFreeze } from './internal/freeze.ts'
-import { FindingQueryCursorError, FindingQueryModule } from './internal/finding-query.ts'
+import {
+  FindingQueryCursorError,
+  FindingQueryModule,
+  FindingQueryNotFoundError,
+  FindingQueryRevisionError,
+} from './internal/finding-query.ts'
 import { publicAssessmentSnapshot } from './internal/assessment-record.ts'
 import { analyzeNodePackageInstallLifecycle } from './internal/builtin-node-package-lifecycle-analyzer.ts'
 import {
@@ -829,6 +837,45 @@ export class SecurityAssuranceService extends Service {
     } catch (error) {
       if (error instanceof FindingQueryCursorError) {
         return failure('INVALID_REQUEST', 'The Finding query cursor is invalid for this request.')
+      }
+      return this.assessmentReadFailure(error, true)
+    }
+  }
+
+  /** Read one exact immutable Finding revision without disclosing Evidence content. */
+  async getFinding(
+    invocation: SecurityInvocation,
+    request: GetFindingRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<FindingDetailViewV1>> {
+    try {
+      if (!this.authorityResolver.authorizes(invocation, 'assessment:read')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to read Findings.')
+      }
+      const interrupted = interruption<FindingDetailViewV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = getFindingRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match getFinding schema version 1.')
+      }
+      const sealed = await this.verifiedSealedRecord(parsed.data.assessmentId)
+      if (sealed === undefined) {
+        const persistence = await this.ready
+        if (persistence?.getAssessmentRecord(parsed.data.assessmentId) === undefined) {
+          return failure('NOT_FOUND', 'The Assessment does not exist.')
+        }
+        return failure('CONFLICT', 'The Assessment has not produced sealed Finding records.')
+      }
+      return deepFreeze({
+        ok: true,
+        value: this.findingQueries.get(sealed.submission, parsed.data),
+      })
+    } catch (error) {
+      if (error instanceof FindingQueryNotFoundError) {
+        return failure('NOT_FOUND', 'The Finding record does not exist.')
+      }
+      if (error instanceof FindingQueryRevisionError) {
+        return failure('CONFLICT', 'The requested Finding revision does not match the sealed record.')
       }
       return this.assessmentReadFailure(error, true)
     }
