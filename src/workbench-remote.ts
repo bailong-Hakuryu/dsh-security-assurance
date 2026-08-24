@@ -5,12 +5,14 @@ import {
   type TypertLookup,
 } from '@deepseek-ai/dsh-typert-protocol'
 import type {
+  AssessmentRevisionSignalV1,
   AssessmentSnapshotV1,
   GetAssessmentRequest,
   RecordRiskDecisionRequest,
   RiskDecisionReceiptV1,
   SecurityInvocation,
   SecurityResult,
+  WaitForAssessmentRevisionRequest,
 } from './contracts.ts'
 import type { SecurityAssuranceService } from './index.ts'
 import { resolveTrustedInvocation } from './internal/authority.ts'
@@ -100,6 +102,20 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
     signal: AbortSignal,
   ): Promise<SecurityResult<AssessmentSnapshotV1>> {
     return this.ctx.securityAssurance.getAssessment(securityAssuranceWorkbenchContext, request, { signal })
+  }
+
+  /** Wait for one later committed Assessment revision without holding a Store transaction. */
+  @Remote
+  waitForAssessmentRevision(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: WaitForAssessmentRevisionRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<AssessmentRevisionSignalV1>> {
+    return this.ctx.securityAssurance.waitForAssessmentRevision(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
   }
 
   /** Submit one catalogued, revision-bound Risk Decision command. */

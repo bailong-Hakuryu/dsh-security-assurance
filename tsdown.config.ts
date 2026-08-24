@@ -66,4 +66,26 @@ export default defineConfig([
     clean: false,
     plugins: [{ ...decorators, writeBundle: undefined }],
   },
+  {
+    name: 'dsh-security-assurance/client',
+    entry: { client: 'lib/types/client/index.js' },
+    outDir: 'lib',
+    format: ['cjs'],
+    platform: 'browser',
+    target: 'es2024',
+    fixedExtension: false,
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    deps: {
+      neverBundle: (specifier: string) => specifier === '@deepseek-ai/cordis',
+      alwaysBundle: (specifier: string) => specifier !== '@deepseek-ai/cordis',
+    },
+    outputOptions: {
+      entryFileNames: 'client.js',
+      banner: 'window.__ModuleLoader__.load({ id: "dsh-security-assurance", factory: (require) => {',
+      footer: 'return module.exports; } });',
+      intro: 'var module = { exports: {} }; var exports = module.exports;',
+    },
+  },
 ])

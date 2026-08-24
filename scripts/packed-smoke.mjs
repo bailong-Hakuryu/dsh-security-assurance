@@ -182,14 +182,40 @@ const typertContribution = await import('dsh-security-assurance/typert')
 const clientRemoteContribution = await import('dsh-security-assurance/remote')
 if (
   typeof workbenchRemote.default !== 'function'
-  || typertContribution.TYPERT?.invocations?.length !== 2
-  || clientRemoteContribution.default?.descriptors?.length !== 2
+  || typertContribution.TYPERT?.invocations?.length !== 3
+  || clientRemoteContribution.default?.descriptors?.length !== 3
+  || !clientRemoteContribution.default.descriptors.some(descriptor =>
+    descriptor.method === 'waitForAssessmentRevision')
   || typertContribution.TYPERT.invocations.some(invocation =>
     invocation.parameters[0]?.wire !== 'securityAssuranceWorkbenchContextId'
       || invocation.parameters[0]?.lookup !== 'securityAssuranceWorkbenchContext'
       || invocation.parameters[0]?.codec?.mode !== 'strict')
 ) {
   throw new Error('packed Workbench Remote Typert artifacts are incomplete or non-strict')
+}
+const cordisClientRuntime = await import('@deepseek-ai/cordis')
+let clientRegistration
+globalThis.window = {
+  __ModuleLoader__: {
+    load(registration) { clientRegistration = registration },
+  },
+}
+await import('dsh-security-assurance/client')
+delete globalThis.window
+if (clientRegistration?.id !== 'dsh-security-assurance') {
+  throw new Error('packed Workbench Client did not register with the Harness module loader')
+}
+const workbenchClient = clientRegistration.factory(specifier => {
+  if (specifier === '@deepseek-ai/cordis') return cordisClientRuntime
+  throw new Error('packed Workbench Client requested an undeclared external: ' + specifier)
+})
+if (
+  typeof workbenchClient.apply !== 'function'
+  || workbenchClient.inject?.length !== 1
+  || workbenchClient.inject[0] !== 'remote'
+  || typeof workbenchClient.SecurityAssuranceWorkbenchController !== 'function'
+) {
+  throw new Error('packed Workbench Client entry is incomplete')
 }
 const { Context } = await import('@deepseek-ai/cordis')
 const TypertRegistry = (await import('@deepseek-ai/dsh-typert-registry')).default
@@ -343,6 +369,7 @@ process.stdout.write(JSON.stringify({
   lifecycle: 'PASS',
   hostRepositoryProvider: 'PASS',
   workbenchRemote: 'PASS',
+  workbenchClient: 'PASS',
   repositoryId: firstBinding.repositoryId,
   failedRepositoryId: failedBinding.repositoryId,
   indeterminateRepositoryId: indeterminateBinding.repositoryId,
@@ -359,6 +386,7 @@ process.stdout.write(JSON.stringify({
     || result.analyzerContract !== 'PASS'
     || result.lifecycle !== 'PASS'
     || result.workbenchRemote !== 'PASS'
+    || result.workbenchClient !== 'PASS'
   ) {
     throw new Error('packed smoke probe returned an invalid result')
   }
@@ -1155,6 +1183,7 @@ process.stdout.write(JSON.stringify({
     lifecycle: result.lifecycle,
     hostRepositoryProvider: result.hostRepositoryProvider,
     workbenchRemote: result.workbenchRemote,
+    workbenchClient: result.workbenchClient,
     ...adapterResult,
   })}\n`)
 } finally {

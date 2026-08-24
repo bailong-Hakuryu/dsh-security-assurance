@@ -41,6 +41,10 @@
       "types": "./lib/typert.remote-client.d.ts",
       "default": "./lib/typert.remote-client.js"
     },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -55,6 +59,10 @@
     "lib/typert.host.d.ts",
     "lib/typert.remote-client.js",
     "lib/typert.remote-client.d.ts",
+    "lib/client.js",
+    "lib/client.js.map",
+    "lib/types/client/index.d.ts",
+    "lib/types/client/index.d.ts.map",
     "lib/types/index.d.ts",
     "lib/types/index.d.ts.map",
     "lib/types/contracts.d.ts",
@@ -79,6 +87,13 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-api-gateway"
+      ],
+      "platform": "web",
+      "immediately": true
     }
   },
   "scripts": {
@@ -91,6 +106,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-api-gateway": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-home-paths": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-typert-protocol": "^0.1.1-rc.2",
     "dsh-engineering-control-plane": "^0.1.0"

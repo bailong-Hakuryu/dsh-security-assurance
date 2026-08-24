@@ -29,6 +29,7 @@ try {
       '@deepseek-ai/dsh-typert-protocol': ['packages/typert-protocol/src/index.ts'],
     },
   }
+  packageTsconfig.exclude = ['src/client']
   await writeFile(
     join(syntheticPackageRoot, 'tsconfig.json'),
     `${JSON.stringify(packageTsconfig, null, 2)}\n`,

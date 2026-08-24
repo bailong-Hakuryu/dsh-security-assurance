@@ -28,10 +28,16 @@ This repository is under active vertical-slice development, not at the
   immutable path-free Repository bindings;
 - a package-owned `dsh-security-assurance/workbench-remote` Host Adapter plus
   generated strict `dsh-security-assurance/typert` and
-  `dsh-security-assurance/remote` artifacts. Its first headless Workbench slice
-  exposes authority-projected `getAssessment` and revision-bound,
-  idempotent `recordRiskDecision` without putting a Principal, permissions, or
-  Security Invocation on the wire;
+  `dsh-security-assurance/remote` artifacts. Its headless Workbench slice
+  exposes authority-projected `getAssessment`, bounded
+  `waitForAssessmentRevision`, and revision-bound, idempotent
+  `recordRiskDecision` without putting a Principal, permissions, or Security
+  Invocation on the wire;
+- a package-owned `dsh-security-assurance/client` browser entry that mounts the
+  generated Remote contribution and provides one transient
+  `ctx.securityAssuranceWorkbench` Controller. It fetches immutable Snapshots,
+  follows committed revisions through cancellable long-polling, fences stale
+  responses, and erases its authority context and Assessment payload on close;
 - exact Git revision, Change, and Workspace Snapshot Subject selectors;
 - bounded content-addressed Subject materialization below
   `$DSH_HOME/security-assurance/subjects`, with canonical manifests and no
@@ -171,8 +177,9 @@ This repository is under active vertical-slice development, not at the
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
 model tools, and the browser-rendered Workbench UI are deliberately not claimed
-as implemented yet. The Workbench Host Remote and generated Client contract are
-implemented, but no browser surface is shipped in this slice. This
+as implemented yet. The Workbench Host Remote, generated Client contract, and
+headless browser Controller are implemented, but no visual browser surface is
+shipped in this slice. This
 repository ships no production external Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -351,15 +358,28 @@ fails closed, and the dormant bundle row must not be enabled for an anonymous
 LAN deployment.
 
 The generated Host contribution is published at `./typert`; the generated
-Client contribution is published at `./remote` for a future Client entry to
-mount through `ctx.remote.$mount()`. Both `getAssessment` and
-`recordRiskDecision` use strict generated request/result codecs. Cancellation
-is forwarded to the root Service, mutation retries retain the caller's original
-idempotency key, and Adapter disposal withdraws its lookup and Remote Service
-without altering Assessments or the root plugin. The authority context is
-transient authentication material: a future Workbench may keep it only in
-memory and must never persist it, Findings, Evidence, rationale, or full
-Snapshots in browser storage, URLs, caches, or logs.
+Client contribution is published at `./remote`. All three operations use strict
+generated request/result codecs. Cancellation is forwarded to the root Service,
+mutation retries retain the caller's original idempotency key, and Adapter
+disposal withdraws its lookup and Remote Service without altering Assessments
+or the root plugin.
+
+The package also publishes a Harness-discoverable `./client` entry. It mounts
+`./remote` through `ctx.remote.$mount()` and provides the browser-local
+`ctx.securityAssuranceWorkbench` Controller with four public operations:
+`openAssessment`, `closeAssessment`, `getState`, and `subscribe`. One open call
+loads the current immutable Snapshot and internally follows
+`waitForAssessmentRevision`; `CHANGED` fetches the next Snapshot, `TIMED_OUT`
+continues from the same committed revision, and close or Client disposal aborts
+the outstanding wait. A terminal Assessment keeps only the rendered Snapshot
+and immediately retires the authority context.
+
+This Controller owns no security decision or durable continuation state. The
+authority context is transient authentication material, and the implementation
+contains no `localStorage`, `sessionStorage`, IndexedDB, Service Worker cache,
+URL, or logging persistence for it, Findings, Evidence, rationale, or full
+Snapshots. Remote or Security failures fail closed to a payload-free `FAILED`
+state; reopening re-fetches Service truth by opaque Assessment ID.
 
 ## Optional Control Plane integration
 
