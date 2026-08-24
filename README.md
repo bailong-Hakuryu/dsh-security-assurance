@@ -31,7 +31,7 @@ This repository is under active vertical-slice development, not at the
   `dsh-security-assurance/remote` artifacts. Its headless Workbench slice
   exposes authority-projected, watermarked `listAssessments`, exact
   `getAssessment`, revision-bound Finding queries, strict metadata-only
-  `getEvidenceView`, bounded
+  `getEvidenceView`, separate expiring `discloseEvidence`, bounded
   `waitForAssessmentRevision`, and revision-bound, idempotent
   `recordRiskDecision` without putting a Principal, permissions, or Security
   Invocation on the wire;
@@ -41,7 +41,8 @@ This repository is under active vertical-slice development, not at the
   redacted Assessment selector, fetches immutable Snapshots,
   follows committed revisions through cancellable long-polling, fences stale
   responses and disclosure attempts, opens metadata only from an exact Finding
-  Evidence Link, validates every returned identity binding, and erases its
+  Evidence Link, separately reauthorizes purpose-bound bounded content,
+  validates every returned identity, byte, and expiry binding, and erases its
   authority context and Assessment payload on close.
   The same entry contributes an additive bilingual launcher at
   `sidebar.footer.action` and a responsive read-only Assessment surface at
@@ -185,13 +186,12 @@ This repository is under active vertical-slice development, not at the
 
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
-model tools, Risk Decision forms, bounded Evidence content disclosure UI, and
-the complete Workbench information architecture are deliberately not claimed
+model tools, Risk Decision forms, and the complete Workbench information architecture are deliberately not claimed
 as implemented yet. The Workbench Host Remote, authenticated redacted Assessment selection
 with stable cursor continuation, generated Client contract, transient browser
 Controller, read-only Assessment Detail, multidimensional Finding triage,
-revision-bound Finding Detail navigation, and bilingual metadata-only Evidence
-disclosure are implemented. This repository ships no production external
+revision-bound Finding Detail navigation, bilingual metadata-first Evidence,
+and explicit expiring bounded-content disclosure are implemented. This repository ships no production external
 Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -282,7 +282,8 @@ of JSON only for `VALIDATION_REVIEW`, only under the dedicated trusted-channel
 permission, and only for currently allowlisted safe Evidence schemas. A
 missing permission, incompatible purpose, unavailable protection policy,
 unknown schema, or byte-limit breach produces a redacted View rather than a
-payload or read handle.
+payload or read handle. Successful bounded JSON carries a Service-issued
+five-minute expiry; Clients must discard the value no later than that instant.
 
 `getAssuranceSubmission` uses the separate `assurance-submission:read`
 authority held by the Control Plane Adapter and explicitly trusted Host
@@ -336,7 +337,7 @@ only its Cordis Service; durable Repository Registry history remains owned by
 the root Security Service, so an equal restart resolves the same Repository ID.
 Conflicting replay fails loudly instead of updating Host policy implicitly.
 
-## Workbench Remote and metadata-only UI
+## Workbench Remote and explicit bounded Evidence UI
 
 The optional `dsh-security-assurance/workbench-remote` entry is a Host Adapter,
 not an authentication provider and not a second business Service. It injects
@@ -370,7 +371,7 @@ fails closed, and the dormant bundle row must not be enabled for an anonymous
 LAN deployment.
 
 The generated Host contribution is published at `./typert`; the generated
-Client contribution is published at `./remote`. All seven operations use strict
+Client contribution is published at `./remote`. All eight operations use strict
 generated request/result codecs. Cancellation is forwarded to the root Service,
 mutation retries retain the caller's original idempotency key, and Adapter
 disposal withdraws its lookup and Remote Service without altering Assessments
@@ -378,11 +379,12 @@ or the root plugin.
 
 The package also publishes a Harness-discoverable `./client` entry. It mounts
 `./remote` through `ctx.remote.$mount()` and provides the browser-local
-`ctx.securityAssuranceWorkbench` Controller with thirteen public operations:
+`ctx.securityAssuranceWorkbench` Controller with fifteen public operations:
 `openAssessmentSelection`, `loadMoreAssessments`, `selectAssessment`,
 `openAssessment`, `openFindings`, `loadMoreFindings`, `selectFinding`,
-`backToFindingList`, `selectEvidence`, `backToFindingDetail`, `closeAssessment`,
-`getState`, and `subscribe`. The Host
+`backToFindingList`, `selectEvidence`, `discloseEvidence`,
+`hideEvidenceDisclosure`, `backToFindingDetail`, `closeAssessment`, `getState`,
+and `subscribe`. The Host
 passes its current opaque authority-context ID to `openAssessmentSelection`;
 the browser receives a bounded page of redacted, authority-visible identities
 and can append continuation pages from the same signed consistency window.
@@ -403,8 +405,13 @@ This Controller owns no security decision or durable continuation state. The
 authority context is transient authentication material, and the implementation
 contains no `localStorage`, `sessionStorage`, IndexedDB, Service Worker cache,
 URL, or logging persistence for it, Findings, Evidence, rationale, or full
-Snapshots. Remote or Security failures fail closed to a payload-free `FAILED`
-state; reopening re-fetches Service truth by opaque Assessment ID.
+Snapshots. Bounded content is retained only in the current observable state and
+is discarded on explicit hide, Evidence navigation, close, replacement,
+authority failure, or Service expiry. Those navigation and lifecycle exits also
+abort any in-flight Evidence request before the stale-response fence is applied.
+Remote or Security failures fail closed
+to a payload-free `FAILED` state; reopening re-fetches Service truth by opaque
+Assessment ID.
 
 The Client entry also registers two additive Harness UI contributions. A
 launcher in `sidebar.footer.action` opens a frame-wide dialog in
@@ -425,10 +432,21 @@ capabilities. Selecting one exact listed Evidence artifact derives the
 Assessment, Finding, artifact, and digest bindings from the retained Detail and
 fixes the viewing purpose and Profile to `FINDING_TRIAGE` and
 `security/evidence-view/metadata-only-v1`; the Controller rejects arbitrary
-identities or mismatched responses and renders only the metadata-only View,
-including its complete Digest Envelope and explicit redaction reason. Evidence
-transitions move focus to the new panel and return it to the originating Link.
-The strict Remote does not admit the bounded-JSON Profile in this slice.
+identities or mismatched responses and initially renders only the metadata-only
+View, including its complete Digest Envelope and explicit redaction reason.
+A separate explicit action invokes `discloseEvidence` with the exact retained
+bindings, fixed `VALIDATION_REVIEW` purpose, and
+`security/evidence-view/bounded-json-v1` Profile. The Host resolves current
+authority again for that invocation. The Controller accepts only a matching
+structured redaction or at most 32 KiB of byte-consistent JSON with a future
+Service expiry, fences late responses, and schedules cleanup without retaining
+the bounded View in the timer closure. Hiding, leaving Evidence, closing, or
+replacing the session aborts any in-flight disclosure before its result is
+discarded. The bilingual UI marks the content as
+sensitive and time-limited, renders purpose, Profile, size, and expiry, and
+provides an explicit hide-and-discard control. Evidence transitions move focus
+to the new panel, return it to the metadata action after hide or expiry, and
+return it to the originating Link after leaving Evidence.
 Assessment actions remain informational—there are no browser mutation controls.
 
 The surface ships complete English and Simplified Chinese copy, semantic dialog

@@ -45,6 +45,7 @@ function boundedContent(
   classification: 'INTERNAL' | 'CONTROL_PLANE',
   authority: EvidenceViewAuthority,
   protectionAvailable: boolean,
+  expiresAt: string,
 ): EvidenceViewContentV1 {
   if (request.viewProfileId === EVIDENCE_VIEW_METADATA_ONLY_PROFILE_ID) {
     return { kind: 'REDACTED', reason: 'PROFILE_METADATA_ONLY' }
@@ -68,6 +69,7 @@ function boundedContent(
   return {
     kind: 'BOUNDED_JSON',
     byteLength,
+    expiresAt,
     value: artifact.value,
   }
 }
@@ -84,6 +86,7 @@ export class EvidenceViewModule {
     request: GetEvidenceViewRequest,
     policies: EvidenceViewPolicies,
     authority: EvidenceViewAuthority,
+    boundedJsonExpiresAt: string,
   ): EvidenceViewV1 {
     const links = finding.evidenceLinks.filter(candidate => (
       candidate.artifactId === request.evidenceArtifactId
@@ -148,6 +151,7 @@ export class EvidenceViewModule {
         descriptor.classification,
         authority,
         protectionAvailable,
+        boundedJsonExpiresAt,
       ),
     })
   }

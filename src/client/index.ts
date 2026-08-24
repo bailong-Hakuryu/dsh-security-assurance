@@ -20,6 +20,7 @@ import type {
   AssessmentListPageV1,
   AssessmentRevisionSignalV1,
   AssessmentSnapshotV1,
+  DigestEnvelopeV1,
   FindingDetailViewV1,
   FindingListPageV1,
   FindingSummaryV1,
@@ -28,6 +29,7 @@ import type {
 } from '../contracts.ts'
 import type {
   WorkbenchAuthorityContextId,
+  WorkbenchEvidenceDisclosureViewV1,
   WorkbenchEvidenceMetadataViewV1,
 } from 'dsh-security-assurance/workbench-remote'
 import {
@@ -88,7 +90,20 @@ export interface WorkbenchClientFailureV1 {
 export type WorkbenchEvidenceStateV1 =
   | { readonly kind: 'NOT_LOADED' }
   | { readonly kind: 'METADATA_LOADING'; readonly artifactId: string }
-  | { readonly kind: 'METADATA_READY'; readonly view: WorkbenchEvidenceMetadataViewV1 }
+  | {
+      readonly kind: 'METADATA_READY'
+      readonly view: WorkbenchEvidenceMetadataViewV1
+      readonly disclosureStatus: 'NOT_REQUESTED' | 'EXPIRED'
+    }
+  | {
+      readonly kind: 'DISCLOSURE_LOADING'
+      readonly metadata: WorkbenchEvidenceMetadataViewV1
+    }
+  | {
+      readonly kind: 'DISCLOSURE_READY'
+      readonly metadata: WorkbenchEvidenceMetadataViewV1
+      readonly view: WorkbenchEvidenceDisclosureViewV1
+    }
 
 /** Transient Finding projection nested under one revision-bound Assessment view. */
 export type WorkbenchFindingsStateV1 =
@@ -161,6 +176,8 @@ interface LiveAssessmentSession {
   readonly contextId: WorkbenchAuthorityContextId
   assessmentId: AssessmentId | undefined
   readonly abort: AbortController
+  evidenceExpiryTimer: ReturnType<typeof setTimeout> | undefined
+  evidenceAbort: AbortController | undefined
 }
 
 const CLOSED_STATE: SecurityAssuranceWorkbenchStateV1 = Object.freeze({ kind: 'CLOSED' })
@@ -201,6 +218,8 @@ export class SecurityAssuranceWorkbenchController extends Service {
       contextId: request.securityAssuranceWorkbenchContextId,
       assessmentId: undefined,
       abort: new AbortController(),
+      evidenceExpiryTimer: undefined,
+      evidenceAbort: undefined,
     }
     this.session = session
     this.publish(Object.freeze({ kind: 'SELECTION_LOADING' }))
@@ -494,6 +513,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
     }
     const currentFindings = current.findings
     const evidenceRequestGeneration = ++this.evidenceRequestGeneration
+    const evidenceAbort = this.beginEvidenceRequest(session)
     this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
       ...currentFindings,
       evidence: Object.freeze({
@@ -520,7 +540,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
           purpose: 'FINDING_TRIAGE',
           viewProfileId: 'security/evidence-view/metadata-only-v1',
         },
-        session.abort.signal,
+        evidenceAbort.signal,
       )
     } catch (error) {
       if (!this.isActiveEvidenceRequest(
@@ -528,7 +548,11 @@ export class SecurityAssuranceWorkbenchController extends Service {
         current.snapshot.assessmentRevision,
         evidenceArtifactId,
         evidenceRequestGeneration,
-      )) return this.state
+      )) {
+        this.finishEvidenceRequest(session, evidenceAbort)
+        return this.state
+      }
+      this.finishEvidenceRequest(session, evidenceAbort)
       return this.failClient(session, error)
     }
     if (!this.isActiveEvidenceRequest(
@@ -536,7 +560,11 @@ export class SecurityAssuranceWorkbenchController extends Service {
       current.snapshot.assessmentRevision,
       evidenceArtifactId,
       evidenceRequestGeneration,
-    )) return this.state
+    )) {
+      this.finishEvidenceRequest(session, evidenceAbort)
+      return this.state
+    }
+    this.finishEvidenceRequest(session, evidenceAbort)
     const view = this.readRemoteResult(session, result)
     if (view === undefined) return this.state
     if (!matchesEvidenceMetadata(currentFindings.detail, link, view)) {
@@ -549,7 +577,134 @@ export class SecurityAssuranceWorkbenchController extends Service {
     }
     return this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
       ...currentFindings,
-      evidence: Object.freeze({ kind: 'METADATA_READY' as const, view }),
+      evidence: Object.freeze({
+        kind: 'METADATA_READY' as const,
+        view,
+        disclosureStatus: 'NOT_REQUESTED' as const,
+      }),
+    }))
+  }
+
+  /** Explicitly reauthorize bounded content from the retained metadata binding. */
+  async discloseEvidence(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'READY'
+      || current.findings.kind !== 'DETAIL_READY'
+      || current.findings.evidence.kind !== 'METADATA_READY'
+    ) return current
+    const currentFindings = current.findings
+    const currentEvidence = current.findings.evidence
+    const metadata = currentEvidence.view
+    const link = currentFindings.detail.evidenceLinks.find(candidate => (
+      candidate.artifactId === metadata.evidence.artifactId
+      && sameDigest(candidate.digest, metadata.evidence.digest)
+    ))
+    if (link === undefined) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'EVIDENCE_BINDING_LOST',
+        message: 'The retained Evidence metadata is no longer linked to the Finding Detail.',
+        retryable: false,
+      })
+    }
+    this.clearEvidenceExpiry(session)
+    const requestGeneration = ++this.evidenceRequestGeneration
+    const evidenceAbort = this.beginEvidenceRequest(session)
+    this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      ...currentFindings,
+      evidence: Object.freeze({ kind: 'DISCLOSURE_LOADING' as const, metadata }),
+    }))
+
+    let result: RemoteResult<SecurityResult<WorkbenchEvidenceDisclosureViewV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.discloseEvidence(
+        session.contextId,
+        {
+          schemaVersion: 1,
+          assessmentId: current.assessmentId,
+          assessmentRevision: currentFindings.detail.assessmentRevision,
+          context: {
+            kind: 'finding',
+            recordId: currentFindings.detail.recordId,
+            recordRevision: currentFindings.detail.recordRevision,
+          },
+          evidenceArtifactId: link.artifactId,
+          evidenceDigest: link.digest,
+          purpose: 'VALIDATION_REVIEW',
+          viewProfileId: 'security/evidence-view/bounded-json-v1',
+        },
+        evidenceAbort.signal,
+      )
+    } catch (error) {
+      if (!this.isActiveDisclosureRequest(
+        session,
+        current.snapshot.assessmentRevision,
+        metadata.evidence.artifactId,
+        requestGeneration,
+      )) {
+        this.finishEvidenceRequest(session, evidenceAbort)
+        return this.state
+      }
+      this.finishEvidenceRequest(session, evidenceAbort)
+      return this.failClient(session, error)
+    }
+    if (!this.isActiveDisclosureRequest(
+      session,
+      current.snapshot.assessmentRevision,
+      metadata.evidence.artifactId,
+      requestGeneration,
+    )) {
+      this.finishEvidenceRequest(session, evidenceAbort)
+      return this.state
+    }
+    this.finishEvidenceRequest(session, evidenceAbort)
+    const view = this.readRemoteResult(session, result)
+    if (view === undefined) return this.state
+    if (!matchesEvidenceDisclosure(currentFindings.detail, link, metadata, view)) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'EVIDENCE_DISCLOSURE_PROTOCOL_VIOLATION',
+        message: 'The bounded Evidence View does not match the selected metadata binding.',
+        retryable: false,
+      })
+    }
+    const ready = this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      ...currentFindings,
+      evidence: Object.freeze({ kind: 'DISCLOSURE_READY' as const, metadata, view }),
+    }))
+    if (view.content.kind === 'BOUNDED_JSON') {
+      this.scheduleEvidenceExpiry(session, requestGeneration)
+    }
+    return ready
+  }
+
+  /** Hide and immediately discard any in-memory bounded disclosure. */
+  hideEvidenceDisclosure(): SecurityAssuranceWorkbenchStateV1 {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'READY'
+      || current.findings.kind !== 'DETAIL_READY'
+      || (
+        current.findings.evidence.kind !== 'DISCLOSURE_LOADING'
+        && current.findings.evidence.kind !== 'DISCLOSURE_READY'
+      )
+    ) return current
+    const metadata = current.findings.evidence.metadata
+    this.evidenceRequestGeneration += 1
+    this.cancelEvidenceRequest(session)
+    this.clearEvidenceExpiry(session)
+    return this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+      ...current.findings,
+      evidence: Object.freeze({
+        kind: 'METADATA_READY' as const,
+        view: metadata,
+        disclosureStatus: 'NOT_REQUESTED' as const,
+      }),
     }))
   }
 
@@ -558,6 +713,10 @@ export class SecurityAssuranceWorkbenchController extends Service {
     const current = this.state
     if (current.kind !== 'READY' || current.findings.kind !== 'DETAIL_READY') return current
     this.evidenceRequestGeneration += 1
+    if (this.session !== undefined) {
+      this.cancelEvidenceRequest(this.session)
+      this.clearEvidenceExpiry(this.session)
+    }
     return this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
       ...current.findings,
       evidence: EVIDENCE_NOT_LOADED,
@@ -568,6 +727,11 @@ export class SecurityAssuranceWorkbenchController extends Service {
   backToFindingList(): SecurityAssuranceWorkbenchStateV1 {
     const current = this.state
     if (current.kind !== 'READY' || current.findings.kind !== 'DETAIL_READY') return current
+    this.evidenceRequestGeneration += 1
+    if (this.session !== undefined) {
+      this.cancelEvidenceRequest(this.session)
+      this.clearEvidenceExpiry(this.session)
+    }
     return this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
       kind: 'LIST_READY',
       assessmentRevision: current.findings.assessmentRevision,
@@ -586,6 +750,8 @@ export class SecurityAssuranceWorkbenchController extends Service {
       contextId: request.securityAssuranceWorkbenchContextId,
       assessmentId: request.assessmentId,
       abort: new AbortController(),
+      evidenceExpiryTimer: undefined,
+      evidenceAbort: undefined,
     }
     this.session = session
     return this.loadAssessment(session, request.assessmentId)
@@ -782,12 +948,18 @@ export class SecurityAssuranceWorkbenchController extends Service {
   private retireAuthority(session: LiveAssessmentSession): void {
     if (!this.isActive(session)) return
     this.session = undefined
+    this.cancelEvidenceRequest(session)
+    this.clearEvidenceExpiry(session)
     session.abort.abort()
   }
 
   private eraseSession(): void {
     const active = this.session
     this.session = undefined
+    if (active !== undefined) {
+      this.cancelEvidenceRequest(active)
+      this.clearEvidenceExpiry(active)
+    }
     active?.abort.abort()
   }
 
@@ -808,6 +980,80 @@ export class SecurityAssuranceWorkbenchController extends Service {
       && this.state.findings.kind === 'DETAIL_READY'
       && this.state.findings.evidence.kind === 'METADATA_LOADING'
       && this.state.findings.evidence.artifactId === evidenceArtifactId
+  }
+
+  private isActiveDisclosureRequest(
+    session: LiveAssessmentSession,
+    assessmentRevision: number,
+    evidenceArtifactId: string,
+    requestGeneration: number,
+  ): boolean {
+    return this.isActive(session)
+      && this.evidenceRequestGeneration === requestGeneration
+      && this.state.kind === 'READY'
+      && this.state.snapshot.assessmentRevision === assessmentRevision
+      && this.state.findings.kind === 'DETAIL_READY'
+      && this.state.findings.evidence.kind === 'DISCLOSURE_LOADING'
+      && this.state.findings.evidence.metadata.evidence.artifactId === evidenceArtifactId
+  }
+
+  private scheduleEvidenceExpiry(
+    session: LiveAssessmentSession,
+    requestGeneration: number,
+  ): void {
+    this.clearEvidenceExpiry(session)
+    const current = this.state
+    if (
+      !this.isActive(session)
+      || this.evidenceRequestGeneration !== requestGeneration
+      || current.kind !== 'READY'
+      || current.findings.kind !== 'DETAIL_READY'
+      || current.findings.evidence.kind !== 'DISCLOSURE_READY'
+      || current.findings.evidence.view.content.kind !== 'BOUNDED_JSON'
+    ) return
+    const remaining = Date.parse(current.findings.evidence.view.content.expiresAt) - Date.now()
+    if (remaining <= 0) {
+      const metadata = current.findings.evidence.metadata
+      this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
+        ...current.findings,
+        evidence: Object.freeze({
+          kind: 'METADATA_READY' as const,
+          view: metadata,
+          disclosureStatus: 'EXPIRED' as const,
+        }),
+      }))
+      return
+    }
+    session.evidenceExpiryTimer = setTimeout(
+      () => { this.scheduleEvidenceExpiry(session, requestGeneration) },
+      Math.min(remaining, 2_147_483_647),
+    )
+  }
+
+  private clearEvidenceExpiry(session: LiveAssessmentSession): void {
+    if (session.evidenceExpiryTimer === undefined) return
+    clearTimeout(session.evidenceExpiryTimer)
+    session.evidenceExpiryTimer = undefined
+  }
+
+  private beginEvidenceRequest(session: LiveAssessmentSession): AbortController {
+    this.cancelEvidenceRequest(session)
+    const request = new AbortController()
+    session.evidenceAbort = request
+    return request
+  }
+
+  private finishEvidenceRequest(
+    session: LiveAssessmentSession,
+    request: AbortController,
+  ): void {
+    if (session.evidenceAbort === request) session.evidenceAbort = undefined
+  }
+
+  private cancelEvidenceRequest(session: LiveAssessmentSession): void {
+    const request = session.evidenceAbort
+    session.evidenceAbort = undefined
+    request?.abort()
   }
 
   private publish(state: SecurityAssuranceWorkbenchStateV1): void {
@@ -853,9 +1099,49 @@ function matchesEvidenceMetadata(
     && view.content.reason === 'PROFILE_METADATA_ONLY'
 }
 
+function matchesEvidenceDisclosure(
+  detail: FindingDetailViewV1,
+  link: FindingDetailViewV1['evidenceLinks'][number],
+  metadata: WorkbenchEvidenceMetadataViewV1,
+  view: WorkbenchEvidenceDisclosureViewV1,
+): boolean {
+  if (
+    view.assessmentId !== detail.assessmentId
+    || view.assessmentRevision !== detail.assessmentRevision
+    || view.context.kind !== 'finding'
+    || view.context.recordId !== detail.recordId
+    || view.context.recordRevision !== detail.recordRevision
+    || view.evidence.artifactId !== link.artifactId
+    || view.evidence.schemaId !== link.schemaId
+    || !sameDigest(view.evidence.digest, link.digest)
+    || view.evidence.classification !== metadata.evidence.classification
+    || view.link.purpose !== link.purpose
+    || view.link.eligibilityDecision !== link.eligibilityDecision
+    || view.link.eligibilityDecisionArtifactId !== link.eligibilityDecisionArtifactId
+    || view.purpose !== 'VALIDATION_REVIEW'
+    || view.viewProfileId !== 'security/evidence-view/bounded-json-v1'
+    || view.protection.policyId !== metadata.protection.policyId
+    || view.retention.status !== metadata.retention.status
+    || view.egress.policyId !== metadata.egress.policyId
+    || view.egress.status !== metadata.egress.status
+  ) return false
+  if (view.content.kind === 'REDACTED') return true
+  const expiresAt = Date.parse(view.content.expiresAt)
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false
+  try {
+    const byteLength = new TextEncoder().encode(JSON.stringify(view.content.value)).byteLength
+    return Number.isInteger(view.content.byteLength)
+      && view.content.byteLength >= 0
+      && view.content.byteLength <= 32 * 1024
+      && view.content.byteLength === byteLength
+  } catch {
+    return false
+  }
+}
+
 function sameDigest(
-  left: WorkbenchEvidenceMetadataViewV1['evidence']['digest'],
-  right: WorkbenchEvidenceMetadataViewV1['evidence']['digest'],
+  left: DigestEnvelopeV1,
+  right: DigestEnvelopeV1,
 ): boolean {
   return left.schemaVersion === right.schemaVersion
     && left.algorithm === right.algorithm
@@ -943,6 +1229,8 @@ function installWorkbenchUi(
         backToFindingDetail: () => { controller.backToFindingDetail() },
         backToFindingList: () => { controller.backToFindingList() },
         closeWorkbench: () => { presentation.hide() },
+        discloseEvidence: () => { void controller.discloseEvidence() },
+        hideEvidenceDisclosure: () => { controller.hideEvidenceDisclosure() },
         loadMoreAssessments: () => { void controller.loadMoreAssessments() },
         loadMoreFindings: () => { void controller.loadMoreFindings() },
         openFindings: () => { void controller.openFindings() },

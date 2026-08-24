@@ -118,6 +118,81 @@ export interface WorkbenchEvidenceMetadataViewV1 {
   }
 }
 
+/** Package-owned recursive JSON value admitted by the bounded Workbench Remote face. */
+export type WorkbenchBoundedJsonV1 =
+  | null
+  | boolean
+  | number
+  | string
+  | WorkbenchBoundedJsonV1[]
+  | { [key: string]: WorkbenchBoundedJsonV1 }
+
+/** Strict browser request for one explicit validation-review disclosure action. */
+export interface WorkbenchEvidenceDisclosureRequestV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly context: {
+    readonly kind: 'finding'
+    readonly recordId: string
+    readonly recordRevision: number
+  }
+  readonly evidenceArtifactId: string
+  readonly evidenceDigest: DigestEnvelopeV1
+  readonly purpose: 'VALIDATION_REVIEW'
+  readonly viewProfileId: 'security/evidence-view/bounded-json-v1'
+}
+
+/** Purpose-bound bounded disclosure or a structured Service redaction. */
+export interface WorkbenchEvidenceDisclosureViewV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly context: {
+    readonly kind: 'finding'
+    readonly recordId: string
+    readonly recordRevision: number
+  }
+  readonly evidence: {
+    readonly artifactId: string
+    readonly schemaId: string
+    readonly digest: DigestEnvelopeV1
+    readonly classification: 'INTERNAL' | 'CONTROL_PLANE'
+  }
+  readonly link: {
+    readonly purpose: 'VALIDATION_EVIDENCE' | 'COUNTER_EVIDENCE'
+    readonly eligibilityDecision: 'ELIGIBLE' | 'INELIGIBLE'
+    readonly eligibilityDecisionArtifactId: string
+  }
+  readonly purpose: 'VALIDATION_REVIEW'
+  readonly viewProfileId: 'security/evidence-view/bounded-json-v1'
+  readonly protection: {
+    readonly policyId: string
+    readonly status: 'AVAILABLE' | 'UNAVAILABLE'
+  }
+  readonly retention: { readonly status: 'RETAINED' }
+  readonly egress: {
+    readonly policyId: string
+    readonly status: 'LOCAL_ONLY'
+  }
+  readonly content:
+    | {
+        readonly kind: 'REDACTED'
+        readonly reason:
+          | 'DISCLOSURE_NOT_AUTHORIZED'
+          | 'PURPOSE_NOT_AUTHORIZED'
+          | 'PROTECTION_UNAVAILABLE'
+          | 'SCHEMA_NOT_DISCLOSABLE'
+          | 'PROFILE_BYTE_LIMIT'
+      }
+    | {
+        readonly kind: 'BOUNDED_JSON'
+        readonly byteLength: number
+        readonly expiresAt: string
+        readonly value: WorkbenchBoundedJsonV1
+      }
+}
+
 const WORKBENCH_AUTHORITY_CONTEXT_PATTERN = /^[A-Za-z0-9_-]{16,256}$/
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
@@ -228,6 +303,25 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
     return { ok: true, value: result.value }
   }
 
+  /** Explicitly reauthorize and disclose one expiring validation-review View. */
+  @Remote
+  async discloseEvidence(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: WorkbenchEvidenceDisclosureRequestV1,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<WorkbenchEvidenceDisclosureViewV1>> {
+    const result = await this.ctx.securityAssurance.getEvidenceView(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
+    if (!result.ok) return result
+    if (!isValidationReviewEvidenceView(result.value)) {
+      throw new TypeError('Security Service returned a non-disclosure Evidence View')
+    }
+    return { ok: true, value: result.value }
+  }
+
   /** Wait for one later committed Assessment revision without holding a Store transaction. */
   @Remote
   waitForAssessmentRevision(
@@ -266,4 +360,15 @@ function isMetadataOnlyEvidenceView(
     && view.viewProfileId === 'security/evidence-view/metadata-only-v1'
     && view.content.kind === 'REDACTED'
     && view.content.reason === 'PROFILE_METADATA_ONLY'
+}
+
+function isValidationReviewEvidenceView(
+  view: EvidenceViewV1,
+): view is WorkbenchEvidenceDisclosureViewV1 {
+  if (
+    view.purpose !== 'VALIDATION_REVIEW'
+    || view.viewProfileId !== 'security/evidence-view/bounded-json-v1'
+  ) return false
+  if (view.content.kind === 'BOUNDED_JSON') return true
+  return view.content.reason !== 'PROFILE_METADATA_ONLY'
 }

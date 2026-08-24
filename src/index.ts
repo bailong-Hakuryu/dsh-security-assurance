@@ -5,6 +5,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import {
   disableRepositoryRequestSchema,
+  EVIDENCE_VIEW_BOUNDED_JSON_LIFETIME_MS,
   cancelAssessmentRequestSchema,
   getAssuranceSubmissionRequestSchema,
   getAssessmentRequestSchema,
@@ -1058,6 +1059,7 @@ export class SecurityAssuranceService extends Service {
               'evidence:disclose:validation-review',
             ),
           },
+          new Date(Date.now() + EVIDENCE_VIEW_BOUNDED_JSON_LIFETIME_MS).toISOString(),
         ),
       })
     } catch (error) {

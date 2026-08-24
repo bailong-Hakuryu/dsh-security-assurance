@@ -718,6 +718,7 @@ export const EVIDENCE_VIEW_METADATA_ONLY_PROFILE_ID =
   'security/evidence-view/metadata-only-v1' as const
 export const EVIDENCE_VIEW_BOUNDED_JSON_PROFILE_ID =
   'security/evidence-view/bounded-json-v1' as const
+export const EVIDENCE_VIEW_BOUNDED_JSON_LIFETIME_MS = 5 * 60_000
 
 export type EvidenceViewPurposeV1 = 'FINDING_TRIAGE' | 'VALIDATION_REVIEW'
 export type EvidenceViewProfileIdV1 =
@@ -1519,6 +1520,7 @@ export type EvidenceViewContentV1 =
   | {
       readonly kind: 'BOUNDED_JSON'
       readonly byteLength: number
+      readonly expiresAt: string
       readonly value: SecuritySubmissionJsonV1
     }
 
@@ -1571,6 +1573,7 @@ const evidenceViewContentV1Schema: z.ZodType<EvidenceViewContentV1> = z.discrimi
   z.strictObject({
     kind: z.literal('BOUNDED_JSON'),
     byteLength: z.number().int().nonnegative().max(32 * 1024),
+    expiresAt: z.iso.datetime({ offset: true }),
     value: securitySubmissionJsonV1Schema,
   }).refine(content => (
     Buffer.byteLength(JSON.stringify(content.value), 'utf8') === content.byteLength

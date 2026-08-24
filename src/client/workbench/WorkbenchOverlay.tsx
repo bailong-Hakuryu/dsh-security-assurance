@@ -12,7 +12,10 @@ import type {
   WorkbenchEvidenceStateV1,
   WorkbenchFindingsStateV1,
 } from '../index.ts'
-import type { WorkbenchEvidenceMetadataViewV1 } from '../../workbench-remote.ts'
+import type {
+  WorkbenchEvidenceDisclosureViewV1,
+  WorkbenchEvidenceMetadataViewV1,
+} from '../../workbench-remote.ts'
 import type {
   AssessmentAvailableActionV1,
   AssessmentId,
@@ -37,6 +40,8 @@ export interface WorkbenchOverlayInjected {
   readonly openFindings: () => void
   readonly backToFindingList: () => void
   readonly backToFindingDetail: () => void
+  readonly discloseEvidence: () => void
+  readonly hideEvidenceDisclosure: () => void
   readonly selectAssessment: (assessmentId: AssessmentId) => void
   readonly selectEvidence: (artifactId: string) => void
   readonly selectFinding: (recordId: string) => void
@@ -59,6 +64,8 @@ export function WorkbenchOverlay({
   openFindings,
   backToFindingList,
   backToFindingDetail,
+  discloseEvidence,
+  hideEvidenceDisclosure,
   selectAssessment,
   selectEvidence,
   selectFinding,
@@ -163,6 +170,8 @@ export function WorkbenchOverlay({
               backToFindingList={backToFindingList}
               selectEvidence={selectEvidence}
               backToFindingDetail={backToFindingDetail}
+              discloseEvidence={discloseEvidence}
+              hideEvidenceDisclosure={hideEvidenceDisclosure}
               t={t}
             />
           )}
@@ -265,6 +274,8 @@ function AssessmentDetail({
   backToFindingList,
   selectEvidence,
   backToFindingDetail,
+  discloseEvidence,
+  hideEvidenceDisclosure,
   t,
 }: {
   readonly snapshot: AssessmentSnapshotV1
@@ -275,6 +286,8 @@ function AssessmentDetail({
   readonly backToFindingList: () => void
   readonly selectEvidence: (artifactId: string) => void
   readonly backToFindingDetail: () => void
+  readonly discloseEvidence: () => void
+  readonly hideEvidenceDisclosure: () => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
   return (
@@ -342,6 +355,8 @@ function AssessmentDetail({
         backToFindingList={backToFindingList}
         selectEvidence={selectEvidence}
         backToFindingDetail={backToFindingDetail}
+        discloseEvidence={discloseEvidence}
+        hideEvidenceDisclosure={hideEvidenceDisclosure}
         t={t}
       />
     </div>
@@ -356,6 +371,8 @@ function FindingPanel({
   backToFindingList,
   selectEvidence,
   backToFindingDetail,
+  discloseEvidence,
+  hideEvidenceDisclosure,
   t,
 }: {
   readonly state: WorkbenchFindingsStateV1
@@ -365,9 +382,13 @@ function FindingPanel({
   readonly backToFindingList: () => void
   readonly selectEvidence: (artifactId: string) => void
   readonly backToFindingDetail: () => void
+  readonly discloseEvidence: () => void
+  readonly hideEvidenceDisclosure: () => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
   const evidenceBackRef = useRef<HTMLButtonElement>(null)
+  const disclosureActionRef = useRef<HTMLButtonElement>(null)
+  const disclosureExitRef = useRef<HTMLButtonElement>(null)
   const evidenceTriggerArtifactId = useRef<string | null>(null)
   const evidenceTriggers = useRef(new Map<string, HTMLButtonElement>())
   const previousEvidenceKind = useRef<WorkbenchEvidenceStateV1['kind'] | null>(null)
@@ -388,6 +409,19 @@ function FindingPanel({
         if (artifactId !== null) evidenceTriggers.current.get(artifactId)?.focus()
         evidenceTriggerArtifactId.current = null
       }
+    } else if (
+      currentKind === 'METADATA_READY'
+      && (
+        previousEvidenceKind.current === 'DISCLOSURE_LOADING'
+        || previousEvidenceKind.current === 'DISCLOSURE_READY'
+      )
+    ) {
+      disclosureActionRef.current?.focus()
+    } else if (
+      (currentKind === 'DISCLOSURE_LOADING' || currentKind === 'DISCLOSURE_READY')
+      && previousEvidenceKind.current !== currentKind
+    ) {
+      disclosureExitRef.current?.focus()
     } else if (previousEvidenceKind.current !== currentKind) {
       evidenceBackRef.current?.focus()
     }
@@ -408,8 +442,31 @@ function FindingPanel({
       return (
         <EvidenceMetadata
           view={state.evidence.view}
+          disclosureStatus={state.evidence.disclosureStatus}
           backButtonRef={evidenceBackRef}
+          disclosureActionRef={disclosureActionRef}
           backToFindingDetail={backToFindingDetail}
+          discloseEvidence={discloseEvidence}
+          t={t}
+        />
+      )
+    }
+    if (state.evidence.kind === 'DISCLOSURE_LOADING') {
+      return (
+        <EvidenceDisclosureLoading
+          metadata={state.evidence.metadata}
+          exitButtonRef={disclosureExitRef}
+          hideEvidenceDisclosure={hideEvidenceDisclosure}
+          t={t}
+        />
+      )
+    }
+    if (state.evidence.kind === 'DISCLOSURE_READY') {
+      return (
+        <EvidenceDisclosure
+          view={state.evidence.view}
+          exitButtonRef={disclosureExitRef}
+          hideEvidenceDisclosure={hideEvidenceDisclosure}
           t={t}
         />
       )
@@ -632,13 +689,19 @@ function EvidenceLoading({
 
 function EvidenceMetadata({
   view,
+  disclosureStatus,
   backButtonRef,
+  disclosureActionRef,
   backToFindingDetail,
+  discloseEvidence,
   t,
 }: {
   readonly view: WorkbenchEvidenceMetadataViewV1
+  readonly disclosureStatus: 'NOT_REQUESTED' | 'EXPIRED'
   readonly backButtonRef: RefObject<HTMLButtonElement>
+  readonly disclosureActionRef: RefObject<HTMLButtonElement>
   readonly backToFindingDetail: () => void
+  readonly discloseEvidence: () => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
   return (
@@ -686,7 +749,125 @@ function EvidenceMetadata({
         <Fact label={t('evidence.content')} value={view.content.kind} machine />
         <Fact label={t('evidence.redactionReason')} value={view.content.reason} machine />
       </dl>
+      {disclosureStatus === 'EXPIRED' && (
+        <p className="dsh-security-evidence-expired" role="status" aria-live="polite">
+          {t('evidence.expired')}
+        </p>
+      )}
+      <button
+        ref={disclosureActionRef}
+        type="button"
+        className="dsh-security-evidence-disclosure-action"
+        onClick={discloseEvidence}
+      >
+        {t('evidence.disclosureAction')}
+      </button>
     </section>
+  )
+}
+
+function EvidenceDisclosureLoading({
+  metadata,
+  exitButtonRef,
+  hideEvidenceDisclosure,
+  t,
+}: {
+  readonly metadata: WorkbenchEvidenceMetadataViewV1
+  readonly exitButtonRef: RefObject<HTMLButtonElement>
+  readonly hideEvidenceDisclosure: () => void
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  return (
+    <section
+      className="dsh-security-section dsh-security-evidence-disclosure"
+      aria-labelledby="dsh-security-evidence-sensitive-title"
+    >
+      <div className="dsh-security-section__header">
+        <h2 id="dsh-security-evidence-sensitive-title">{t('evidence.sensitiveTitle')}</h2>
+        <button
+          ref={exitButtonRef}
+          type="button"
+          className="dsh-security-secondary-action"
+          onClick={hideEvidenceDisclosure}
+        >
+          {t('evidence.hideDisclosure')}
+        </button>
+      </div>
+      <SensitivityWarning t={t} />
+      <code className="dsh-security-finding-detail__id">{metadata.evidence.artifactId}</code>
+      <p className="dsh-security-muted" role="status" aria-live="polite">
+        {t('evidence.disclosureLoading')}
+      </p>
+    </section>
+  )
+}
+
+function EvidenceDisclosure({
+  view,
+  exitButtonRef,
+  hideEvidenceDisclosure,
+  t,
+}: {
+  readonly view: WorkbenchEvidenceDisclosureViewV1
+  readonly exitButtonRef: RefObject<HTMLButtonElement>
+  readonly hideEvidenceDisclosure: () => void
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  return (
+    <section
+      className="dsh-security-section dsh-security-evidence-disclosure"
+      aria-labelledby="dsh-security-evidence-sensitive-title"
+    >
+      <div className="dsh-security-section__header">
+        <h2 id="dsh-security-evidence-sensitive-title">{t('evidence.sensitiveTitle')}</h2>
+        <button
+          ref={exitButtonRef}
+          type="button"
+          className="dsh-security-secondary-action"
+          onClick={hideEvidenceDisclosure}
+        >
+          {t('evidence.hideDisclosure')}
+        </button>
+      </div>
+      <SensitivityWarning t={t} />
+      <code className="dsh-security-finding-detail__id">{view.evidence.artifactId}</code>
+      <dl className="dsh-security-facts">
+        <Fact label={t('evidence.artifact')} value={view.evidence.artifactId} machine />
+        <Fact label={t('evidence.classification')} value={view.evidence.classification} machine />
+        <Fact label={t('evidence.requestPurpose')} value={view.purpose} machine />
+        <Fact label={t('evidence.profile')} value={view.viewProfileId} machine />
+        <Fact label={t('evidence.content')} value={view.content.kind} machine />
+        {view.content.kind === 'BOUNDED_JSON' && (
+          <>
+            <Fact label={t('evidence.byteLength')} value={String(view.content.byteLength)} machine />
+            <Fact label={t('evidence.expiresAt')} value={view.content.expiresAt} machine />
+          </>
+        )}
+        {view.content.kind === 'REDACTED' && (
+          <Fact label={t('evidence.redactionReason')} value={view.content.reason} machine />
+        )}
+      </dl>
+      {view.content.kind === 'BOUNDED_JSON'
+        ? (
+            <pre className="dsh-security-evidence-disclosure__json">
+              <code>{JSON.stringify(view.content.value, null, 2)}</code>
+            </pre>
+          )
+        : (
+            <p className="dsh-security-evidence-expired" role="status">
+              {t('evidence.disclosureRedacted')}
+            </p>
+          )}
+    </section>
+  )
+}
+
+function SensitivityWarning({ t }: { readonly t: WorkbenchOverlayProps['t'] }) {
+  return (
+    <p className="dsh-security-evidence-sensitivity">
+      <strong>{t('evidence.sensitiveTitle')}</strong>
+      <span>{t('evidence.sensitiveWarning')}</span>
+    </p>
   )
 }
 

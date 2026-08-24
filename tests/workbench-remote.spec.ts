@@ -95,6 +95,10 @@ async function harness(strictTypert = false): Promise<{
       principalId: 'workbench-reviewer',
       permissions: ['assessment:read', 'risk:decide'],
     }],
+    [authorityContextId('workbench-session-disclosure-reviewer'), {
+      principalId: 'workbench-disclosure-reviewer',
+      permissions: ['assessment:read', 'evidence:disclose:validation-review'],
+    }],
   ])
   const remoteFiber = await ctx.plugin(SecurityAssuranceWorkbenchRemote, {
     async resolveAuthorityContext(contextId: WorkbenchAuthorityContextId) {
@@ -399,6 +403,137 @@ describe('Security Assurance Workbench Remote', () => {
       },
     })).rejects.toMatchObject({ code: 'input-invalid' })
     expect(resolvedContextIds).toEqual([authorityId])
+  })
+
+  it('discloses one expiring bounded Evidence View only through a separate freshly authorized Remote action', async () => {
+    const { ctx, assessmentId, resolvedContextIds } = await harness(true)
+    const hostInvocation = referenceHostInvocation(ctx.securityAssurance)
+    const blocked = await ctx.securityAssurance.getAssessment(hostInvocation, {
+      schemaVersion: 1,
+      assessmentId,
+    })
+    if (!blocked.ok) throw new Error(`query failed: ${blocked.error.code}`)
+    const action = blocked.value.availableActions.find(candidate =>
+      candidate.kind === 'RECORD_RISK_DECISION')
+    if (action?.kind !== 'RECORD_RISK_DECISION') {
+      throw new Error('Risk Decision action was not projected')
+    }
+    const denied = await ctx.securityAssurance.recordRiskDecision(hostInvocation, {
+      schemaVersion: 1,
+      idempotencyKey: 'workbench-bounded-evidence-risk-denial-v1',
+      assessmentId,
+      expectedAssessmentRevision: action.expectedAssessmentRevision,
+      finding: action.finding,
+      decision: 'DENY',
+      rationale: 'The blocking Finding remains denied before bounded Evidence review.',
+      compensatingControls: [],
+      expiresAt: null,
+    })
+    if (!denied.ok) throw new Error(`risk denial failed: ${denied.error.code}`)
+    const listed = await ctx.securityAssurance.listFindings(hostInvocation, {
+      schemaVersion: 1,
+      assessmentId,
+      limit: 50,
+    })
+    if (!listed.ok || listed.value.findings[0] === undefined) {
+      throw new Error('Sealed Workbench fixture did not project a Finding')
+    }
+    const summary = listed.value.findings[0]
+    const detail = await ctx.securityAssurance.getFinding(hostInvocation, {
+      schemaVersion: 1,
+      assessmentId,
+      assessmentRevision: summary.assessmentRevision,
+      recordId: summary.recordId,
+      recordRevision: summary.recordRevision,
+    })
+    if (!detail.ok || detail.value.evidenceLinks[0] === undefined) {
+      throw new Error('Sealed Finding Detail did not expose an Evidence Link')
+    }
+    const link = detail.value.evidenceLinks[0]
+    const authorityId = authorityContextId('workbench-session-disclosure-reviewer')
+    const request = {
+      schemaVersion: 1 as const,
+      assessmentId,
+      assessmentRevision: detail.value.assessmentRevision,
+      context: {
+        kind: 'finding' as const,
+        recordId: detail.value.recordId,
+        recordRevision: detail.value.recordRevision,
+      },
+      evidenceArtifactId: link.artifactId,
+      evidenceDigest: link.digest,
+      purpose: 'VALIDATION_REVIEW' as const,
+      viewProfileId: 'security/evidence-view/bounded-json-v1' as const,
+    }
+    const startedAt = Date.now()
+
+    const view = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'discloseEvidence',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request,
+      },
+    })
+    const completedAt = Date.now()
+
+    expect(view).toMatchObject({
+      ok: true,
+      value: {
+        assessmentId,
+        assessmentRevision: detail.value.assessmentRevision,
+        context: {
+          kind: 'finding',
+          recordId: detail.value.recordId,
+          recordRevision: detail.value.recordRevision,
+        },
+        evidence: {
+          artifactId: link.artifactId,
+          digest: link.digest,
+          classification: 'CONTROL_PLANE',
+        },
+        purpose: 'VALIDATION_REVIEW',
+        viewProfileId: 'security/evidence-view/bounded-json-v1',
+        content: {
+          kind: 'BOUNDED_JSON',
+          byteLength: expect.any(Number),
+          expiresAt: expect.any(String),
+          value: {
+            schemaVersion: 1,
+            manifests: expect.arrayContaining([expect.objectContaining({
+              path: 'package.json',
+              parseStatus: 'VALID',
+              installLifecycleScripts: ['postinstall'],
+            })]),
+          },
+        },
+      },
+    })
+    const expiresAt = Date.parse((view as {
+      readonly value: { readonly content: { readonly expiresAt: string } }
+    }).value.content.expiresAt)
+    expect(expiresAt).toBeGreaterThanOrEqual(startedAt + 5 * 60_000)
+    expect(expiresAt).toBeLessThanOrEqual(completedAt + 5 * 60_000)
+    expect(JSON.stringify(view)).not.toContain('node setup.js')
+    expect(JSON.stringify(view)).not.toContain('principalId')
+    expect(JSON.stringify(view)).not.toContain('storagePath')
+    const metadataAuthorityId = authorityContextId('workbench-session-reviewer')
+    await expect(ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'discloseEvidence',
+      args: {
+        securityAssuranceWorkbenchContextId: metadataAuthorityId,
+        request,
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        purpose: 'VALIDATION_REVIEW',
+        viewProfileId: 'security/evidence-view/bounded-json-v1',
+        content: { kind: 'REDACTED', reason: 'DISCLOSURE_NOT_AUTHORIZED' },
+      },
+    })
+    expect(resolvedContextIds).toEqual([authorityId, metadataAuthorityId])
   })
 
   it('exposes bounded revision signals through the authenticated Remote seam', async () => {

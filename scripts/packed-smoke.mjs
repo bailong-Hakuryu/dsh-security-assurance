@@ -194,8 +194,8 @@ const typertContribution = await import('dsh-security-assurance/typert')
 const clientRemoteContribution = await import('dsh-security-assurance/remote')
 if (
   typeof workbenchRemote.default !== 'function'
-  || typertContribution.TYPERT?.invocations?.length !== 7
-  || clientRemoteContribution.default?.descriptors?.length !== 7
+  || typertContribution.TYPERT?.invocations?.length !== 8
+  || clientRemoteContribution.default?.descriptors?.length !== 8
   || !clientRemoteContribution.default.descriptors.some(descriptor =>
     descriptor.method === 'listAssessments')
   || !clientRemoteContribution.default.descriptors.some(descriptor =>
@@ -204,6 +204,8 @@ if (
     descriptor.method === 'getFinding')
   || !clientRemoteContribution.default.descriptors.some(descriptor =>
     descriptor.method === 'getEvidenceView')
+  || !clientRemoteContribution.default.descriptors.some(descriptor =>
+    descriptor.method === 'discloseEvidence')
   || !clientRemoteContribution.default.descriptors.some(descriptor =>
     descriptor.method === 'waitForAssessmentRevision')
   || typertContribution.TYPERT.invocations.some(invocation =>
@@ -251,6 +253,8 @@ if (
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectFinding !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.backToFindingList !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectEvidence !== 'function'
+  || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.discloseEvidence !== 'function'
+  || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.hideEvidenceDisclosure !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.backToFindingDetail !== 'function'
 ) {
   throw new Error('packed Workbench Client entry is incomplete')
@@ -375,6 +379,34 @@ const missingEvidence = await ctx.typertGateway.invoke({
     },
   },
 })
+const missingDisclosure = await ctx.typertGateway.invoke({
+  namespace: 'securityAssuranceWorkbench',
+  method: 'discloseEvidence',
+  args: {
+    securityAssuranceWorkbenchContextId: 'packed-workbench-context-v1',
+    request: {
+      schemaVersion: 1,
+      assessmentId: 'asm-00000000-0000-0000-0000-000000000000',
+      assessmentRevision: 1,
+      context: {
+        kind: 'finding',
+        recordId: 'finding-${'0'.repeat(64)}',
+        recordRevision: 1,
+      },
+      evidenceArtifactId: 'evidence/missing',
+      evidenceDigest: {
+        schemaVersion: 1,
+        algorithm: 'sha256',
+        mediaType: 'application/vnd.dsh.canonical-json',
+        byteLength: 1,
+        canonicalization: 'dsh-canonical-json-v1',
+        value: '${'0'.repeat(64)}',
+      },
+      purpose: 'VALIDATION_REVIEW',
+      viewProfileId: 'security/evidence-view/bounded-json-v1',
+    },
+  },
+})
 let boundedEvidenceRejected = false
 try {
   await ctx.typertGateway.invoke({
@@ -415,9 +447,11 @@ if (
   || missingFinding.error?.code !== 'NOT_FOUND'
   || missingEvidence?.ok !== false
   || missingEvidence.error?.code !== 'NOT_FOUND'
+  || missingDisclosure?.ok !== false
+  || missingDisclosure.error?.code !== 'NOT_FOUND'
   || !boundedEvidenceRejected
 ) {
-  throw new Error('packed strict Workbench Remote did not expose metadata-only Finding Evidence queries')
+  throw new Error('packed strict Workbench Remote did not expose separate metadata and disclosure Evidence queries')
 }
 await workbenchFiber.dispose()
 if (ctx.typert.lookups.get('securityAssuranceWorkbenchContext') !== undefined) {

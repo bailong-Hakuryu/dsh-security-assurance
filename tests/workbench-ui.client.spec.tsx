@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent } from '@testing-library/react'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
 import {
   apply as applyClientRemote,
@@ -23,9 +23,15 @@ import {
   type SecurityAssuranceWorkbenchController,
   type WorkbenchAuthorityContextId,
 } from '../src/client/index.ts'
-import type { WorkbenchEvidenceMetadataViewV1 } from '../src/workbench-remote.ts'
+import type {
+  WorkbenchEvidenceDisclosureViewV1,
+  WorkbenchEvidenceMetadataViewV1,
+} from '../src/workbench-remote.ts'
 
-afterEach(() => { cleanup() })
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 async function bench(call: (
   path: string,
@@ -246,6 +252,25 @@ function evidenceMetadataView(detail: FindingDetailViewV1): WorkbenchEvidenceMet
   }
 }
 
+function evidenceDisclosureView(
+  detail: FindingDetailViewV1,
+  expiresAt: string,
+): WorkbenchEvidenceDisclosureViewV1 {
+  const metadata = evidenceMetadataView(detail)
+  const value = { schemaVersion: 1, proof: 'bounded-ui-secret' }
+  return {
+    ...metadata,
+    purpose: 'VALIDATION_REVIEW',
+    viewProfileId: 'security/evidence-view/bounded-json-v1',
+    content: {
+      kind: 'BOUNDED_JSON',
+      byteLength: JSON.stringify(value).length,
+      expiresAt,
+      value,
+    },
+  }
+}
+
 describe('Security Assurance Workbench UI', () => {
   it('renders bilingual metadata-only Evidence and returns to Finding Detail', async () => {
     const id = assessmentId('asm-00000000-0000-0000-0000-000000000072')
@@ -258,6 +283,7 @@ describe('Security Assurance Workbench UI', () => {
     const detail = findingDetailView(summary)
     const view = evidenceMetadataView(detail)
     const authorityId = authorityContextId('workbench-session-evidence-ui')
+    let disclosureCalls = 0
     const b = await bench((_path, endpoint) => {
       if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
         return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
@@ -282,6 +308,28 @@ describe('Security Assurance Workbench UI', () => {
       }
       if (endpoint === 'securityAssuranceWorkbench/getEvidenceView') {
         return Promise.resolve({ ok: true, value: { ok: true, value: view } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/discloseEvidence') {
+        disclosureCalls += 1
+        const disclosure = evidenceDisclosureView(
+          detail,
+          new Date(Date.now() + 1_000).toISOString(),
+        )
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: disclosureCalls === 3
+              ? {
+                  ...disclosure,
+                  content: {
+                    kind: 'REDACTED',
+                    reason: 'DISCLOSURE_NOT_AUTHORIZED',
+                  },
+                }
+              : disclosure,
+          },
+        })
       }
       return Promise.reject(new Error(`Unexpected endpoint: ${endpoint}`))
     })
@@ -329,13 +377,67 @@ describe('Security Assurance Workbench UI', () => {
     expect(overlay.view.queryByText('storagePath')).toBeNull()
     expect(overlay.view.queryByText(authorityId)).toBeNull()
 
+    const disclose = overlay.view.getByRole('button', {
+      name: '显式查看敏感 Evidence 内容',
+    })
+    disclose.focus()
+    await act(async () => { fireEvent.click(disclose) })
+    expect(overlay.view.getByRole('heading', { name: '敏感 Evidence 内容' })).toBeTruthy()
+    expect(overlay.view.getByText(
+      '此内容敏感、限时、仅用于 VALIDATION_REVIEW；关闭、隐藏、失去权限或到期后立即丢弃。',
+    )).toBeTruthy()
+    expect(overlay.view.getByText('VALIDATION_REVIEW')).toBeTruthy()
+    expect(overlay.view.getByText('security/evidence-view/bounded-json-v1')).toBeTruthy()
+    expect(overlay.view.getByText(/bounded-ui-secret/)).toBeTruthy()
+    const hide = overlay.view.getByRole('button', { name: '隐藏并丢弃敏感内容' })
+    expect(document.activeElement).toBe(hide)
+
     act(() => { b.locale.setLocale('en') })
+    expect(overlay.view.getByRole('heading', { name: 'Sensitive Evidence content' })).toBeTruthy()
+    expect(overlay.view.getByText(
+      'This content is sensitive, time-limited, and restricted to VALIDATION_REVIEW; it is discarded on close, hide, authority loss, or expiry.',
+    )).toBeTruthy()
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', {
+        name: 'Hide and discard sensitive content',
+      }))
+    })
+    expect(overlay.view.queryByText(/bounded-ui-secret/)).toBeNull()
     expect(overlay.view.getByRole('heading', { name: 'Evidence metadata' })).toBeTruthy()
+    expect(document.activeElement).toBe(overlay.view.getByRole('button', {
+      name: 'Explicitly view sensitive Evidence content',
+    }))
     expect(overlay.view.getByText('Digest schema version')).toBeTruthy()
     expect(overlay.view.getByText('Digest algorithm')).toBeTruthy()
     expect(overlay.view.getByText('Digest media type')).toBeTruthy()
     expect(overlay.view.getByText('Digest byte length')).toBeTruthy()
     expect(overlay.view.getByText('Digest canonicalization')).toBeTruthy()
+
+    vi.useFakeTimers()
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', {
+        name: 'Explicitly view sensitive Evidence content',
+      }))
+    })
+    expect(overlay.view.getByText(/bounded-ui-secret/)).toBeTruthy()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    expect(overlay.view.queryByText(/bounded-ui-secret/)).toBeNull()
+    expect(overlay.view.getByText(
+      'Sensitive content expired and was discarded from memory. Reauthorize to review it again.',
+    )).toBeTruthy()
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', {
+        name: 'Explicitly view sensitive Evidence content',
+      }))
+    })
+    expect(overlay.view.getByText('Security Service denied sensitive content disclosure.')).toBeTruthy()
+    expect(overlay.view.getByText('DISCLOSURE_NOT_AUTHORIZED')).toBeTruthy()
+    expect(overlay.view.queryByText(/bounded-ui-secret/)).toBeNull()
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', {
+        name: 'Hide and discard sensitive content',
+      }))
+    })
     await act(async () => {
       fireEvent.click(overlay.view.getByRole('button', { name: 'Back to Finding detail' }))
     })

@@ -5,7 +5,7 @@ import {
 } from '../../deepseek-harness-master/packages/api/gateway/lib/types/client/index.js'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import { SlotRegistry } from '../../deepseek-harness-master/packages/client/runtime/lib/types/client/slots.js'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   AssessmentId,
   AssessmentListItemV1,
@@ -19,12 +19,16 @@ import {
   type SecurityAssuranceWorkbenchController,
   type WorkbenchAuthorityContextId,
 } from '../src/client/index.ts'
-import type { WorkbenchEvidenceMetadataViewV1 } from '../src/workbench-remote.ts'
+import type {
+  WorkbenchEvidenceDisclosureViewV1,
+  WorkbenchEvidenceMetadataViewV1,
+} from '../src/workbench-remote.ts'
 
 const contexts: Context[] = []
 
 afterEach(async () => {
   await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
+  vi.useRealTimers()
 })
 
 function assessmentId(value: string): AssessmentId {
@@ -223,6 +227,124 @@ function evidenceMetadataView(detail: FindingDetailViewV1): WorkbenchEvidenceMet
     content: { kind: 'REDACTED', reason: 'PROFILE_METADATA_ONLY' },
   }
 }
+
+function evidenceDisclosureView(
+  detail: FindingDetailViewV1,
+  expiresAt: string,
+): WorkbenchEvidenceDisclosureViewV1 {
+  const metadata = evidenceMetadataView(detail)
+  return {
+    ...metadata,
+    purpose: 'VALIDATION_REVIEW',
+    viewProfileId: 'security/evidence-view/bounded-json-v1',
+    content: {
+      kind: 'BOUNDED_JSON',
+      byteLength: 44,
+      expiresAt,
+      value: { schemaVersion: 1, proof: 'bounded-secret' },
+    },
+  }
+}
+
+async function openMetadataReadyFixture(options: {
+  readonly id: AssessmentId
+  readonly revision: number
+  readonly findingHex: string
+  readonly disclosure: (
+    detail: FindingDetailViewV1,
+    payload: unknown,
+    signal: AbortSignal,
+  ) => Promise<unknown>
+}): Promise<{
+  readonly controller: SecurityAssuranceWorkbenchController
+  readonly detail: FindingDetailViewV1
+  readonly metadata: WorkbenchEvidenceMetadataViewV1
+  readonly authorityId: WorkbenchAuthorityContextId
+}> {
+  const ctx = new Context()
+  contexts.push(ctx)
+  await ctx.plugin(TypertRegistry)
+  await installClientUiFoundation(ctx)
+  const snapshot = snapshotAt(options.id, options.revision, 'SEALED')
+  const summary = findingSummary(options.id, options.revision, options.findingHex)
+  const detail = findingDetail(summary)
+  const metadata = evidenceMetadataView(detail)
+  ctx.provide('connection', { rpc: { call(
+    _path: string,
+    endpoint: string,
+    payload: unknown,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+      return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+    }
+    if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+      return Promise.resolve({
+        ok: true,
+        value: {
+          ok: true,
+          value: {
+            schemaVersion: 1,
+            assessmentId: options.id,
+            assessmentRevision: options.revision,
+            findings: [summary],
+            nextCursor: null,
+          },
+        },
+      })
+    }
+    if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+      return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+    }
+    if (endpoint === 'securityAssuranceWorkbench/getEvidenceView') {
+      return Promise.resolve({ ok: true, value: { ok: true, value: metadata } })
+    }
+    if (endpoint === 'securityAssuranceWorkbench/discloseEvidence') {
+      return options.disclosure(detail, payload, signal)
+    }
+    throw new Error(`Unexpected endpoint: ${endpoint}`)
+  } } } as never)
+  await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+  await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+  const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+  const authorityId = authorityContextId(`workbench-session-bounded-${options.findingHex}`)
+  await controller.openAssessment({
+    securityAssuranceWorkbenchContextId: authorityId,
+    assessmentId: options.id,
+  })
+  await controller.openFindings()
+  await controller.selectFinding(summary.recordId)
+  await controller.selectEvidence(metadata.evidence.artifactId)
+  return { controller, detail, metadata, authorityId }
+}
+
+const disclosureBindingMismatches: readonly [
+  label: string,
+  mutate: (
+    view: WorkbenchEvidenceDisclosureViewV1,
+  ) => WorkbenchEvidenceDisclosureViewV1,
+][] = [
+  ['Assessment revision', view => ({ ...view, assessmentRevision: view.assessmentRevision + 1 })],
+  ['artifact digest', view => ({
+    ...view,
+    evidence: {
+      ...view.evidence,
+      digest: { ...view.evidence.digest, value: 'e'.repeat(64) },
+    },
+  })],
+  ['expired deadline', view => ({
+    ...view,
+    content: view.content.kind === 'BOUNDED_JSON'
+      ? { ...view.content, expiresAt: '2020-01-01T00:00:00.000Z' }
+      : view.content,
+  })],
+  ['bounded byte length', view => ({
+    ...view,
+    content: view.content.kind === 'BOUNDED_JSON'
+      ? { ...view.content, byteLength: view.content.byteLength + 1 }
+      : view.content,
+  })],
+]
 
 const evidenceBindingMismatches: readonly [
   label: string,
@@ -670,6 +792,249 @@ describe('Security Assurance Workbench Client', () => {
     })
     expect(payloads).toHaveLength(4)
   })
+
+  it('requires a separate disclosure action and discards bounded content at Service expiry', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000069')
+    const snapshot = snapshotAt(id, 12, 'SEALED')
+    const summary = findingSummary(id, 12, '6')
+    const detail = findingDetail(summary)
+    const metadata = evidenceMetadataView(detail)
+    const payloads: Array<{ readonly endpoint: string; readonly payload: unknown }> = []
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+    ): Promise<unknown> {
+      payloads.push({ endpoint, payload })
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              assessmentId: id,
+              assessmentRevision: 12,
+              findings: [summary],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getEvidenceView') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: metadata } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/discloseEvidence') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: evidenceDisclosureView(detail, new Date(Date.now() + 1_000).toISOString()),
+          },
+        })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+    const authorityId = authorityContextId('workbench-session-evidence-disclosure')
+
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityId,
+      assessmentId: id,
+    })
+    await controller.openFindings()
+    await controller.selectFinding(summary.recordId)
+    await controller.selectEvidence(metadata.evidence.artifactId)
+    expect(controller.getState()).toMatchObject({
+      kind: 'READY',
+      findings: { detail: { recordId: detail.recordId }, evidence: { kind: 'METADATA_READY' } },
+    })
+
+    vi.useFakeTimers()
+    await expect(controller.discloseEvidence()).resolves.toMatchObject({
+      kind: 'READY',
+      findings: {
+        kind: 'DETAIL_READY',
+        evidence: {
+          kind: 'DISCLOSURE_READY',
+          metadata: { content: { kind: 'REDACTED', reason: 'PROFILE_METADATA_ONLY' } },
+          view: {
+            purpose: 'VALIDATION_REVIEW',
+            viewProfileId: 'security/evidence-view/bounded-json-v1',
+            content: {
+              kind: 'BOUNDED_JSON',
+              value: { schemaVersion: 1, proof: 'bounded-secret' },
+            },
+          },
+        },
+      },
+    })
+    expect(payloads.at(-1)).toMatchObject({
+      endpoint: 'securityAssuranceWorkbench/discloseEvidence',
+      payload: {
+        args: {
+          securityAssuranceWorkbenchContextId: authorityId,
+          request: {
+            schemaVersion: 1,
+            assessmentId: id,
+            assessmentRevision: detail.assessmentRevision,
+            context: {
+              kind: 'finding',
+              recordId: detail.recordId,
+              recordRevision: detail.recordRevision,
+            },
+            evidenceArtifactId: metadata.evidence.artifactId,
+            evidenceDigest: metadata.evidence.digest,
+            purpose: 'VALIDATION_REVIEW',
+            viewProfileId: 'security/evidence-view/bounded-json-v1',
+          },
+        },
+      },
+    })
+
+    expect(controller.hideEvidenceDisclosure()).toMatchObject({
+      kind: 'READY',
+      findings: {
+        kind: 'DETAIL_READY',
+        evidence: { kind: 'METADATA_READY', disclosureStatus: 'NOT_REQUESTED' },
+      },
+    })
+    expect(JSON.stringify(controller.getState())).not.toContain('bounded-secret')
+    await controller.discloseEvidence()
+
+    await vi.advanceTimersByTimeAsync(999)
+    expect(JSON.stringify(controller.getState())).toContain('bounded-secret')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(controller.getState()).toMatchObject({
+      kind: 'READY',
+      findings: {
+        kind: 'DETAIL_READY',
+        evidence: {
+          kind: 'METADATA_READY',
+          disclosureStatus: 'EXPIRED',
+          view: { evidence: { artifactId: metadata.evidence.artifactId } },
+        },
+      },
+    })
+    expect(JSON.stringify(controller.getState())).not.toContain('bounded-secret')
+
+    await controller.discloseEvidence()
+    expect(JSON.stringify(controller.getState())).toContain('bounded-secret')
+    controller.closeAssessment()
+    expect(controller.getState()).toEqual({ kind: 'CLOSED' })
+    expect(JSON.stringify(controller.getState())).not.toContain('bounded-secret')
+  })
+
+  it('ignores a bounded disclosure response that arrives after Evidence navigation', async () => {
+    let resolveDisclosure: ((value: unknown) => void) | undefined
+    let disclosureSignal: AbortSignal | undefined
+    const { controller, detail } = await openMetadataReadyFixture({
+      id: assessmentId('asm-00000000-0000-0000-0000-000000000070'),
+      revision: 13,
+      findingHex: '5',
+      disclosure: (_detail, _payload, signal) => {
+        disclosureSignal = signal
+        return new Promise(resolve => { resolveDisclosure = resolve })
+      },
+    })
+
+    const pending = controller.discloseEvidence()
+    expect(controller.getState()).toMatchObject({
+      kind: 'READY',
+      findings: { kind: 'DETAIL_READY', evidence: { kind: 'DISCLOSURE_LOADING' } },
+    })
+    controller.backToFindingDetail()
+    expect(disclosureSignal?.aborted).toBe(true)
+    expect(controller.getState()).toMatchObject({
+      kind: 'READY',
+      findings: { kind: 'DETAIL_READY', evidence: { kind: 'NOT_LOADED' } },
+    })
+
+    resolveDisclosure?.({
+      ok: true,
+      value: {
+        ok: true,
+        value: evidenceDisclosureView(detail, new Date(Date.now() + 60_000).toISOString()),
+      },
+    })
+    await pending
+    expect(controller.getState()).toMatchObject({
+      kind: 'READY',
+      findings: { kind: 'DETAIL_READY', evidence: { kind: 'NOT_LOADED' } },
+    })
+    expect(JSON.stringify(controller.getState())).not.toContain('bounded-secret')
+  })
+
+  it('erases the session when fresh disclosure authority is unavailable', async () => {
+    const { controller, authorityId } = await openMetadataReadyFixture({
+      id: assessmentId('asm-00000000-0000-0000-0000-000000000071'),
+      revision: 14,
+      findingHex: '4',
+      disclosure: () => Promise.resolve({
+        ok: true,
+        value: {
+          ok: false,
+          error: {
+            schemaVersion: 1,
+            code: 'UNAUTHORIZED',
+            message: 'The current Host Operator no longer has disclosure authority.',
+            retryable: false,
+            correlationId: 'corr-workbench-authority-loss',
+          },
+        },
+      }),
+    })
+
+    await expect(controller.discloseEvidence()).resolves.toMatchObject({
+      kind: 'FAILED',
+      failure: { source: 'SECURITY', code: 'UNAUTHORIZED' },
+    })
+    expect(controller.getState()).not.toHaveProperty('snapshot')
+    expect(controller.getState()).not.toHaveProperty('findings')
+    expect(JSON.stringify(controller.getState())).not.toContain('bounded-secret')
+    expect(JSON.stringify(controller.getState())).not.toContain(authorityId)
+  })
+
+  it.each(disclosureBindingMismatches)(
+    'fails closed when bounded Evidence changes its %s binding',
+    async (_label, mutate) => {
+      let producedView: WorkbenchEvidenceDisclosureViewV1 | undefined
+      const { controller } = await openMetadataReadyFixture({
+        id: assessmentId('asm-00000000-0000-0000-0000-000000000072'),
+        revision: 15,
+        findingHex: '3',
+        disclosure: detail => {
+          producedView = mutate(evidenceDisclosureView(
+            detail,
+            new Date(Date.now() + 60_000).toISOString(),
+          ))
+          return Promise.resolve({ ok: true, value: { ok: true, value: producedView } })
+        },
+      })
+
+      await expect(controller.discloseEvidence()).resolves.toMatchObject({
+        kind: 'FAILED',
+        failure: { code: 'EVIDENCE_DISCLOSURE_PROTOCOL_VIOLATION' },
+      })
+      expect(controller.getState()).not.toHaveProperty('snapshot')
+      expect(controller.getState()).not.toHaveProperty('findings')
+      expect(JSON.stringify(controller.getState())).not.toContain('bounded-secret')
+      expect(producedView).toBeDefined()
+    },
+  )
 
   it('ignores earlier failed and successful attempts after the same Evidence is reopened', async () => {
     const ctx = new Context()
