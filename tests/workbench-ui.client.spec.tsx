@@ -791,6 +791,120 @@ describe('Security Assurance Workbench UI', () => {
     await b.runtime.dispose()
   })
 
+  it('renders a bilingual verified Bundle and registered destination readiness view without delivery authority', async () => {
+    const id = assessmentId('asm-00000000-0000-0000-0000-0000000000c1')
+    const digest = {
+      schemaVersion: 1 as const,
+      algorithm: 'sha256' as const,
+      mediaType: 'application/vnd.dsh.security.bundle-manifest+json',
+      byteLength: 128,
+      canonicalization: 'dsh-canonical-json-v1' as const,
+      value: 'c'.repeat(64),
+    }
+    const seal = {
+      schemaVersion: 1 as const,
+      sealId: 'seal-00000000-0000-0000-0000-0000000000c1',
+      assessmentRevision: 8,
+      verdict: 'SATISFIED' as const,
+      digest,
+      sealedAt: '2026-08-25T00:08:00.000Z',
+    }
+    const snapshot: AssessmentSnapshotV1 = {
+      ...readySnapshot(id),
+      assessmentRevision: 8,
+      state: 'SEALED',
+      blockedRecovery: null,
+      availableActions: [],
+      verdict: 'SATISFIED',
+      seal,
+    }
+    const manifest = {
+      schemaVersion: 1,
+      assessmentId: id,
+      assessmentRevision: 8,
+      verdict: 'SATISFIED',
+      seal,
+      records: [{
+        recordId: 'bundle/finding-set',
+        schemaId: 'security/finding-set',
+        schemaVersion: 1,
+        classification: 'INTERNAL',
+        digest,
+      }],
+      omissions: [{ schemaId: 'security/threat-model', reason: 'NO_ELIGIBLE_ANALYZER' }],
+      digest,
+    }
+    const endpoints: string[] = []
+    const b = await bench((_path, endpoint) => {
+      endpoints.push(endpoint)
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getBundleManifest') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: manifest } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getRepository') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: {
+          schemaVersion: 1,
+          repositoryId: snapshot.repository.repositoryId,
+          repositoryRevision: snapshot.repository.repositoryRevision,
+          state: 'ENABLED',
+          displayName: 'Sealed repository',
+          rootIdentityDigest: `sha256:${'d'.repeat(64)}`,
+          bindings: {
+            policyId: 'security/standard',
+            assessmentProfileId: 'security/standard',
+            evidenceProtectionId: 'evidence/local-protected',
+            dataEgressPolicyId: 'egress/deny-by-default',
+            platform: 'win32',
+            deliveryDestinationIds: ['delivery/local-audit', 'delivery/team-report'],
+          },
+          createdAt: '2026-08-25T00:00:00.000Z',
+          updatedAt: '2026-08-25T00:00:00.000Z',
+        } } })
+      }
+      return Promise.reject(new Error(`Unexpected endpoint: ${endpoint}`))
+    })
+    const launcher = b.runtime.renderSlot('sidebar.footer.action', { wide: true })
+    const overlay = b.runtime.renderSlot('shell.overlay', {})
+    await act(async () => {
+      await b.controller.openAssessment({
+        securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-bundle-ui'),
+        assessmentId: id,
+      })
+      fireEvent.click(launcher.view.getByRole('button', { name: '打开安全保障工作台' }))
+    })
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '查看 Bundle 与 Export Readiness' }))
+    })
+
+    expect(overlay.view.getByRole('heading', { name: 'Bundle 与 Export Readiness' })).toBeTruthy()
+    expect(overlay.view.getByText('bundle/finding-set')).toBeTruthy()
+    expect(overlay.view.getByText('security/finding-set@1')).toBeTruthy()
+    expect(overlay.view.getByText('NO_ELIGIBLE_ANALYZER')).toBeTruthy()
+    expect(overlay.view.getByText('delivery/local-audit')).toBeTruthy()
+    expect(overlay.view.getByText('delivery/team-report')).toBeTruthy()
+    expect(overlay.view.queryByRole('button', { name: /下载|导出|交付/u })).toBeNull()
+    expect(overlay.view.queryByText(/^[A-Z]:\\/u)).toBeNull()
+    expect(endpoints).toEqual([
+      'securityAssuranceWorkbench/getAssessment',
+      'securityAssuranceWorkbench/getBundleManifest',
+      'securityAssuranceWorkbench/getRepository',
+    ])
+
+    act(() => { b.locale.setLocale('en') })
+    expect(overlay.view.getByRole('heading', { name: 'Bundle and Export Readiness' })).toBeTruthy()
+    expect(overlay.view.getByText(/does not invent a Profile, path, download capability, or delivery status/u)).toBeTruthy()
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: 'Back to Assessment detail' }))
+    })
+    expect(overlay.view.getAllByText('SEALED').length).toBeGreaterThan(0)
+
+    await b.feature.dispose()
+    await b.gateway.dispose()
+    await b.runtime.dispose()
+  })
+
   it('renders a bilingual Catalog-only New Assessment wizard and immutable preflight', async () => {
     const repository = {
       schemaVersion: 1 as const,

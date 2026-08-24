@@ -23,6 +23,7 @@ import type {
   AssessmentResumeReceiptV1,
   AssessmentReceiptV1,
   AssessmentSnapshotV1,
+  BundleManifestV1,
   DigestEnvelopeV1,
   FindingDetailViewV1,
   FindingListPageV1,
@@ -197,6 +198,13 @@ export type SecurityAssuranceWorkbenchStateV1 =
   | {
     readonly kind: 'HEALTH_READY'
     readonly health: RuntimeHealthSnapshot
+  }
+  | { readonly kind: 'BUNDLE_LOADING'; readonly assessmentId: AssessmentId }
+  | {
+    readonly kind: 'BUNDLE_READY'
+    readonly assessmentId: AssessmentId
+    readonly manifest: BundleManifestV1
+    readonly deliveryDestinationIds: readonly string[]
   }
   | { readonly kind: 'REPOSITORIES_LOADING' }
   | {
@@ -405,6 +413,92 @@ export class SecurityAssuranceWorkbenchController extends Service {
     const session = this.session
     if (session === undefined || this.state.kind !== 'HEALTH_READY') return this.state
     return this.loadRuntimeHealth(session)
+  }
+
+  /** Open the verified SEALED Bundle and its path-free registered export destinations. */
+  async openBundle(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'READY'
+      || current.snapshot.state !== 'SEALED'
+      || current.snapshot.seal === null
+      || current.snapshot.verdict === null
+    ) return current
+    session.monitorGeneration += 1
+    this.evidenceRequestGeneration += 1
+    this.cancelEvidenceRequest(session)
+    this.clearEvidenceExpiry(session)
+    const assessmentId = current.assessmentId
+    const snapshot = current.snapshot
+    this.publish(Object.freeze({ kind: 'BUNDLE_LOADING', assessmentId }))
+
+    let manifestResult: RemoteResult<SecurityResult<BundleManifestV1>>
+    try {
+      manifestResult = await this.ownerCtx.remote.securityAssuranceWorkbench.getBundleManifest(
+        session.contextId,
+        { schemaVersion: 1, assessmentId },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (!this.isActive(session) || this.state.kind !== 'BUNDLE_LOADING') return this.state
+    const manifest = this.readRemoteResult(session, manifestResult)
+    if (manifest === undefined) return this.state
+    if (!matchesBundleManifest(snapshot, manifest)) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'BUNDLE_PROTOCOL_VIOLATION',
+        message: 'The Bundle Manifest does not match the retained SEALED Assessment Snapshot.',
+        retryable: false,
+      })
+    }
+
+    let repositoryResult: RemoteResult<SecurityResult<RepositorySnapshotV1>>
+    try {
+      repositoryResult = await this.ownerCtx.remote.securityAssuranceWorkbench.getRepository(
+        session.contextId,
+        { schemaVersion: 1, repositoryId: snapshot.repository.repositoryId },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (!this.isActive(session) || this.state.kind !== 'BUNDLE_LOADING') return this.state
+    const repository = this.readRemoteResult(session, repositoryResult)
+    if (repository === undefined) return this.state
+    if (
+      repository.repositoryId !== snapshot.repository.repositoryId
+      || repository.repositoryRevision !== snapshot.repository.repositoryRevision
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'BUNDLE_REPOSITORY_PROTOCOL_VIOLATION',
+        message: 'The Repository binding does not match the SEALED Assessment Snapshot.',
+        retryable: false,
+      })
+    }
+    const ready = Object.freeze({
+      kind: 'BUNDLE_READY' as const,
+      assessmentId,
+      manifest,
+      deliveryDestinationIds: Object.freeze([...repository.bindings.deliveryDestinationIds]),
+    })
+    this.publish(ready)
+    return ready
+  }
+
+  /** Re-fetch the current Assessment after leaving its Bundle and Export readiness view. */
+  async backToAssessmentDetail(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (session === undefined || current.kind !== 'BUNDLE_READY') return current
+    return this.openAssessment({
+      securityAssuranceWorkbenchContextId: session.contextId,
+      assessmentId: current.assessmentId,
+    })
   }
 
   /** Resolve the repository-specific Catalog before accepting any wizard selection. */
@@ -1815,6 +1909,24 @@ function sameDigest(
     && left.value === right.value
 }
 
+function matchesBundleManifest(
+  snapshot: AssessmentSnapshotV1,
+  manifest: BundleManifestV1,
+): boolean {
+  const seal = snapshot.seal
+  return seal !== null
+    && snapshot.state === 'SEALED'
+    && snapshot.verdict !== null
+    && manifest.assessmentId === snapshot.assessmentId
+    && manifest.assessmentRevision === snapshot.assessmentRevision
+    && manifest.verdict === snapshot.verdict
+    && manifest.seal.sealId === seal.sealId
+    && manifest.seal.assessmentRevision === seal.assessmentRevision
+    && manifest.seal.verdict === seal.verdict
+    && manifest.seal.sealedAt === seal.sealedAt
+    && sameDigest(manifest.seal.digest, seal.digest)
+}
+
 function normalizeRiskDecisionSubmission(
   submission: WorkbenchRiskDecisionSubmissionV1,
 ): WorkbenchRiskDecisionSubmissionV1 {
@@ -2032,6 +2144,7 @@ function installWorkbenchUi(
       inject: (): WorkbenchOverlayInjected => ({
         hooks: { presentation, assessment },
         backToAssessmentSelection: () => { void controller.backToAssessmentSelection() },
+        backToAssessmentDetail: () => { void controller.backToAssessmentDetail() },
         backToFindingDetail: () => { controller.backToFindingDetail() },
         backToFindingList: () => { controller.backToFindingList() },
         cancelStartPreflight: () => { controller.cancelStartPreflight() },
@@ -2043,6 +2156,7 @@ function installWorkbenchUi(
         loadMoreAssessments: () => { void controller.loadMoreAssessments() },
         loadMoreFindings: () => { void controller.loadMoreFindings() },
         openFindings: () => { void controller.openFindings() },
+        openBundle: () => { void controller.openBundle() },
         openRepositories: () => { void controller.openRepositories() },
         openRuntimeHealth: () => { void controller.openRuntimeHealth() },
         recordRiskDecision: submission => { void controller.recordRiskDecision(submission) },

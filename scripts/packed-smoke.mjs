@@ -195,10 +195,14 @@ const typertContribution = await import('dsh-security-assurance/typert')
 const clientRemoteContribution = await import('dsh-security-assurance/remote')
 if (
   typeof workbenchRemote.default !== 'function'
-  || typertContribution.TYPERT?.invocations?.length !== 14
-    || clientRemoteContribution.default?.descriptors?.length !== 14
+  || typertContribution.TYPERT?.invocations?.length !== 16
+    || clientRemoteContribution.default?.descriptors?.length !== 16
     || !clientRemoteContribution.default.descriptors.some(descriptor =>
       descriptor.method === 'getHealth')
+    || !clientRemoteContribution.default.descriptors.some(descriptor =>
+      descriptor.method === 'getBundleManifest')
+    || !clientRemoteContribution.default.descriptors.some(descriptor =>
+      descriptor.method === 'getRepository')
     || !clientRemoteContribution.default.descriptors.some(descriptor =>
       descriptor.method === 'listRepositories')
     || !clientRemoteContribution.default.descriptors.some(descriptor =>
@@ -263,6 +267,8 @@ if (
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.loadMoreAssessments !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openRuntimeHealth !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.refreshRuntimeHealth !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openBundle !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.backToAssessmentDetail !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openRepositories !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectRepository !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.requestStartPreflight !== 'function'
@@ -313,7 +319,7 @@ const workbenchFiber = ctx.plugin(workbenchRemote.default, {
     if (contextId !== 'packed-workbench-context-v1') return undefined
     return {
       principalId: 'packed-workbench-operator',
-      permissions: ['health:read', 'assessment:read', 'risk:decide'],
+      permissions: ['health:read', 'repository:read', 'assessment:read', 'risk:decide'],
     }
   },
 })
@@ -350,6 +356,36 @@ if (
   || !runtimeHealth.value?.checks?.some(check => check.id === 'persistence.sqlite')
 ) {
   throw new Error('packed strict Workbench Remote did not return Runtime Health')
+}
+const missingBundle = await ctx.typertGateway.invoke({
+  namespace: 'securityAssuranceWorkbench',
+  method: 'getBundleManifest',
+  args: {
+    securityAssuranceWorkbenchContextId: 'packed-workbench-context-v1',
+    request: {
+      schemaVersion: 1,
+      assessmentId: 'asm-00000000-0000-0000-0000-000000000000',
+    },
+  },
+})
+const missingRepository = await ctx.typertGateway.invoke({
+  namespace: 'securityAssuranceWorkbench',
+  method: 'getRepository',
+  args: {
+    securityAssuranceWorkbenchContextId: 'packed-workbench-context-v1',
+    request: {
+      schemaVersion: 1,
+      repositoryId: 'repo-00000000-0000-0000-0000-000000000000',
+    },
+  },
+})
+if (
+  missingBundle?.ok !== false
+  || missingBundle.error?.code !== 'NOT_FOUND'
+  || missingRepository?.ok !== false
+  || missingRepository.error?.code !== 'NOT_FOUND'
+) {
+  throw new Error('packed strict Workbench Remote did not delegate Bundle and Repository reads')
 }
 const missingAssessment = await ctx.typertGateway.invoke({
   namespace: 'securityAssuranceWorkbench',

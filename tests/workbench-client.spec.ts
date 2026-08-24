@@ -1885,6 +1885,131 @@ describe('Security Assurance Workbench Client', () => {
     expect(JSON.stringify(payloads)).not.toContain('principalId')
   })
 
+  it('opens a matching SEALED Bundle and registered destination IDs, then refetches Assessment detail', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+    const id = assessmentId('asm-00000000-0000-0000-0000-0000000000b1')
+    const digest = {
+      schemaVersion: 1 as const,
+      algorithm: 'sha256' as const,
+      mediaType: 'application/vnd.dsh.canonical-json',
+      byteLength: 42,
+      canonicalization: 'dsh-canonical-json-v1' as const,
+      value: 'b'.repeat(64),
+    }
+    const seal = {
+      schemaVersion: 1 as const,
+      sealId: 'seal-00000000-0000-0000-0000-0000000000b1',
+      assessmentRevision: 7,
+      verdict: 'SATISFIED' as const,
+      digest,
+      sealedAt: '2026-08-25T00:07:00.000Z',
+    }
+    const snapshot: AssessmentSnapshotV1 = {
+      ...snapshotAt(id, 7, 'SEALED'),
+      coverage: {
+        ...snapshotAt(id, 7, 'SEALED').coverage,
+        status: 'COMPLETE',
+        satisfiedObligations: 1,
+      },
+      verdict: 'SATISFIED',
+      seal,
+    }
+    const manifest = {
+      schemaVersion: 1 as const,
+      assessmentId: id,
+      assessmentRevision: 7,
+      verdict: 'SATISFIED' as const,
+      seal,
+      records: [{
+        recordId: 'bundle/assessment-snapshot',
+        schemaId: 'security/assessment-snapshot',
+        schemaVersion: 1 as const,
+        classification: 'INTERNAL' as const,
+        digest,
+      }],
+      omissions: [{ schemaId: 'security/threat-model', reason: 'NO_ELIGIBLE_ANALYZER' as const }],
+      digest,
+    }
+    let manifestResponse = manifest
+    const payloads: Array<{ readonly endpoint: string; readonly payload: unknown }> = []
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+    ): Promise<unknown> {
+      payloads.push({ endpoint, payload })
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getBundleManifest') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: manifestResponse } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getRepository') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: {
+          schemaVersion: 1,
+          repositoryId: snapshot.repository.repositoryId,
+          repositoryRevision: snapshot.repository.repositoryRevision,
+          state: 'ENABLED',
+          displayName: 'Bundle fixture',
+          rootIdentityDigest: `sha256:${'c'.repeat(64)}`,
+          bindings: {
+            policyId: 'security/standard',
+            assessmentProfileId: 'security/standard',
+            evidenceProtectionId: 'evidence/local-protected',
+            dataEgressPolicyId: 'egress/deny-by-default',
+            platform: 'win32',
+            deliveryDestinationIds: ['delivery/local-audit', 'delivery/team-report'],
+          },
+          createdAt: '2026-08-25T00:00:00.000Z',
+          updatedAt: '2026-08-25T00:00:00.000Z',
+        } } })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+    const authorityId = authorityContextId('workbench-session-bundle-client')
+
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityId,
+      assessmentId: id,
+    })
+    await expect(controller.openBundle()).resolves.toMatchObject({
+      kind: 'BUNDLE_READY',
+      assessmentId: id,
+      manifest: { digest, records: [{ recordId: 'bundle/assessment-snapshot' }] },
+      deliveryDestinationIds: ['delivery/local-audit', 'delivery/team-report'],
+    })
+    await expect(controller.backToAssessmentDetail()).resolves.toMatchObject({
+      kind: 'READY',
+      assessmentId: id,
+      snapshot: { state: 'SEALED', seal: { sealId: seal.sealId } },
+    })
+    manifestResponse = { ...manifest, assessmentRevision: 8 }
+    await expect(controller.openBundle()).resolves.toMatchObject({
+      kind: 'FAILED',
+      failure: { source: 'CLIENT', code: 'BUNDLE_PROTOCOL_VIOLATION', retryable: false },
+    })
+    expect(payloads.map(item => item.endpoint)).toEqual([
+      'securityAssuranceWorkbench/getAssessment',
+      'securityAssuranceWorkbench/getBundleManifest',
+      'securityAssuranceWorkbench/getRepository',
+      'securityAssuranceWorkbench/getAssessment',
+      'securityAssuranceWorkbench/getBundleManifest',
+    ])
+    expect(payloads[1]?.payload).toMatchObject({
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1, assessmentId: id },
+      },
+    })
+    expect(JSON.stringify(payloads)).not.toContain('principalId')
+  })
+
   it('drives Repository selection, digest-bound preflight, and exact Assessment start', async () => {
     const ctx = new Context()
     contexts.push(ctx)

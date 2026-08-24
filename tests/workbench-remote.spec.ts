@@ -74,7 +74,29 @@ async function waitUntilBlocked(ctx: Context, assessmentId: AssessmentId): Promi
   throw new Error('Assessment did not open its Risk Decision Window')
 }
 
-async function harness(strictTypert = false): Promise<{
+async function waitUntilSealed(ctx: Context, assessmentId: AssessmentId): Promise<void> {
+  const invocation = referenceHostInvocation(ctx.securityAssurance)
+  let revision = 1
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const current = await ctx.securityAssurance.getAssessment(invocation, {
+      schemaVersion: 1,
+      assessmentId,
+    })
+    if (!current.ok) throw new Error(`query failed: ${current.error.code}`)
+    if (current.value.state === 'SEALED') return
+    revision = current.value.assessmentRevision
+    const changed = await ctx.securityAssurance.waitForAssessmentRevision(invocation, {
+      schemaVersion: 1,
+      assessmentId,
+      afterRevision: revision,
+      timeoutMs: 5_000,
+    })
+    if (!changed.ok) throw new Error(`wait failed: ${changed.error.code}`)
+  }
+  throw new Error('Assessment did not produce a SEALED Bundle')
+}
+
+async function harness(strictTypert = false, riskDecisionWindow = true): Promise<{
   readonly ctx: Context
   readonly assessmentId: AssessmentId
   readonly resolvedContextIds: WorkbenchAuthorityContextId[]
@@ -111,6 +133,10 @@ async function harness(strictTypert = false): Promise<{
       principalId: 'workbench-health-reader',
       permissions: ['health:read'],
     }],
+    [authorityContextId('workbench-session-export-reader'), {
+      principalId: 'workbench-export-reader',
+      permissions: ['assessment:read', 'repository:read'],
+    }],
   ])
   const remoteFiber = await ctx.plugin(SecurityAssuranceWorkbenchRemote, {
     async resolveAuthorityContext(contextId: WorkbenchAuthorityContextId) {
@@ -132,7 +158,7 @@ async function harness(strictTypert = false): Promise<{
       evidenceProtectionId: 'evidence/local-protected',
       dataEgressPolicyId: 'egress/deny-by-default',
       platform: process.platform as 'win32' | 'linux' | 'darwin',
-      deliveryDestinationIds: [],
+      deliveryDestinationIds: ['delivery/local-audit'],
     },
   })
   if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
@@ -144,14 +170,61 @@ async function harness(strictTypert = false): Promise<{
     assessmentMode: 'REPOSITORY',
     assessmentProfileId: 'security/standard',
     target: { kind: 'repository' },
-    requestedStrongerControlIds: [RISK_DECISION_WINDOW_CONTROL_ID],
+    requestedStrongerControlIds: riskDecisionWindow ? [RISK_DECISION_WINDOW_CONTROL_ID] : [],
   })
   if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
-  await waitUntilBlocked(ctx, started.value.assessmentId)
+  if (riskDecisionWindow) await waitUntilBlocked(ctx, started.value.assessmentId)
+  else await waitUntilSealed(ctx, started.value.assessmentId)
   return { ctx, assessmentId: started.value.assessmentId, resolvedContextIds, remoteFiber }
 }
 
 describe('Security Assurance Workbench Remote', () => {
+  it('returns an integrity-verified SEALED Bundle and path-free registered destinations', async () => {
+    const { ctx, assessmentId, resolvedContextIds } = await harness(true, false)
+    const authorityId = authorityContextId('workbench-session-export-reader')
+
+    const manifest = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getBundleManifest',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1, assessmentId },
+      },
+    }) as SecurityResult<import('../src/index.ts').BundleManifestV1>
+    expect(manifest).toMatchObject({
+      ok: true,
+      value: {
+        assessmentId,
+        verdict: 'FAILED',
+        records: expect.arrayContaining([
+          expect.objectContaining({ classification: 'CONTROL_PLANE' }),
+        ]),
+      },
+    })
+
+    const assessment = await ctx.securityAssurance.getAssessment(
+      referenceHostInvocation(ctx.securityAssurance),
+      { schemaVersion: 1, assessmentId },
+    )
+    if (!assessment.ok) throw new Error('SEALED Assessment repository was unavailable')
+    const repositoryId = assessment.value.repository.repositoryId
+    await expect(ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getRepository',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1, repositoryId },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        repositoryId,
+        bindings: { deliveryDestinationIds: ['delivery/local-audit'] },
+      },
+    })
+    expect(resolvedContextIds).toEqual([authorityId, authorityId])
+  })
+
   it('returns the bounded Runtime Health snapshot through freshly resolved Host authority', async () => {
     const { ctx, resolvedContextIds } = await harness(true)
     const authorityId = authorityContextId('workbench-session-health')

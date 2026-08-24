@@ -32,6 +32,7 @@ This repository is under active vertical-slice development, not at the
   `dsh-security-assurance/remote` artifacts. Its headless Workbench slice
   exposes authority-projected Runtime Health, Repository and Assessment selection,
   effective `getHealth`, `getCatalog`, digest-bound `startAssessment`, exact `getAssessment`,
+  integrity-verified `getBundleManifest`, path-free `getRepository`,
   revision-bound Finding queries, strict metadata-only
   `getEvidenceView`, separate expiring `discloseEvidence`, bounded
   `waitForAssessmentRevision`, and revision-bound, idempotent
@@ -47,7 +48,8 @@ This repository is under active vertical-slice development, not at the
   Evidence Link, separately reauthorizes purpose-bound bounded content,
   validates every returned identity, byte, and expiry binding, and submits only
   exact Service-projected Risk Decision options with fresh idempotency before
-  refetching committed truth. It erases its authority context and Assessment
+  refetching committed truth, and renders verified SEALED Bundle metadata with
+  registered Delivery Destination IDs. It erases its authority context and Assessment
   payload on close.
   The same entry contributes an additive bilingual launcher at
   `sidebar.footer.action` and a responsive Assessment surface at
@@ -202,8 +204,10 @@ as implemented yet. The Workbench Host Remote, authenticated redacted Assessment
 with stable cursor continuation, generated Client contract, transient browser
 Controller, Runtime Health, Repositories and digest-bound New Assessment flow, read-only Assessment Detail, multidimensional Finding triage,
 revision-bound Finding Detail navigation, bilingual metadata-first Evidence,
-explicit expiring bounded-content disclosure, and a governed Risk Decision form
-with Critical Dual Authority completion are implemented. This repository ships no production external
+explicit expiring bounded-content disclosure, a governed Risk Decision form
+with Critical Dual Authority completion, and a read-only SEALED Bundle/Export
+readiness view are implemented. Export Preview, `requestExport`, `getExport`,
+artifact delivery, and download capabilities remain unimplemented. This repository ships no production external
 Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -385,7 +389,7 @@ fails closed, and the dormant bundle row must not be enabled for an anonymous
 LAN deployment.
 
 The generated Host contribution is published at `./typert`; the generated
-Client contribution is published at `./remote`. All fourteen operations use strict
+Client contribution is published at `./remote`. All sixteen operations use strict
 generated request/result codecs. Cancellation is forwarded to the root Service,
 mutation retries retain the caller's original idempotency key, and Adapter
 disposal withdraws its lookup and Remote Service without altering Assessments
@@ -393,11 +397,11 @@ or the root plugin.
 
 The package also publishes a Harness-discoverable `./client` entry. It mounts
 `./remote` through `ctx.remote.$mount()` and provides the browser-local
-`ctx.securityAssuranceWorkbench` Controller with twenty-six public operations:
+`ctx.securityAssuranceWorkbench` Controller with twenty-eight public operations:
 `openAssessmentSelection`, `loadMoreAssessments`, `selectAssessment`,
 `openRuntimeHealth`, `refreshRuntimeHealth`, `openRepositories`, `selectRepository`, `requestStartPreflight`,
 `cancelStartPreflight`, `confirmStartAssessment`, `backToAssessmentSelection`,
-`openAssessment`, `openFindings`, `loadMoreFindings`, `selectFinding`,
+`openAssessment`, `openBundle`, `backToAssessmentDetail`, `openFindings`, `loadMoreFindings`, `selectFinding`,
 `backToFindingList`, `recordRiskDecision`, `resumeAssessment`, `cancelAssessment`,
 `selectEvidence`, `discloseEvidence`,
 `hideEvidenceDisclosure`, `backToFindingDetail`, `closeAssessment`, `getState`,
@@ -440,12 +444,23 @@ unchanged selection; a matching Receipt is required before the newly committed
 Assessment is opened. Changing a selection cancels the proposal and requires a
 new preflight.
 
+For a SEALED Snapshot, `openBundle` separately reauthorizes an integrity-verified
+Bundle Manifest read and an exact Repository binding read. The Controller accepts
+the result only when Assessment, revision, Verdict, Seal, Repository ID, and
+Repository revision match the retained Service Snapshot. The view exposes
+canonical record identities, schemas, classifications, digests, omissions, and
+stable registered Delivery Destination IDs, but no private path, Bundle bytes,
+credential, browser-generated report, Export Profile, download action, or
+delivery status. Those actions require the not-yet-implemented Service-owned
+Export Preview and durable Delivery operations.
+
 The Client entry also registers two additive Harness UI contributions. A
 launcher in `sidebar.footer.action` opens a frame-wide dialog in
 `shell.overlay`; neither replaces a single-owner Host shell slot. The overlay
 subscribes to the Controller through the Slot renderer's observable seam and
 renders `CLOSED`, `SELECTION_LOADING`, `SELECTION_READY`,
-`SELECTION_LOADING_MORE`, Runtime Health, Repository/Catalog/Preflight/Wizard states, `LOADING`,
+`SELECTION_LOADING_MORE`, Runtime Health, Bundle/Export readiness,
+Repository/Catalog/Preflight/Wizard states, `LOADING`,
 `READY`, and `FAILED` without duplicating
 Remote, polling, authorization, or revision logic. `READY` shows canonical machine IDs
 unchanged together with revision, state, Verdict, repository and policy

@@ -11,13 +11,16 @@ import type {
   AssessmentRevisionSignalV1,
   AssessmentListPageV1,
   AssessmentSnapshotV1,
+  BundleManifestV1,
   DigestEnvelopeV1,
   EvidenceViewV1,
   FindingDetailViewV1,
   FindingListPageV1,
   GetCatalogRequest,
+  GetBundleManifestRequest,
   GetHealthRequest,
   GetAssessmentRequest,
+  GetRepositoryRequest,
   GetFindingRequest,
   ListFindingsRequest,
   ListAssessmentsRequest,
@@ -27,6 +30,7 @@ import type {
   ResumeAssessmentRequest,
   RiskDecisionReceiptV1,
   RepositoryListSnapshotV1,
+  RepositorySnapshotV1,
   RuntimeHealthSnapshot,
   SecurityCatalogSnapshotV1,
   SecurityInvocation,
@@ -257,6 +261,34 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
     signal: AbortSignal,
   ): Promise<SecurityResult<RuntimeHealthSnapshot>> {
     return this.ctx.securityAssurance.getHealth(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
+  }
+
+  /** Read one integrity-verified SEALED Bundle Manifest through current Host authority. */
+  @Remote
+  getBundleManifest(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: GetBundleManifestRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<BundleManifestV1>> {
+    return this.ctx.securityAssurance.getBundleManifest(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
+  }
+
+  /** Read one path-free Repository binding projection through current Host authority. */
+  @Remote
+  getRepository(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: GetRepositoryRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<RepositorySnapshotV1>> {
+    return this.ctx.securityAssurance.getRepository(
       securityAssuranceWorkbenchContext,
       request,
       { signal },

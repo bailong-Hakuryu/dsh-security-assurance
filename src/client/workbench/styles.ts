@@ -39,10 +39,12 @@ const WORKBENCH_CSS = `
 .dsh-security-section{border:1px solid var(--dsw-alias-border-subtle,rgba(0,0,0,.1));border-radius:12px;padding:14px}
 .dsh-security-section__header{align-items:center;display:flex;gap:12px;justify-content:space-between}
 .dsh-security-section h2{font-size:14px;margin:0}
+.dsh-security-section__action{margin-top:12px}
 .dsh-security-metrics{display:grid;gap:10px;grid-template-columns:repeat(2,minmax(0,1fr));margin-top:12px}
 .dsh-security-metric{background:var(--dsw-alias-bg-hover,rgba(0,0,0,.035));border-radius:9px;display:flex;flex-direction:column;gap:4px;padding:10px 12px}
 .dsh-security-metric span{color:var(--dsw-alias-text-secondary,#666);font-size:11px}.dsh-security-metric strong{font-size:17px}
 .dsh-security-readonly-note,.dsh-security-muted{color:var(--dsw-alias-text-secondary,#666);font-size:12px;line-height:1.5;margin:8px 0 0}
+.dsh-security-exports{display:flex;flex:1;flex-direction:column;gap:14px;min-width:0}.dsh-security-exports>.dsh-security-secondary-action{align-self:flex-start}.dsh-security-export-list{display:flex;flex-direction:column;gap:7px;list-style:none;margin:12px 0 0;padding:0}.dsh-security-export-list>li{background:var(--dsw-alias-bg-hover,rgba(0,0,0,.035));border-radius:9px;display:flex;flex-direction:column;font-size:11px;gap:6px;padding:10px 11px}.dsh-security-export-list__heading{align-items:center;display:flex;gap:12px;justify-content:space-between}.dsh-security-export-list code{overflow-wrap:anywhere}.dsh-security-export-list small{color:var(--dsw-alias-text-secondary,#666)}.dsh-security-export-list__digest{font-size:10px}.dsh-security-export-list--destinations>li{font-weight:650}
 .dsh-security-actions{display:flex;flex-direction:column;gap:8px;list-style:none;margin:12px 0 0;padding:0}
 .dsh-security-actions li{align-items:baseline;background:var(--dsw-alias-bg-hover,rgba(0,0,0,.035));border-radius:9px;display:grid;gap:4px 12px;grid-template-columns:minmax(150px,auto) 1fr auto;padding:10px 12px}
 .dsh-security-actions code{font-size:11px;font-weight:700}.dsh-security-actions span{font-size:12px}.dsh-security-actions small{color:var(--dsw-alias-text-secondary,#666);font-size:11px}

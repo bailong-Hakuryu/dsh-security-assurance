@@ -26,6 +26,7 @@ import type {
   AssessmentId,
   AssessmentListItemV1,
   AssessmentSnapshotV1,
+  BundleManifestV1,
   FindingDetailViewV1,
   FindingSummaryV1,
   RepositorySnapshotV1,
@@ -45,6 +46,7 @@ export type WorkbenchOverlaySources = {
 export interface WorkbenchOverlayInjected {
   readonly hooks: WorkbenchOverlaySources
   readonly closeWorkbench: () => void
+  readonly backToAssessmentDetail: () => void
   readonly backToAssessmentSelection: () => void
   readonly cancelStartPreflight: () => void
   readonly cancelAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
@@ -52,6 +54,7 @@ export interface WorkbenchOverlayInjected {
   readonly loadMoreAssessments: () => void
   readonly loadMoreFindings: () => void
   readonly openFindings: () => void
+  readonly openBundle: () => void
   readonly openRepositories: () => void
   readonly openRuntimeHealth: () => void
   readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
@@ -80,6 +83,7 @@ export function WorkbenchOverlay({
   usePresentation,
   useAssessment,
   closeWorkbench,
+  backToAssessmentDetail,
   backToAssessmentSelection,
   cancelStartPreflight,
   cancelAssessment,
@@ -87,6 +91,7 @@ export function WorkbenchOverlay({
   loadMoreAssessments,
   loadMoreFindings,
   openFindings,
+  openBundle,
   openRepositories,
   openRuntimeHealth,
   recordRiskDecision,
@@ -189,6 +194,22 @@ export function WorkbenchOverlay({
               t={t}
             />
           )}
+          {state.kind === 'BUNDLE_LOADING' && (
+            <MessageState
+              title={t('exports.loadingTitle')}
+              body={t('exports.loadingBody')}
+              detail={state.assessmentId}
+              role="status"
+            />
+          )}
+          {state.kind === 'BUNDLE_READY' && (
+            <BundleExportView
+              manifest={state.manifest}
+              deliveryDestinationIds={state.deliveryDestinationIds}
+              backToAssessmentDetail={backToAssessmentDetail}
+              t={t}
+            />
+          )}
           {state.kind === 'REPOSITORIES_LOADING' && (
             <MessageState title={t('repositories.loadingTitle')} body={t('repositories.loadingBody')} role="status" />
           )}
@@ -247,6 +268,7 @@ export function WorkbenchOverlay({
               snapshot={state.snapshot}
               findings={state.findings}
               assessmentCommand={state.assessmentCommand}
+              openBundle={openBundle}
               cancelAssessment={cancelAssessment}
               openFindings={openFindings}
               recordRiskDecision={recordRiskDecision}
@@ -802,10 +824,98 @@ function MessageState({
   )
 }
 
+function BundleExportView({
+  manifest,
+  deliveryDestinationIds,
+  backToAssessmentDetail,
+  t,
+}: {
+  readonly manifest: BundleManifestV1
+  readonly deliveryDestinationIds: readonly string[]
+  readonly backToAssessmentDetail: () => void
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  return (
+    <section className="dsh-security-exports" aria-labelledby="dsh-security-exports-title">
+      <button type="button" className="dsh-security-secondary-action" onClick={backToAssessmentDetail}>
+        {t('exports.back')}
+      </button>
+      <div className="dsh-security-view-heading">
+        <div>
+          <span className="dsh-security-eyebrow">{t('exports.eyebrow')}</span>
+          <h2 id="dsh-security-exports-title">{t('exports.title')}</h2>
+        </div>
+        <MachineBadge value={manifest.verdict} />
+      </div>
+      <p className="dsh-security-readonly-note">{t('exports.immutable')}</p>
+      <dl className="dsh-security-facts">
+        <Fact label={t('label.assessment')} value={manifest.assessmentId} machine />
+        <Fact label={t('label.revision')} value={String(manifest.assessmentRevision)} />
+        <Fact label={t('label.verdict')} value={manifest.verdict} machine />
+        <Fact label={t('exports.seal')} value={manifest.seal.sealId} machine />
+        <Fact label={t('exports.sealedAt')} value={manifest.seal.sealedAt} machine />
+        <Fact label={t('exports.manifestDigest')} value={manifest.digest.value} machine />
+        <Fact label={t('exports.digestMediaType')} value={manifest.digest.mediaType} machine />
+        <Fact label={t('exports.digestByteLength')} value={String(manifest.digest.byteLength)} />
+      </dl>
+      <section className="dsh-security-section" aria-labelledby="dsh-security-bundle-records-title">
+        <div className="dsh-security-section__header">
+          <h2 id="dsh-security-bundle-records-title">{t('exports.records')}</h2>
+          <span className="dsh-security-health__requirement">{manifest.records.length}</span>
+        </div>
+        <ul className="dsh-security-export-list">
+          {manifest.records.map(record => (
+            <li key={record.recordId}>
+              <div className="dsh-security-export-list__heading">
+                <code>{record.recordId}</code>
+                <MachineBadge value={record.classification} />
+              </div>
+              <span><code>{record.schemaId}@{record.schemaVersion}</code></span>
+              <small>{record.digest.mediaType} · {record.digest.byteLength} B</small>
+              <code className="dsh-security-export-list__digest">{record.digest.value}</code>
+            </li>
+          ))}
+        </ul>
+      </section>
+      <section className="dsh-security-section" aria-labelledby="dsh-security-bundle-omissions-title">
+        <div className="dsh-security-section__header">
+          <h2 id="dsh-security-bundle-omissions-title">{t('exports.omissions')}</h2>
+        </div>
+        {manifest.omissions.length === 0
+          ? <p className="dsh-security-muted">{t('exports.noOmissions')}</p>
+          : (
+              <ul className="dsh-security-export-list">
+                {manifest.omissions.map(omission => (
+                  <li key={omission.schemaId}>
+                    <code>{omission.schemaId}</code>
+                    <MachineBadge value={omission.reason} />
+                  </li>
+                ))}
+              </ul>
+            )}
+      </section>
+      <section className="dsh-security-section" aria-labelledby="dsh-security-destinations-title">
+        <div className="dsh-security-section__header">
+          <h2 id="dsh-security-destinations-title">{t('exports.destinations')}</h2>
+        </div>
+        <p className="dsh-security-readonly-note">{t('exports.destinationBoundary')}</p>
+        {deliveryDestinationIds.length === 0
+          ? <p className="dsh-security-muted">{t('exports.noDestinations')}</p>
+          : (
+              <ul className="dsh-security-export-list dsh-security-export-list--destinations">
+                {deliveryDestinationIds.map(destinationId => <li key={destinationId}><code>{destinationId}</code></li>)}
+              </ul>
+            )}
+      </section>
+    </section>
+  )
+}
+
 function AssessmentDetail({
   snapshot,
   findings,
   assessmentCommand,
+  openBundle,
   cancelAssessment,
   openFindings,
   recordRiskDecision,
@@ -822,6 +932,7 @@ function AssessmentDetail({
   readonly snapshot: AssessmentSnapshotV1
   readonly findings: WorkbenchFindingsStateV1
   readonly assessmentCommand: WorkbenchAssessmentCommandStateV1
+  readonly openBundle: () => void
   readonly cancelAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
   readonly openFindings: () => void
   readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
@@ -835,6 +946,9 @@ function AssessmentDetail({
   readonly hideEvidenceDisclosure: () => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
+  const bundleAvailable = snapshot.state === 'SEALED'
+    && snapshot.seal !== null
+    && snapshot.verdict !== null
   return (
     <div className="dsh-security-assessment">
       <div className="dsh-security-assessment__heading">
@@ -857,6 +971,21 @@ function AssessmentDetail({
         <Fact label={t('label.policy')} value={snapshot.policy.policyId} machine />
         <Fact label={t('label.updated')} value={snapshot.updatedAt} machine />
       </dl>
+
+      <section className="dsh-security-section" aria-labelledby="dsh-security-exports-launcher-title">
+        <div className="dsh-security-section__header">
+          <h2 id="dsh-security-exports-launcher-title">{t('exports.title')}</h2>
+          {bundleAvailable && <MachineBadge value="SEALED" />}
+        </div>
+        <p className="dsh-security-readonly-note">
+          {bundleAvailable ? t('exports.available') : t('exports.unavailable')}
+        </p>
+        {bundleAvailable && (
+          <button type="button" className="dsh-security-secondary-action dsh-security-section__action" onClick={openBundle}>
+            {t('exports.open')}
+          </button>
+        )}
+      </section>
 
       <section className="dsh-security-section" aria-labelledby="dsh-security-coverage-title">
         <div className="dsh-security-section__header">
