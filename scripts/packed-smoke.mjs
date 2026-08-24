@@ -165,6 +165,7 @@ if (
   || typeof contracts.recordRiskDecisionRequestSchema?.parse !== 'function'
   || typeof contracts.availableRiskDecisionOptionV1Schema?.parse !== 'function'
   || typeof contracts.assessmentAvailableActionV1Schema?.parse !== 'function'
+  || typeof contracts.assessmentBlockedRecoveryV1Schema?.parse !== 'function'
   || typeof contracts.riskDecisionAttestationV1Schema?.parse !== 'function'
   || typeof contracts.riskDecisionRecordV1Schema?.parse !== 'function'
   || typeof contracts.riskDecisionReceiptResultSchema?.parse !== 'function'
@@ -194,8 +195,8 @@ const typertContribution = await import('dsh-security-assurance/typert')
 const clientRemoteContribution = await import('dsh-security-assurance/remote')
 if (
   typeof workbenchRemote.default !== 'function'
-  || typertContribution.TYPERT?.invocations?.length !== 8
-  || clientRemoteContribution.default?.descriptors?.length !== 8
+  || typertContribution.TYPERT?.invocations?.length !== 10
+  || clientRemoteContribution.default?.descriptors?.length !== 10
   || !clientRemoteContribution.default.descriptors.some(descriptor =>
     descriptor.method === 'listAssessments')
   || !clientRemoteContribution.default.descriptors.some(descriptor =>
@@ -208,6 +209,10 @@ if (
     descriptor.method === 'discloseEvidence')
   || !clientRemoteContribution.default.descriptors.some(descriptor =>
     descriptor.method === 'waitForAssessmentRevision')
+  || !clientRemoteContribution.default.descriptors.some(descriptor =>
+    descriptor.method === 'resumeAssessment')
+  || !clientRemoteContribution.default.descriptors.some(descriptor =>
+    descriptor.method === 'cancelAssessment')
   || typertContribution.TYPERT.invocations.some(invocation =>
     invocation.parameters[0]?.wire !== 'securityAssuranceWorkbenchContextId'
       || invocation.parameters[0]?.lookup !== 'securityAssuranceWorkbenchContext'
@@ -253,6 +258,8 @@ if (
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectFinding !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.backToFindingList !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.recordRiskDecision !== 'function'
+  || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.resumeAssessment !== 'function'
+  || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.cancelAssessment !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectEvidence !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.discloseEvidence !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.hideEvidenceDisclosure !== 'function'

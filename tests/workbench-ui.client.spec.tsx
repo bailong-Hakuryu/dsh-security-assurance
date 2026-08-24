@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent } from '@testing-library/react'
+import { act, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
@@ -107,6 +107,24 @@ function readySnapshot(id: AssessmentId): AssessmentSnapshotV1 {
         { obligationId: 'security/secrets', state: 'GAP', reason: 'EVIDENCE_INELIGIBLE' },
       ],
       digest,
+    },
+    blockedRecovery: {
+      schemaVersion: 1,
+      blocker: {
+        code: 'ASSESSMENT_EXECUTION_FAILED',
+        phase: 'ASSESSMENT_EXECUTION',
+        interruption: 'FAILED',
+        affectedObligations: [
+          { obligationId: 'security/sast', reason: 'ANALYZER_INCOMPLETE' },
+          { obligationId: 'security/secrets', reason: 'EVIDENCE_INELIGIBLE' },
+        ],
+      },
+      evidence: { status: 'RETAINED', publishedArtifactCount: null },
+      recovery: {
+        requiredCondition: 'EXPLICIT_RESUME_REQUIRED',
+        remainingExecutionBudget: { status: 'NOT_REPORTED' },
+        coverageReconciliation: { required: true, possibleVerdict: 'INDETERMINATE' },
+      },
     },
     availableActions: [
       { kind: 'RESUME_ASSESSMENT', expectedAssessmentRevision: 7 },
@@ -277,6 +295,8 @@ describe('Security Assurance Workbench UI', () => {
     const snapshot: AssessmentSnapshotV1 = {
       ...readySnapshot(id),
       state: 'SEALED',
+      blockedRecovery: null,
+      availableActions: [],
       verdict: 'FAILED',
     }
     const summary = findingSummaryItem(id)
@@ -731,13 +751,49 @@ describe('Security Assurance Workbench UI', () => {
   it('renders the Controller Snapshot and service-projected actions without exposing mutations', async () => {
     const id = assessmentId('asm-00000000-0000-0000-0000-000000000007')
     const snapshot = readySnapshot(id)
-    const b = await bench((_path, endpoint, _payload, signal) => {
+    const resumed: AssessmentSnapshotV1 = {
+      ...snapshot,
+      assessmentRevision: 8,
+      state: 'CREATED',
+      blockedRecovery: null,
+      availableActions: [],
+      updatedAt: '2026-08-24T00:08:00.000Z',
+    }
+    const resumePayloads: unknown[] = []
+    let assessmentReads = 0
+    const b = await bench((_path, endpoint, payload, signal) => {
       if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
-        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+        assessmentReads += 1
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: assessmentReads === 1 ? snapshot : resumed },
+        })
       }
       if (endpoint === 'securityAssuranceWorkbench/waitForAssessmentRevision') {
         return new Promise(resolve => {
           signal.addEventListener('abort', () => { resolve({ ok: false, error: { code: 'aborted' } }) }, { once: true })
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/resumeAssessment') {
+        resumePayloads.push(payload)
+        const idempotencyKey = (payload as {
+          readonly args: { readonly request: { readonly idempotencyKey: string } }
+        }).args.request.idempotencyKey
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              operation: 'resume_assessment',
+              assessmentId: id,
+              assessmentRevision: 8,
+              state: 'CREATED',
+              idempotencyKey,
+              acceptedAt: '2026-08-24T00:08:00.000Z',
+              correlationId: 'sec-00000000-0000-0000-0000-000000000007',
+            },
+          },
         })
       }
       return Promise.reject(new Error(`Unexpected endpoint: ${endpoint}`))
@@ -760,10 +816,53 @@ describe('Security Assurance Workbench UI', () => {
     expect(overlay.view.getAllByText('尚未生成')).toHaveLength(2)
     expect(overlay.view.getByText('RESUME_ASSESSMENT')).toBeTruthy()
     expect(overlay.view.getByText('CANCEL_ASSESSMENT')).toBeTruthy()
+    expect(overlay.view.getByRole('heading', { name: '阻塞恢复' })).toBeTruthy()
+    expect(overlay.view.getByText('ASSESSMENT_EXECUTION_FAILED')).toBeTruthy()
+    expect(overlay.view.getByText('EXPLICIT_RESUME_REQUIRED')).toBeTruthy()
+    expect(overlay.view.getByText('NOT_REPORTED')).toBeTruthy()
+    expect(overlay.view.getByText('INDETERMINATE')).toBeTruthy()
+    expect(overlay.view.getByText('ANALYZER_INCOMPLETE')).toBeTruthy()
+    expect(overlay.view.getByText('EVIDENCE_INELIGIBLE')).toBeTruthy()
     expect(overlay.view.getByText('操作入口严格来自 Security Service 快照；仅已实现的治理表单可提交。')).toBeTruthy()
     expect(overlay.view.getByRole('button', { name: '查看 Findings' })).toBeTruthy()
-    expect(overlay.view.queryByRole('button', { name: 'RESUME_ASSESSMENT' })).toBeNull()
-    expect(overlay.view.queryByRole('button', { name: 'CANCEL_ASSESSMENT' })).toBeNull()
+    const resume = overlay.view.getByRole('button', { name: '恢复 Assessment' })
+    const cancel = overlay.view.getByRole('button', { name: '请求取消 Assessment' })
+    expect((resume as HTMLButtonElement).disabled).toBe(true)
+    expect((cancel as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.change(overlay.view.getByRole('textbox', { name: '操作原因代码' }), {
+      target: { value: 'OPERATOR_RETRY' },
+    })
+    fireEvent.change(overlay.view.getByRole('textbox', { name: '操作原因说明' }), {
+      target: { value: 'Retry the frozen contract after restoring the analyzer host.' },
+    })
+    expect((resume as HTMLButtonElement).disabled).toBe(false)
+    await act(async () => { fireEvent.click(resume) })
+    await waitFor(() => {
+      expect(b.controller.getState()).toMatchObject({
+        kind: 'READY',
+        snapshot: { assessmentRevision: 8, state: 'CREATED', blockedRecovery: null },
+        assessmentCommand: { kind: 'IDLE' },
+      })
+    })
+    expect(resumePayloads).toHaveLength(1)
+    expect(resumePayloads[0]).toMatchObject({
+      args: {
+        securityAssuranceWorkbenchContextId: 'workbench-session-reviewer',
+        request: {
+          schemaVersion: 1,
+          assessmentId: id,
+          expectedAssessmentRevision: 7,
+          idempotencyKey: expect.stringMatching(/^workbench-resume:[0-9a-f-]{36}$/),
+          reason: {
+            code: 'OPERATOR_RETRY',
+            summary: 'Retry the frozen contract after restoring the analyzer host.',
+          },
+        },
+      },
+    })
+    expect(JSON.stringify(resumePayloads[0])).not.toContain('principalId')
+    expect(overlay.view.queryByRole('heading', { name: '阻塞恢复' })).toBeNull()
 
     await b.feature.dispose()
     await b.gateway.dispose()
@@ -792,7 +891,10 @@ describe('Security Assurance Workbench UI', () => {
     const committed: AssessmentSnapshotV1 = {
       ...snapshot,
       assessmentRevision: 8,
+      state: 'SEALED',
+      blockedRecovery: null,
       availableActions: [],
+      verdict: 'FAILED',
       updatedAt: '2026-08-24T00:08:00.000Z',
     }
     const riskPayloads: unknown[] = []
@@ -970,7 +1072,10 @@ describe('Security Assurance Workbench UI', () => {
     const committed: AssessmentSnapshotV1 = {
       ...snapshot,
       assessmentRevision: 8,
+      state: 'SEALED',
+      blockedRecovery: null,
       availableActions: [],
+      verdict: 'FAILED',
       updatedAt: '2026-08-24T23:31:00.000Z',
     }
     const riskPayloads: unknown[] = []

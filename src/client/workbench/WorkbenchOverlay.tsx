@@ -9,6 +9,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, MouseEvent, RefObject } from 'react'
 import type {
   SecurityAssuranceWorkbenchStateV1,
+  WorkbenchAssessmentCommandReasonV1,
+  WorkbenchAssessmentCommandStateV1,
   WorkbenchEvidenceStateV1,
   WorkbenchFindingsStateV1,
   WorkbenchRiskDecisionSubmissionStateV1,
@@ -37,10 +39,12 @@ export type WorkbenchOverlaySources = {
 export interface WorkbenchOverlayInjected {
   readonly hooks: WorkbenchOverlaySources
   readonly closeWorkbench: () => void
+  readonly cancelAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
   readonly loadMoreAssessments: () => void
   readonly loadMoreFindings: () => void
   readonly openFindings: () => void
   readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
+  readonly resumeAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
   readonly backToFindingList: () => void
   readonly backToFindingDetail: () => void
   readonly discloseEvidence: () => void
@@ -62,10 +66,12 @@ export function WorkbenchOverlay({
   usePresentation,
   useAssessment,
   closeWorkbench,
+  cancelAssessment,
   loadMoreAssessments,
   loadMoreFindings,
   openFindings,
   recordRiskDecision,
+  resumeAssessment,
   backToFindingList,
   backToFindingDetail,
   discloseEvidence,
@@ -168,8 +174,11 @@ export function WorkbenchOverlay({
             <AssessmentDetail
               snapshot={state.snapshot}
               findings={state.findings}
+              assessmentCommand={state.assessmentCommand}
+              cancelAssessment={cancelAssessment}
               openFindings={openFindings}
               recordRiskDecision={recordRiskDecision}
+              resumeAssessment={resumeAssessment}
               loadMoreFindings={loadMoreFindings}
               selectFinding={selectFinding}
               backToFindingList={backToFindingList}
@@ -273,8 +282,11 @@ function MessageState({
 function AssessmentDetail({
   snapshot,
   findings,
+  assessmentCommand,
+  cancelAssessment,
   openFindings,
   recordRiskDecision,
+  resumeAssessment,
   loadMoreFindings,
   selectFinding,
   backToFindingList,
@@ -286,8 +298,11 @@ function AssessmentDetail({
 }: {
   readonly snapshot: AssessmentSnapshotV1
   readonly findings: WorkbenchFindingsStateV1
+  readonly assessmentCommand: WorkbenchAssessmentCommandStateV1
+  readonly cancelAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
   readonly openFindings: () => void
   readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
+  readonly resumeAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
   readonly loadMoreFindings: () => void
   readonly selectFinding: (recordId: string) => void
   readonly backToFindingList: () => void
@@ -334,6 +349,17 @@ function AssessmentDetail({
         </div>
       </section>
 
+      {snapshot.blockedRecovery !== null && (
+        <BlockedRecoveryPanel
+          snapshot={snapshot}
+          recovery={snapshot.blockedRecovery}
+          commandState={assessmentCommand}
+          cancelAssessment={cancelAssessment}
+          resumeAssessment={resumeAssessment}
+          t={t}
+        />
+      )}
+
       <section className="dsh-security-section" aria-labelledby="dsh-security-actions-title">
         <div className="dsh-security-section__header">
           <h2 id="dsh-security-actions-title">{t('label.availableActions')}</h2>
@@ -369,6 +395,141 @@ function AssessmentDetail({
         t={t}
       />
     </div>
+  )
+}
+
+function BlockedRecoveryPanel({
+  snapshot,
+  recovery,
+  commandState,
+  cancelAssessment,
+  resumeAssessment,
+  t,
+}: {
+  readonly snapshot: AssessmentSnapshotV1
+  readonly recovery: NonNullable<AssessmentSnapshotV1['blockedRecovery']>
+  readonly commandState: WorkbenchAssessmentCommandStateV1
+  readonly cancelAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
+  readonly resumeAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  const [reasonCode, setReasonCode] = useState('')
+  const [reasonSummary, setReasonSummary] = useState('')
+  const resumeAction = snapshot.availableActions.find(action => action.kind === 'RESUME_ASSESSMENT')
+  const cancelAction = snapshot.availableActions.find(action => action.kind === 'CANCEL_ASSESSMENT')
+  const normalizedReason = {
+    code: reasonCode.trim(),
+    summary: reasonSummary.trim(),
+  }
+  const reasonValid = /^[A-Z][A-Z0-9_]{0,63}$/.test(normalizedReason.code)
+    && normalizedReason.summary.length >= 1
+    && normalizedReason.summary.length <= 512
+  const submitting = commandState.kind === 'SUBMITTING'
+  return (
+    <section className="dsh-security-section dsh-security-recovery" aria-labelledby="dsh-security-recovery-title">
+      <div className="dsh-security-section__header">
+        <h2 id="dsh-security-recovery-title">{t('recovery.title')}</h2>
+        <MachineBadge value={recovery.blocker.interruption} />
+      </div>
+      <p className="dsh-security-readonly-note">{t('recovery.immutable')}</p>
+      <dl className="dsh-security-facts">
+        <Fact label={t('recovery.blocker')} value={recovery.blocker.code} machine />
+        <Fact label={t('recovery.phase')} value={recovery.blocker.phase} machine />
+        <Fact label={t('recovery.condition')} value={recovery.recovery.requiredCondition} machine />
+        <Fact label={t('recovery.evidence')} value={recovery.evidence.status} machine />
+        <Fact
+          label={t('recovery.evidenceCount')}
+          value={recovery.evidence.publishedArtifactCount === null
+            ? t('value.notAvailable')
+            : String(recovery.evidence.publishedArtifactCount)}
+        />
+        <Fact
+          label={t('recovery.budget')}
+          value={recovery.recovery.remainingExecutionBudget.status}
+          machine
+        />
+        <Fact
+          label={t('recovery.reconciliation')}
+          value={recovery.recovery.coverageReconciliation.required
+            ? t('value.required')
+            : t('value.notRequired')}
+        />
+        <Fact
+          label={t('recovery.possibleVerdict')}
+          value={recovery.recovery.coverageReconciliation.possibleVerdict ?? t('value.notAvailable')}
+          machine={recovery.recovery.coverageReconciliation.possibleVerdict !== null}
+        />
+      </dl>
+      <div>
+        <strong className="dsh-security-recovery__label">{t('recovery.obligations')}</strong>
+        {recovery.blocker.affectedObligations.length === 0
+          ? <p className="dsh-security-muted">{t('recovery.noObligations')}</p>
+          : (
+              <ul className="dsh-security-metadata-list">
+                {recovery.blocker.affectedObligations.map(obligation => (
+                  <li key={obligation.obligationId}>
+                    <code>{obligation.obligationId}</code>
+                    <MachineBadge value={obligation.reason} />
+                  </li>
+                ))}
+              </ul>
+            )}
+      </div>
+      {(resumeAction !== undefined || cancelAction !== undefined) && (
+        <div className="dsh-security-recovery__form">
+          <label className="dsh-security-risk-decision__field">
+            <span>{t('recovery.reasonCode')}</span>
+            <input
+              aria-label={t('recovery.reasonCode')}
+              autoComplete="off"
+              maxLength={64}
+              pattern="[A-Z][A-Z0-9_]{0,63}"
+              value={reasonCode}
+              disabled={submitting}
+              onChange={event => { setReasonCode(event.currentTarget.value) }}
+            />
+          </label>
+          <label className="dsh-security-risk-decision__field">
+            <span>{t('recovery.reasonSummary')}</span>
+            <textarea
+              aria-label={t('recovery.reasonSummary')}
+              maxLength={512}
+              rows={3}
+              value={reasonSummary}
+              disabled={submitting}
+              onChange={event => { setReasonSummary(event.currentTarget.value) }}
+            />
+          </label>
+          <p className="dsh-security-readonly-note">{t('recovery.commandBoundary')}</p>
+          <div className="dsh-security-recovery__actions">
+            {resumeAction !== undefined && (
+              <button
+                type="button"
+                className="dsh-security-risk-decision__submit"
+                disabled={!reasonValid || submitting}
+                onClick={() => { resumeAssessment(normalizedReason) }}
+              >
+                {commandState.kind === 'SUBMITTING' && commandState.command === 'RESUME'
+                  ? t('recovery.resuming')
+                  : t('recovery.resume')}
+              </button>
+            )}
+            {cancelAction !== undefined && (
+              <button
+                type="button"
+                className="dsh-security-secondary-action dsh-security-recovery__cancel"
+                disabled={!reasonValid || submitting}
+                onClick={() => { cancelAssessment(normalizedReason) }}
+              >
+                {commandState.kind === 'SUBMITTING' && commandState.command === 'CANCEL'
+                  ? t('recovery.canceling')
+                  : t('recovery.cancel')}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
   )
 }
 

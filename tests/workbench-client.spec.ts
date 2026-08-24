@@ -76,6 +76,23 @@ function snapshotAt(
       resolutions: [],
       digest,
     },
+    blockedRecovery: state === 'BLOCKED'
+      ? {
+          schemaVersion: 1,
+          blocker: {
+            code: 'ASSESSMENT_EXECUTION_FAILED',
+            phase: 'ASSESSMENT_EXECUTION',
+            interruption: 'FAILED',
+            affectedObligations: [],
+          },
+          evidence: { status: 'RETAINED', publishedArtifactCount: null },
+          recovery: {
+            requiredCondition: 'EXPLICIT_RESUME_REQUIRED',
+            remainingExecutionBudget: { status: 'NOT_REPORTED' },
+            coverageReconciliation: { required: false, possibleVerdict: null },
+          },
+        }
+      : null,
     availableActions: [],
     verdict: null,
     seal: null,
@@ -1537,8 +1554,9 @@ describe('Security Assurance Workbench Client', () => {
       }],
     }
     const committed: AssessmentSnapshotV1 = {
-      ...snapshotAt(id, 8, 'BLOCKED'),
+      ...snapshotAt(id, 8, 'SEALED'),
       availableActions: [],
+      verdict: 'FAILED',
     }
     const endpoints: string[] = []
     const riskPayloads: unknown[] = []
@@ -1668,6 +1686,112 @@ describe('Security Assurance Workbench Client', () => {
       'securityAssuranceWorkbench/recordRiskDecision',
       'securityAssuranceWorkbench/getAssessment',
     ])
+  })
+
+  it('requests cancellation only from the current Service action and does not treat its receipt as terminal', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000084')
+    const blocked: AssessmentSnapshotV1 = {
+      ...snapshotAt(id, 4, 'BLOCKED'),
+      availableActions: [{ kind: 'CANCEL_ASSESSMENT', expectedAssessmentRevision: 4 }],
+    }
+    const cancellationRequested: AssessmentSnapshotV1 = {
+      ...blocked,
+      assessmentRevision: 5,
+      availableActions: [],
+      updatedAt: '2026-08-24T00:05:00.000Z',
+    }
+    let assessmentReads = 0
+    const cancelPayloads: unknown[] = []
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+      signal: AbortSignal,
+    ): Promise<unknown> {
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        assessmentReads += 1
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: assessmentReads === 1 ? blocked : cancellationRequested,
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/waitForAssessmentRevision') {
+        return new Promise(resolve => {
+          signal.addEventListener('abort', () => {
+            resolve({ ok: false, error: { code: 'aborted' } })
+          }, { once: true })
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/cancelAssessment') {
+        cancelPayloads.push(payload)
+        const idempotencyKey = (payload as {
+          readonly args: { readonly request: { readonly idempotencyKey: string } }
+        }).args.request.idempotencyKey
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              operation: 'cancel_assessment',
+              assessmentId: id,
+              assessmentRevision: 5,
+              acceptedState: 'BLOCKED',
+              idempotencyKey,
+              acceptedAt: '2026-08-24T00:05:00.000Z',
+              correlationId: 'sec-00000000-0000-0000-0000-000000000084',
+            },
+          },
+        })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+    const authorityId = authorityContextId('workbench-session-cancel')
+
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityId,
+      assessmentId: id,
+    })
+    await expect(controller.cancelAssessment({
+      code: 'OPERATOR_CANCEL',
+      summary: 'Cancel this blocked assessment and wait for durable quiescence.',
+    })).resolves.toMatchObject({
+      kind: 'READY',
+      snapshot: {
+        assessmentRevision: 5,
+        state: 'BLOCKED',
+        availableActions: [],
+      },
+      assessmentCommand: { kind: 'IDLE' },
+    })
+    expect(cancelPayloads).toHaveLength(1)
+    expect(cancelPayloads[0]).toMatchObject({
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          schemaVersion: 1,
+          assessmentId: id,
+          expectedAssessmentRevision: 4,
+          idempotencyKey: expect.stringMatching(/^workbench-cancel:[0-9a-f-]{36}$/),
+          reason: {
+            code: 'OPERATOR_CANCEL',
+            summary: 'Cancel this blocked assessment and wait for durable quiescence.',
+          },
+        },
+      },
+    })
+    expect(JSON.stringify(cancelPayloads[0])).not.toContain('principalId')
   })
 
   it('keeps one in-memory Snapshot current by revision and erases it on close', async () => {

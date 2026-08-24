@@ -6,6 +6,8 @@ import {
 } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   AssessmentId,
+  AssessmentCancellationReceiptV1,
+  AssessmentResumeReceiptV1,
   AssessmentRevisionSignalV1,
   AssessmentListPageV1,
   AssessmentSnapshotV1,
@@ -17,7 +19,9 @@ import type {
   GetFindingRequest,
   ListFindingsRequest,
   ListAssessmentsRequest,
+  CancelAssessmentRequest,
   RecordRiskDecisionRequest,
+  ResumeAssessmentRequest,
   RiskDecisionReceiptV1,
   SecurityInvocation,
   SecurityResult,
@@ -344,6 +348,34 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
     signal: AbortSignal,
   ): Promise<SecurityResult<RiskDecisionReceiptV1>> {
     return this.ctx.securityAssurance.recordRiskDecision(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
+  }
+
+  /** Resume only the frozen Assessment contract named by a Service-projected action. */
+  @Remote
+  resumeAssessment(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: ResumeAssessmentRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<AssessmentResumeReceiptV1>> {
+    return this.ctx.securityAssurance.resumeAssessment(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
+  }
+
+  /** Request cancellation without implying that terminal quiescence is already proven. */
+  @Remote
+  cancelAssessment(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: CancelAssessmentRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<AssessmentCancellationReceiptV1>> {
+    return this.ctx.securityAssurance.cancelAssessment(
       securityAssuranceWorkbenchContext,
       request,
       { signal },

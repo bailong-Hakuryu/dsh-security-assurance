@@ -1373,6 +1373,71 @@ export const assessmentAvailableActionV1Schema: z.ZodType<AssessmentAvailableAct
     }),
   ])
 
+export interface AssessmentBlockedRecoveryV1 {
+  readonly schemaVersion: 1
+  readonly blocker: {
+    readonly code: string
+    readonly phase: 'ASSESSMENT_EXECUTION' | 'RISK_DECISION'
+    readonly interruption: 'FAILED' | 'INTERRUPTED' | 'GOVERNANCE_HOLD'
+    readonly affectedObligations: readonly {
+      readonly obligationId: string
+      readonly reason: AssessmentCoverageResolutionV1['reason']
+    }[]
+  }
+  readonly evidence: {
+    readonly status: 'RETAINED'
+    /** Null means the current public model cannot prove a complete artifact count. */
+    readonly publishedArtifactCount: number | null
+  }
+  readonly recovery: {
+    readonly requiredCondition:
+      | 'EXPLICIT_RESUME_REQUIRED'
+      | 'RISK_DECISION_REQUIRED'
+      | 'EXTERNAL_INTERVENTION_REQUIRED'
+    readonly remainingExecutionBudget: { readonly status: 'NOT_REPORTED' }
+    readonly coverageReconciliation: {
+      readonly required: boolean
+      readonly possibleVerdict: 'INDETERMINATE' | null
+    }
+  }
+}
+
+export const assessmentBlockedRecoveryV1Schema: z.ZodType<AssessmentBlockedRecoveryV1> =
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    blocker: z.strictObject({
+      code: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/),
+      phase: z.enum(['ASSESSMENT_EXECUTION', 'RISK_DECISION']),
+      interruption: z.enum(['FAILED', 'INTERRUPTED', 'GOVERNANCE_HOLD']),
+      affectedObligations: z.array(z.strictObject({
+        obligationId: boundedBindingId,
+        reason: z.enum([
+          'ELIGIBLE_EVIDENCE',
+          'NO_ELIGIBLE_ANALYZER',
+          'UNSUPPORTED_SUBJECT',
+          'ANALYZER_INCOMPLETE',
+          'EVIDENCE_INELIGIBLE',
+        ]),
+      })).max(256),
+    }),
+    evidence: z.strictObject({
+      status: z.literal('RETAINED'),
+      publishedArtifactCount: z.number().int().nonnegative().max(128).nullable(),
+    }),
+    recovery: z.strictObject({
+      requiredCondition: z.enum([
+        'EXPLICIT_RESUME_REQUIRED',
+        'RISK_DECISION_REQUIRED',
+        'EXTERNAL_INTERVENTION_REQUIRED',
+      ]),
+      remainingExecutionBudget: z.strictObject({ status: z.literal('NOT_REPORTED') }),
+      coverageReconciliation: z.strictObject({
+        required: z.boolean(),
+        possibleVerdict: z.literal('INDETERMINATE').nullable(),
+      }),
+    }),
+  })
+
 export interface AssessmentSnapshotV1 {
   readonly schemaVersion: 1
   readonly assessmentId: AssessmentId
@@ -1388,6 +1453,7 @@ export interface AssessmentSnapshotV1 {
     readonly digest: DigestEnvelopeV1
   }
   readonly coverage: AssessmentCoverageSnapshotV1
+  readonly blockedRecovery: AssessmentBlockedRecoveryV1 | null
   readonly availableActions: readonly AssessmentAvailableActionV1[]
   readonly verdict: SecurityVerdict | null
   readonly seal: AssessmentSealV1 | null
@@ -1410,11 +1476,20 @@ export const assessmentSnapshotV1Schema: z.ZodType<AssessmentSnapshotV1> = z.str
     digest: digestEnvelopeV1Schema,
   }),
   coverage: assessmentCoverageSnapshotV1Schema,
+  blockedRecovery: assessmentBlockedRecoveryV1Schema.nullable(),
   availableActions: z.array(assessmentAvailableActionV1Schema).max(1_026),
   verdict: securityVerdictSchema.nullable(),
   seal: assessmentSealV1Schema.nullable(),
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
+}).superRefine((snapshot, context) => {
+  if ((snapshot.state === 'BLOCKED') !== (snapshot.blockedRecovery !== null)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['blockedRecovery'],
+      message: 'Blocked recovery metadata must exist exactly while the Assessment is BLOCKED',
+    })
+  }
 })
 
 export interface AssessmentRevisionSignalV1 {

@@ -15,10 +15,12 @@ import type {
 } from '@deepseek-ai/dsh-typert-protocol'
 import workbenchRemote from 'dsh-security-assurance/remote'
 import type {
+  AssessmentCancellationReceiptV1,
   AssessmentId,
   AssessmentListItemV1,
   AssessmentListPageV1,
   AssessmentRevisionSignalV1,
+  AssessmentResumeReceiptV1,
   AssessmentSnapshotV1,
   DigestEnvelopeV1,
   FindingDetailViewV1,
@@ -95,6 +97,17 @@ export interface WorkbenchRiskDecisionSubmissionV1 {
   readonly compensatingControls: readonly string[]
   readonly expiresAt: string | null
 }
+
+/** Browser-authored reason fields for one exact Service-projected Assessment command. */
+export interface WorkbenchAssessmentCommandReasonV1 {
+  readonly code: string
+  readonly summary: string
+}
+
+/** Non-sensitive progress for a Resume or Cancel command at one Snapshot revision. */
+export type WorkbenchAssessmentCommandStateV1 =
+  | { readonly kind: 'IDLE' }
+  | { readonly kind: 'SUBMITTING'; readonly command: 'RESUME' | 'CANCEL' }
 
 /** Non-sensitive command progress retained beside one exact Finding revision. */
 export type WorkbenchRiskDecisionSubmissionStateV1 =
@@ -175,6 +188,7 @@ export type SecurityAssuranceWorkbenchStateV1 =
     readonly assessmentId: AssessmentId
     readonly snapshot: AssessmentSnapshotV1
     readonly findings: WorkbenchFindingsStateV1
+    readonly assessmentCommand: WorkbenchAssessmentCommandStateV1
   }
   | {
     readonly kind: 'FAILED'
@@ -192,6 +206,7 @@ interface LiveAssessmentSession {
   readonly contextId: WorkbenchAuthorityContextId
   assessmentId: AssessmentId | undefined
   readonly abort: AbortController
+  monitorGeneration: number
   evidenceExpiryTimer: ReturnType<typeof setTimeout> | undefined
   evidenceAbort: AbortController | undefined
 }
@@ -200,6 +215,7 @@ const CLOSED_STATE: SecurityAssuranceWorkbenchStateV1 = Object.freeze({ kind: 'C
 const FINDINGS_NOT_LOADED: WorkbenchFindingsStateV1 = Object.freeze({ kind: 'NOT_LOADED' })
 const EVIDENCE_NOT_LOADED: WorkbenchEvidenceStateV1 = Object.freeze({ kind: 'NOT_LOADED' })
 const RISK_DECISION_IDLE: WorkbenchRiskDecisionSubmissionStateV1 = Object.freeze({ kind: 'IDLE' })
+const ASSESSMENT_COMMAND_IDLE: WorkbenchAssessmentCommandStateV1 = Object.freeze({ kind: 'IDLE' })
 const LONG_POLL_TIMEOUT_MS = 25_000
 
 /**
@@ -235,6 +251,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
       contextId: request.securityAssuranceWorkbenchContextId,
       assessmentId: undefined,
       abort: new AbortController(),
+      monitorGeneration: 0,
       evidenceExpiryTimer: undefined,
       evidenceAbort: undefined,
     }
@@ -549,6 +566,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
       return this.failClient(session, error)
     }
     this.evidenceRequestGeneration += 1
+    session.monitorGeneration += 1
     this.cancelEvidenceRequest(session)
     this.clearEvidenceExpiry(session)
     this.publishReady(current.assessmentId, current.snapshot, Object.freeze({
@@ -637,7 +655,9 @@ export class SecurityAssuranceWorkbenchController extends Service {
         retryable: false,
       })
     }
-    return this.publishReady(current.assessmentId, snapshot)
+    const ready = this.publishReady(current.assessmentId, snapshot)
+    if (!isTerminal(snapshot)) this.startMonitor(session, current.assessmentId, snapshot.assessmentRevision)
+    return ready
   }
 
   /** Open metadata for one Evidence Link retained by the exact Finding Detail. */
@@ -904,6 +924,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
       contextId: request.securityAssuranceWorkbenchContextId,
       assessmentId: request.assessmentId,
       abort: new AbortController(),
+      monitorGeneration: 0,
       evidenceExpiryTimer: undefined,
       evidenceAbort: undefined,
     }
@@ -932,8 +953,22 @@ export class SecurityAssuranceWorkbenchController extends Service {
     if (snapshot === undefined) return this.state
 
     const ready = this.publishReady(assessmentId, snapshot)
-    if (!isTerminal(snapshot)) void this.monitor(session, assessmentId, snapshot.assessmentRevision)
+    if (!isTerminal(snapshot)) this.startMonitor(session, assessmentId, snapshot.assessmentRevision)
     return ready
+  }
+
+  /** Resume exactly the frozen BLOCKED Assessment revision projected by the Service. */
+  async resumeAssessment(
+    reason: WorkbenchAssessmentCommandReasonV1,
+  ): Promise<SecurityAssuranceWorkbenchStateV1> {
+    return this.submitAssessmentCommand('RESUME', reason)
+  }
+
+  /** Request cancellation of exactly the Assessment revision projected by the Service. */
+  async cancelAssessment(
+    reason: WorkbenchAssessmentCommandReasonV1,
+  ): Promise<SecurityAssuranceWorkbenchStateV1> {
+    return this.submitAssessmentCommand('CANCEL', reason)
   }
 
   /** Erase the authority context and every retained Assessment payload. */
@@ -961,9 +996,10 @@ export class SecurityAssuranceWorkbenchController extends Service {
     session: LiveAssessmentSession,
     assessmentId: AssessmentId,
     firstRevision: number,
+    monitorGeneration: number,
   ): Promise<void> {
     let afterRevision = firstRevision
-    while (this.isActive(session)) {
+    while (this.isActive(session) && session.monitorGeneration === monitorGeneration) {
       let waited: RemoteResult<SecurityResult<AssessmentRevisionSignalV1>>
       try {
         waited = await this.ownerCtx.remote.securityAssuranceWorkbench.waitForAssessmentRevision(
@@ -980,7 +1016,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
         this.failClient(session, error)
         return
       }
-      if (!this.isActive(session)) return
+      if (!this.isActive(session) || session.monitorGeneration !== monitorGeneration) return
       const signal = this.readRemoteResult(session, waited)
       if (signal === undefined) return
       if (signal.kind === 'TIMED_OUT') continue
@@ -996,7 +1032,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
         this.failClient(session, error)
         return
       }
-      if (!this.isActive(session)) return
+      if (!this.isActive(session) || session.monitorGeneration !== monitorGeneration) return
       const snapshot = this.readRemoteResult(session, refreshed)
       if (snapshot === undefined) return
       if (snapshot.assessmentRevision <= afterRevision) {
@@ -1014,6 +1050,141 @@ export class SecurityAssuranceWorkbenchController extends Service {
         return
       }
     }
+  }
+
+  private startMonitor(
+    session: LiveAssessmentSession,
+    assessmentId: AssessmentId,
+    assessmentRevision: number,
+  ): void {
+    const monitorGeneration = ++session.monitorGeneration
+    void this.monitor(session, assessmentId, assessmentRevision, monitorGeneration)
+  }
+
+  private async submitAssessmentCommand(
+    command: 'RESUME' | 'CANCEL',
+    reason: WorkbenchAssessmentCommandReasonV1,
+  ): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'READY'
+      || current.assessmentCommand.kind !== 'IDLE'
+    ) return current
+    const actionKind = command === 'RESUME' ? 'RESUME_ASSESSMENT' : 'CANCEL_ASSESSMENT'
+    const action = current.snapshot.availableActions.find(candidate => candidate.kind === actionKind)
+    const normalizedReason = normalizeAssessmentCommandReason(reason)
+    if (
+      action === undefined
+      || action.expectedAssessmentRevision !== current.snapshot.assessmentRevision
+      || !isAssessmentCommandReason(normalizedReason)
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'ASSESSMENT_COMMAND_ACTION_MISMATCH',
+        message: 'The Assessment command does not match a current Service-projected action.',
+        retryable: false,
+      })
+    }
+
+    let idempotencyKey: string
+    try {
+      idempotencyKey = nextAssessmentCommandIdempotencyKey(command)
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    session.monitorGeneration += 1
+    this.publishReady(
+      current.assessmentId,
+      current.snapshot,
+      current.findings,
+      Object.freeze({ kind: 'SUBMITTING', command }),
+    )
+
+    const request = {
+      schemaVersion: 1 as const,
+      assessmentId: current.assessmentId,
+      expectedAssessmentRevision: action.expectedAssessmentRevision,
+      idempotencyKey,
+      reason: normalizedReason,
+    }
+    let receipt: AssessmentResumeReceiptV1 | AssessmentCancellationReceiptV1 | undefined
+    try {
+      if (command === 'RESUME') {
+        const result = await this.ownerCtx.remote.securityAssuranceWorkbench.resumeAssessment(
+          session.contextId,
+          request,
+          session.abort.signal,
+        )
+        receipt = this.readRemoteResult(session, result)
+      } else {
+        const result = await this.ownerCtx.remote.securityAssuranceWorkbench.cancelAssessment(
+          session.contextId,
+          request,
+          session.abort.signal,
+        )
+        receipt = this.readRemoteResult(session, result)
+      }
+    } catch (error) {
+      if (!this.isActiveAssessmentCommand(session, current.snapshot.assessmentRevision, command)) {
+        return this.state
+      }
+      return this.failClient(session, error)
+    }
+    if (!this.isActiveAssessmentCommand(session, current.snapshot.assessmentRevision, command)) {
+      return this.state
+    }
+    if (
+      receipt === undefined
+      || !matchesAssessmentCommandReceipt(
+        receipt,
+        command,
+        current.snapshot,
+        action.expectedAssessmentRevision,
+        idempotencyKey,
+      )
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'ASSESSMENT_COMMAND_PROTOCOL_VIOLATION',
+        message: 'The Assessment command receipt does not match the submitted Service action.',
+        retryable: false,
+      })
+    }
+
+    let refreshed: RemoteResult<SecurityResult<AssessmentSnapshotV1>>
+    try {
+      refreshed = await this.ownerCtx.remote.securityAssuranceWorkbench.getAssessment(
+        session.contextId,
+        { schemaVersion: 1, assessmentId: current.assessmentId },
+        session.abort.signal,
+      )
+    } catch (error) {
+      if (!this.isActiveAssessmentCommand(session, current.snapshot.assessmentRevision, command)) {
+        return this.state
+      }
+      return this.failClient(session, error)
+    }
+    if (!this.isActiveAssessmentCommand(session, current.snapshot.assessmentRevision, command)) {
+      return this.state
+    }
+    const snapshot = this.readRemoteResult(session, refreshed)
+    if (snapshot === undefined) return this.state
+    if (
+      snapshot.assessmentId !== current.assessmentId
+      || snapshot.assessmentRevision < receipt.assessmentRevision
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'ASSESSMENT_COMMAND_PROTOCOL_VIOLATION',
+        message: 'The refreshed Assessment does not include the committed command revision.',
+        retryable: false,
+      })
+    }
+    const ready = this.publishReady(current.assessmentId, snapshot)
+    if (!isTerminal(snapshot)) this.startMonitor(session, current.assessmentId, snapshot.assessmentRevision)
+    return ready
   }
 
   private readRemoteResult<T>(
@@ -1035,12 +1206,14 @@ export class SecurityAssuranceWorkbenchController extends Service {
     assessmentId: AssessmentId,
     snapshot: AssessmentSnapshotV1,
     findings: WorkbenchFindingsStateV1 = FINDINGS_NOT_LOADED,
+    assessmentCommand: WorkbenchAssessmentCommandStateV1 = ASSESSMENT_COMMAND_IDLE,
   ): SecurityAssuranceWorkbenchStateV1 {
     const ready = Object.freeze({
       kind: 'READY' as const,
       assessmentId,
       snapshot,
       findings,
+      assessmentCommand,
     })
     this.publish(ready)
     return ready
@@ -1162,6 +1335,18 @@ export class SecurityAssuranceWorkbenchController extends Service {
       && this.state.findings.kind === 'DETAIL_READY'
       && this.state.findings.detail.recordId === recordId
       && this.state.findings.riskDecisionSubmission.kind === 'SUBMITTING'
+  }
+
+  private isActiveAssessmentCommand(
+    session: LiveAssessmentSession,
+    assessmentRevision: number,
+    command: 'RESUME' | 'CANCEL',
+  ): boolean {
+    return this.isActive(session)
+      && this.state.kind === 'READY'
+      && this.state.snapshot.assessmentRevision === assessmentRevision
+      && this.state.assessmentCommand.kind === 'SUBMITTING'
+      && this.state.assessmentCommand.command === command
   }
 
   private scheduleEvidenceExpiry(
@@ -1409,6 +1594,49 @@ function nextRiskDecisionIdempotencyKey(): string {
   return `workbench-risk-decision:${globalThis.crypto.randomUUID()}`
 }
 
+function normalizeAssessmentCommandReason(
+  reason: WorkbenchAssessmentCommandReasonV1,
+): WorkbenchAssessmentCommandReasonV1 {
+  return Object.freeze({
+    code: reason.code.trim(),
+    summary: reason.summary.trim(),
+  })
+}
+
+function isAssessmentCommandReason(reason: WorkbenchAssessmentCommandReasonV1): boolean {
+  return /^[A-Z][A-Z0-9_]{0,63}$/.test(reason.code)
+    && reason.summary.length >= 1
+    && reason.summary.length <= 512
+}
+
+function nextAssessmentCommandIdempotencyKey(command: 'RESUME' | 'CANCEL'): string {
+  if (typeof globalThis.crypto?.randomUUID !== 'function') {
+    throw new Error('The browser cannot generate an Assessment command idempotency identity.')
+  }
+  return `workbench-${command.toLowerCase()}:${globalThis.crypto.randomUUID()}`
+}
+
+function matchesAssessmentCommandReceipt(
+  receipt: AssessmentResumeReceiptV1 | AssessmentCancellationReceiptV1,
+  command: 'RESUME' | 'CANCEL',
+  snapshot: AssessmentSnapshotV1,
+  expectedAssessmentRevision: number,
+  idempotencyKey: string,
+): boolean {
+  if (
+    receipt.assessmentId !== snapshot.assessmentId
+    || receipt.assessmentRevision <= expectedAssessmentRevision
+    || receipt.idempotencyKey !== idempotencyKey
+  ) return false
+  if (command === 'RESUME') {
+    return receipt.operation === 'resume_assessment'
+      && receipt.state === 'CREATED'
+      && snapshot.state === 'BLOCKED'
+  }
+  return receipt.operation === 'cancel_assessment'
+    && receipt.acceptedState === snapshot.state
+}
+
 function remoteFailure(error: RemoteFailure): WorkbenchClientFailureV1 {
   return Object.freeze({
     source: 'TRANSPORT',
@@ -1486,6 +1714,7 @@ function installWorkbenchUi(
         hooks: { presentation, assessment },
         backToFindingDetail: () => { controller.backToFindingDetail() },
         backToFindingList: () => { controller.backToFindingList() },
+        cancelAssessment: reason => { void controller.cancelAssessment(reason) },
         closeWorkbench: () => { presentation.hide() },
         discloseEvidence: () => { void controller.discloseEvidence() },
         hideEvidenceDisclosure: () => { controller.hideEvidenceDisclosure() },
@@ -1493,6 +1722,7 @@ function installWorkbenchUi(
         loadMoreFindings: () => { void controller.loadMoreFindings() },
         openFindings: () => { void controller.openFindings() },
         recordRiskDecision: submission => { void controller.recordRiskDecision(submission) },
+        resumeAssessment: reason => { void controller.resumeAssessment(reason) },
         selectAssessment: assessmentId => { void controller.selectAssessment(assessmentId) },
         selectEvidence: artifactId => { void controller.selectEvidence(artifactId) },
         selectFinding: recordId => { void controller.selectFinding(recordId) },

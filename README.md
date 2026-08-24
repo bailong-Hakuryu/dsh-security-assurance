@@ -33,7 +33,7 @@ This repository is under active vertical-slice development, not at the
   `getAssessment`, revision-bound Finding queries, strict metadata-only
   `getEvidenceView`, separate expiring `discloseEvidence`, bounded
   `waitForAssessmentRevision`, and revision-bound, idempotent
-  `recordRiskDecision` without putting a Principal, permissions, or Security
+  `recordRiskDecision`, `resumeAssessment`, and `cancelAssessment` without putting a Principal, permissions, or Security
   Invocation on the wire;
 - a package-owned `dsh-security-assurance/client` browser entry that mounts the
   generated Remote contribution and provides one transient
@@ -50,7 +50,12 @@ This repository is under active vertical-slice development, not at the
   `sidebar.footer.action` and a responsive Assessment surface at
   `shell.overlay`; the browser renders Service-projected state, Coverage,
   Verdict, available actions, bounded Evidence disclosure, and the governed
-  Risk Decision form without accepting a browser-authored decision-maker;
+  Risk Decision form without accepting a browser-authored decision-maker. A
+  `BLOCKED` Snapshot also carries bounded recovery metadata for the durable
+  blocker, affected obligations, retained Evidence, required recovery
+  condition, unreported execution budget, and possible Coverage
+  Reconciliation; Resume and Cancel forms exist only when the corresponding
+  Service action is projected;
 - exact Git revision, Change, and Workspace Snapshot Subject selectors;
 - bounded content-addressed Subject materialization below
   `$DSH_HOME/security-assurance/subjects`, with canonical manifests and no
@@ -375,7 +380,7 @@ fails closed, and the dormant bundle row must not be enabled for an anonymous
 LAN deployment.
 
 The generated Host contribution is published at `./typert`; the generated
-Client contribution is published at `./remote`. All eight operations use strict
+Client contribution is published at `./remote`. All ten operations use strict
 generated request/result codecs. Cancellation is forwarded to the root Service,
 mutation retries retain the caller's original idempotency key, and Adapter
 disposal withdraws its lookup and Remote Service without altering Assessments
@@ -383,10 +388,11 @@ or the root plugin.
 
 The package also publishes a Harness-discoverable `./client` entry. It mounts
 `./remote` through `ctx.remote.$mount()` and provides the browser-local
-`ctx.securityAssuranceWorkbench` Controller with sixteen public operations:
+`ctx.securityAssuranceWorkbench` Controller with eighteen public operations:
 `openAssessmentSelection`, `loadMoreAssessments`, `selectAssessment`,
 `openAssessment`, `openFindings`, `loadMoreFindings`, `selectFinding`,
-`backToFindingList`, `recordRiskDecision`, `selectEvidence`, `discloseEvidence`,
+`backToFindingList`, `recordRiskDecision`, `resumeAssessment`, `cancelAssessment`,
+`selectEvidence`, `discloseEvidence`,
 `hideEvidenceDisclosure`, `backToFindingDetail`, `closeAssessment`, `getState`,
 and `subscribe`. The Host
 passes its current opaque authority-context ID to `openAssessmentSelection`;

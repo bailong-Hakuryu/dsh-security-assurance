@@ -99,6 +99,10 @@ async function harness(strictTypert = false): Promise<{
       principalId: 'workbench-disclosure-reviewer',
       permissions: ['assessment:read', 'evidence:disclose:validation-review'],
     }],
+    [authorityContextId('workbench-session-cancellation-operator'), {
+      principalId: 'workbench-cancellation-operator',
+      permissions: ['assessment:read', 'assessment:cancel'],
+    }],
   ])
   const remoteFiber = await ctx.plugin(SecurityAssuranceWorkbenchRemote, {
     async resolveAuthorityContext(contextId: WorkbenchAuthorityContextId) {
@@ -578,6 +582,18 @@ describe('Security Assurance Workbench Remote', () => {
       value: {
         assessmentId,
         state: 'BLOCKED',
+        blockedRecovery: {
+          blocker: {
+            code: 'RISK_DECISION_WINDOW',
+            phase: 'RISK_DECISION',
+            interruption: 'GOVERNANCE_HOLD',
+          },
+          evidence: { status: 'RETAINED', publishedArtifactCount: expect.any(Number) },
+          recovery: {
+            requiredCondition: 'RISK_DECISION_REQUIRED',
+            remainingExecutionBudget: { status: 'NOT_REPORTED' },
+          },
+        },
         availableActions: [{
           kind: 'RECORD_RISK_DECISION',
           finding: { recordRevision: 1 },
@@ -601,6 +617,50 @@ describe('Security Assurance Workbench Remote', () => {
       },
     })).rejects.toMatchObject({ code: 'arguments-invalid' })
     expect(resolvedContextIds).toHaveLength(1)
+  })
+
+  it('commits a cancellation request through the authenticated Remote without claiming terminal cancellation', async () => {
+    const { ctx, assessmentId } = await harness()
+    const authorityId = authorityContextId('workbench-session-cancellation-operator')
+    const snapshot = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getAssessment',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1, assessmentId },
+      },
+    }) as SecurityResult<AssessmentSnapshotV1>
+    if (!snapshot.ok) throw new Error(`remote query failed: ${snapshot.error.code}`)
+    const action = snapshot.value.availableActions.find(candidate =>
+      candidate.kind === 'CANCEL_ASSESSMENT')
+    if (action?.kind !== 'CANCEL_ASSESSMENT') throw new Error('Cancel action was not projected')
+
+    const receipt = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'cancelAssessment',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          schemaVersion: 1,
+          assessmentId,
+          expectedAssessmentRevision: action.expectedAssessmentRevision,
+          idempotencyKey: 'workbench-cancel-blocked-v1',
+          reason: {
+            code: 'OPERATOR_CANCEL',
+            summary: 'Cancel the blocked assessment after retaining all published Evidence.',
+          },
+        },
+      },
+    })
+    expect(receipt).toMatchObject({
+      ok: true,
+      value: {
+        operation: 'cancel_assessment',
+        assessmentId,
+        assessmentRevision: action.expectedAssessmentRevision + 1,
+        acceptedState: 'BLOCKED',
+      },
+    })
   })
 
   it('records one revision-bound Risk Decision and exposes the same Service truth', async () => {

@@ -129,10 +129,55 @@ export function publicAssessmentSnapshot(
       digest: record.contract.policy.digest,
     },
     coverage: record.coverage,
+    blockedRecovery: projectBlockedRecovery(record),
     availableActions,
     verdict: record.verdict,
     seal: record.seal,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+  }
+}
+
+function projectBlockedRecovery(
+  record: InternalAssessmentRecordV1,
+): AssessmentSnapshotV1['blockedRecovery'] {
+  if (record.state !== 'BLOCKED') return null
+  if (record.failureCode === null) {
+    throw new TypeError('BLOCKED Assessment has no durable failure code')
+  }
+  const riskDecision = record.failureCode === 'RISK_DECISION_WINDOW'
+  const hostRestart = record.failureCode === 'HOST_RESTART_DURING_EVALUATION'
+  const coverageReconciliationRequired = record.coverage.status === 'GAP'
+  return {
+    schemaVersion: 1,
+    blocker: {
+      code: record.failureCode,
+      phase: riskDecision ? 'RISK_DECISION' : 'ASSESSMENT_EXECUTION',
+      interruption: riskDecision
+        ? 'GOVERNANCE_HOLD'
+        : hostRestart ? 'INTERRUPTED' : 'FAILED',
+      affectedObligations: record.coverage.resolutions
+        .filter(resolution => resolution.state === 'GAP')
+        .map(resolution => ({
+          obligationId: resolution.obligationId,
+          reason: resolution.reason,
+        })),
+    },
+    evidence: {
+      status: 'RETAINED',
+      publishedArtifactCount: record.riskDecisionWindow?.evidenceReceipts.length ?? null,
+    },
+    recovery: {
+      requiredCondition: riskDecision
+        ? 'RISK_DECISION_REQUIRED'
+        : record.failureCode === 'ASSESSMENT_EXECUTION_FAILED' || hostRestart
+          ? 'EXPLICIT_RESUME_REQUIRED'
+          : 'EXTERNAL_INTERVENTION_REQUIRED',
+      remainingExecutionBudget: { status: 'NOT_REPORTED' },
+      coverageReconciliation: {
+        required: coverageReconciliationRequired,
+        possibleVerdict: coverageReconciliationRequired ? 'INDETERMINATE' : null,
+      },
+    },
   }
 }
