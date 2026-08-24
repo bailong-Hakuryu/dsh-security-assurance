@@ -195,8 +195,14 @@ const typertContribution = await import('dsh-security-assurance/typert')
 const clientRemoteContribution = await import('dsh-security-assurance/remote')
 if (
   typeof workbenchRemote.default !== 'function'
-  || typertContribution.TYPERT?.invocations?.length !== 10
-  || clientRemoteContribution.default?.descriptors?.length !== 10
+  || typertContribution.TYPERT?.invocations?.length !== 13
+    || clientRemoteContribution.default?.descriptors?.length !== 13
+    || !clientRemoteContribution.default.descriptors.some(descriptor =>
+      descriptor.method === 'listRepositories')
+    || !clientRemoteContribution.default.descriptors.some(descriptor =>
+      descriptor.method === 'getCatalog')
+    || !clientRemoteContribution.default.descriptors.some(descriptor =>
+      descriptor.method === 'startAssessment')
   || !clientRemoteContribution.default.descriptors.some(descriptor =>
     descriptor.method === 'listAssessments')
   || !clientRemoteContribution.default.descriptors.some(descriptor =>
@@ -252,7 +258,13 @@ if (
   || workbenchClient.inject[1] !== 'slots'
   || workbenchClient.inject[2] !== 'locale'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController !== 'function'
-  || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.loadMoreAssessments !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.loadMoreAssessments !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openRepositories !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectRepository !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.requestStartPreflight !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.cancelStartPreflight !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.confirmStartAssessment !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.backToAssessmentSelection !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openFindings !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.loadMoreFindings !== 'function'
   || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectFinding !== 'function'

@@ -12,6 +12,7 @@ import {
   getBundleManifestRequestSchema,
   getEvidenceViewRequestSchema,
   getFindingRequestSchema,
+  getCatalogRequestSchema,
   getRepositoryRequestSchema,
   getHealthRequestSchema,
   listFindingsRequestSchema,
@@ -53,6 +54,7 @@ import type {
   GetBundleManifestRequest,
   GetEvidenceViewRequest,
   GetFindingRequest,
+  GetCatalogRequest,
   GetHealthRequest,
   GetRepositoryRequest,
   InvocationOptions,
@@ -73,6 +75,7 @@ import type {
   RiskDecisionReceiptV1,
   RuntimeHealthSnapshot,
   SecurityAssuranceSubmissionV1,
+  SecurityCatalogSnapshotV1,
   SecurityInvocation,
   SecurityResult,
   StartAssessmentRequest,
@@ -100,6 +103,7 @@ import {
 } from './internal/control-plane-repository-binding.ts'
 import type { TrustedCallerChannel } from './internal/authority.ts'
 import { AnalyzerRegistry } from './internal/analyzer-registry.ts'
+import { canonicalJson } from './internal/canonical.ts'
 import { deepFreeze } from './internal/freeze.ts'
 import {
   EvidenceViewModule,
@@ -136,6 +140,7 @@ import {
   RiskDecisionModule,
   RiskDecisionPolicyError,
 } from './internal/risk-decision.ts'
+import { buildSecurityCatalog } from './internal/security-catalog.ts'
 import {
   assembleSealedArtifacts,
   publishSealedArtifacts,
@@ -257,6 +262,18 @@ function assessmentSelectionIsConsistent(
     && target.kind === 'change'
     && subject.baseCommit === target.baseCommit
     && subject.headCommit === target.headCommit
+}
+
+function requestedStrongerControlsAreValid(controlIds: readonly string[]): boolean {
+  return controlIds.every(controlId => (
+    controlId === RISK_DECISION_WINDOW_CONTROL_ID
+    || controlId === CRITICAL_BREAK_GLASS_CONTROL_ID
+  ))
+    && new Set(controlIds).size === controlIds.length
+    && (
+      !controlIds.includes(CRITICAL_BREAK_GLASS_CONTROL_ID)
+      || controlIds.includes(RISK_DECISION_WINDOW_CONTROL_ID)
+    )
 }
 
 export interface Config {
@@ -409,6 +426,77 @@ export class SecurityAssuranceService extends Service {
       const persistence = await this.ready
       return deepFreeze({ ok: true, value: buildRuntimeHealth(persistence !== undefined && !this.disposed) })
     } catch {
+      return failure('INTERNAL', 'Security Assurance could not complete the operation.', true)
+    }
+  }
+
+  /** Return effective capability and an optional digest-bound Start Preflight. */
+  async getCatalog(
+    invocation: SecurityInvocation,
+    request: GetCatalogRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<SecurityCatalogSnapshotV1>> {
+    try {
+      const authority = this.authorityResolver.authority(invocation)
+      if (authority === undefined || !authority.permissions.has('repository:read')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to read the Security Catalog.')
+      }
+      const interrupted = interruption<SecurityCatalogSnapshotV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = getCatalogRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match getCatalog schema version 1.')
+      }
+      if (
+        parsed.data.proposedStart !== undefined
+        && !authority.permissions.has('assessment:start')
+      ) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to preflight Assessment start.')
+      }
+      if (
+        parsed.data.proposedStart !== undefined
+        && (
+          !assessmentSelectionIsConsistent(
+            parsed.data.proposedStart.subject,
+            parsed.data.proposedStart.assessmentMode,
+            parsed.data.proposedStart.target,
+          )
+          || !requestedStrongerControlsAreValid(
+            parsed.data.proposedStart.requestedStrongerControlIds,
+          )
+        )
+      ) {
+        return failure('INVALID_REQUEST', 'The proposed Assessment selection is inconsistent.')
+      }
+      const persistence = await this.ready
+      if (persistence === undefined || this.disposed) {
+        return failure('UNAVAILABLE', 'The Security Catalog is unavailable while the private store is offline.', true)
+      }
+      const repositoryId = parsed.data.proposedStart?.repositoryId ?? parsed.data.repositoryId
+      const repository = repositoryId === undefined
+        ? undefined
+        : persistence.resolveRepository(repositoryId)
+      if (repositoryId !== undefined && repository === undefined) {
+        return failure('NOT_FOUND', 'The Repository does not exist.')
+      }
+      const evaluatedAt = new Date().toISOString()
+      const value = buildSecurityCatalog({
+        repository: repository?.snapshot ?? null,
+        proposedStart: parsed.data.proposedStart,
+        portfolioForMode: mode => repository === undefined
+          ? []
+          : this.analyzerRegistry.previewSelection(
+              repository.snapshot.bindings.policyId,
+              mode,
+              repository.snapshot.bindings.platform,
+              evaluatedAt,
+            ),
+      })
+      return deepFreeze({ ok: true, value })
+    } catch (error) {
+      if (error instanceof SecurityPersistenceError) {
+        return failure('UNAVAILABLE', 'The private Security Assurance store is unavailable.', true)
+      }
       return failure('INTERNAL', 'Security Assurance could not complete the operation.', true)
     }
   }
@@ -618,20 +706,7 @@ export class SecurityAssuranceService extends Service {
       )) {
         return failure('INVALID_REQUEST', 'The request does not match startAssessment schema version 1.')
       }
-      if (
-        parsed.data.requestedStrongerControlIds.some(
-          controlId => (
-            controlId !== RISK_DECISION_WINDOW_CONTROL_ID
-            && controlId !== CRITICAL_BREAK_GLASS_CONTROL_ID
-          ),
-        )
-        || new Set(parsed.data.requestedStrongerControlIds).size
-          !== parsed.data.requestedStrongerControlIds.length
-        || (
-          parsed.data.requestedStrongerControlIds.includes(CRITICAL_BREAK_GLASS_CONTROL_ID)
-          && !parsed.data.requestedStrongerControlIds.includes(RISK_DECISION_WINDOW_CONTROL_ID)
-        )
-      ) {
+      if (!requestedStrongerControlsAreValid(parsed.data.requestedStrongerControlIds)) {
         return failure('INVALID_REQUEST', 'The request contains an unknown or duplicate stronger control.')
       }
       const persistence = await this.ready
@@ -659,6 +734,38 @@ export class SecurityAssuranceService extends Service {
       }
 
       const qualificationEvaluationInstant = new Date().toISOString()
+      if (parsed.data.startPreflightDigest !== undefined) {
+        const catalog = buildSecurityCatalog({
+          repository: repository.snapshot,
+          proposedStart: {
+            schemaVersion: parsed.data.schemaVersion,
+            repositoryId: parsed.data.repositoryId,
+            subject: parsed.data.subject,
+            assessmentMode: parsed.data.assessmentMode,
+            assessmentProfileId: parsed.data.assessmentProfileId,
+            target: parsed.data.target,
+            requestedStrongerControlIds: parsed.data.requestedStrongerControlIds,
+          },
+          portfolioForMode: mode => this.analyzerRegistry.previewSelection(
+            repository.snapshot.bindings.policyId,
+            mode,
+            repository.snapshot.bindings.platform,
+            qualificationEvaluationInstant,
+          ),
+        })
+        if (
+          catalog.startPreflight === null
+          || !catalog.startPreflight.admissible
+          || canonicalJson(catalog.startPreflight.proposalDigest)
+            !== canonicalJson(parsed.data.startPreflightDigest)
+        ) {
+          return failure(
+            'CONFLICT',
+            'The Start Preflight no longer matches the effective Assessment contract; request a new proposal.',
+            true,
+          )
+        }
+      }
       const analyzerPortfolio = this.analyzerRegistry.freezeSelection(
         repository.snapshot.bindings.policyId,
         parsed.data.assessmentMode,

@@ -21,6 +21,7 @@ import type {
   AssessmentListPageV1,
   AssessmentRevisionSignalV1,
   AssessmentResumeReceiptV1,
+  AssessmentReceiptV1,
   AssessmentSnapshotV1,
   DigestEnvelopeV1,
   FindingDetailViewV1,
@@ -29,7 +30,11 @@ import type {
   PublicSecurityError,
   RiskDecisionKindV1,
   RiskDecisionReceiptV1,
+  RepositorySnapshotV1,
+  SecurityCatalogSnapshotV1,
   SecurityResult,
+  StartAssessmentSelectionV1,
+  StartPreflightV1,
 } from '../contracts.ts'
 import type {
   WorkbenchAuthorityContextId,
@@ -109,6 +114,11 @@ export type WorkbenchAssessmentCommandStateV1 =
   | { readonly kind: 'IDLE' }
   | { readonly kind: 'SUBMITTING'; readonly command: 'RESUME' | 'CANCEL' }
 
+/** Non-sensitive progress for confirming one exact Start Preflight. */
+export type WorkbenchStartSubmissionStateV1 =
+  | { readonly kind: 'IDLE' }
+  | { readonly kind: 'SUBMITTING' }
+
 /** Non-sensitive command progress retained beside one exact Finding revision. */
 export type WorkbenchRiskDecisionSubmissionStateV1 =
   | { readonly kind: 'IDLE' }
@@ -182,6 +192,28 @@ export type SecurityAssuranceWorkbenchStateV1 =
     readonly assessments: readonly AssessmentListItemV1[]
     readonly nextCursor: string
   }
+  | { readonly kind: 'REPOSITORIES_LOADING' }
+  | {
+    readonly kind: 'REPOSITORIES_READY'
+    readonly repositories: readonly RepositorySnapshotV1[]
+    readonly truncated: boolean
+  }
+  | {
+    readonly kind: 'CATALOG_LOADING'
+    readonly repository: RepositorySnapshotV1
+  }
+  | {
+    readonly kind: 'PREFLIGHT_LOADING'
+    readonly repository: RepositorySnapshotV1
+    readonly catalog: SecurityCatalogSnapshotV1
+  }
+  | {
+    readonly kind: 'WIZARD_READY'
+    readonly repository: RepositorySnapshotV1
+    readonly catalog: SecurityCatalogSnapshotV1
+    readonly startPreflight: StartPreflightV1 | null
+    readonly startSubmission: WorkbenchStartSubmissionStateV1
+  }
   | { readonly kind: 'LOADING'; readonly assessmentId: AssessmentId }
   | {
     readonly kind: 'READY'
@@ -216,6 +248,7 @@ const FINDINGS_NOT_LOADED: WorkbenchFindingsStateV1 = Object.freeze({ kind: 'NOT
 const EVIDENCE_NOT_LOADED: WorkbenchEvidenceStateV1 = Object.freeze({ kind: 'NOT_LOADED' })
 const RISK_DECISION_IDLE: WorkbenchRiskDecisionSubmissionStateV1 = Object.freeze({ kind: 'IDLE' })
 const ASSESSMENT_COMMAND_IDLE: WorkbenchAssessmentCommandStateV1 = Object.freeze({ kind: 'IDLE' })
+const START_SUBMISSION_IDLE: WorkbenchStartSubmissionStateV1 = Object.freeze({ kind: 'IDLE' })
 const LONG_POLL_TIMEOUT_MS = 25_000
 
 /**
@@ -314,6 +347,221 @@ export class SecurityAssuranceWorkbenchController extends Service {
     return this.publishSelection({
       ...page,
       assessments: [...current.assessments, ...page.assessments],
+    })
+  }
+
+  /** Open the authority-visible Repository Registry from the current Workbench session. */
+  async openRepositories(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    if (session === undefined) return this.state
+    session.monitorGeneration += 1
+    this.evidenceRequestGeneration += 1
+    this.cancelEvidenceRequest(session)
+    this.clearEvidenceExpiry(session)
+    session.assessmentId = undefined
+    this.publish(Object.freeze({ kind: 'REPOSITORIES_LOADING' }))
+    let result: RemoteResult<SecurityResult<import('../contracts.ts').RepositoryListSnapshotV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.listRepositories(
+        session.contextId,
+        { schemaVersion: 1, limit: 100 },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (!this.isActive(session) || this.state.kind !== 'REPOSITORIES_LOADING') return this.state
+    const repositories = this.readRemoteResult(session, result)
+    if (repositories === undefined) return this.state
+    const ready = Object.freeze({
+      kind: 'REPOSITORIES_READY' as const,
+      repositories: Object.freeze([...repositories.repositories]),
+      truncated: repositories.truncated,
+    })
+    this.publish(ready)
+    return ready
+  }
+
+  /** Resolve the repository-specific Catalog before accepting any wizard selection. */
+  async selectRepository(repositoryId: RepositorySnapshotV1['repositoryId']): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (session === undefined || current.kind !== 'REPOSITORIES_READY') return current
+    const repository = current.repositories.find(candidate => candidate.repositoryId === repositoryId)
+    if (repository === undefined || repository.state !== 'ENABLED') {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'REPOSITORY_NOT_STARTABLE',
+        message: 'The Repository is not an enabled authority-projected choice.',
+        retryable: false,
+      })
+    }
+    this.publish(Object.freeze({ kind: 'CATALOG_LOADING', repository }))
+    let result: RemoteResult<SecurityResult<SecurityCatalogSnapshotV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.getCatalog(
+        session.contextId,
+        { schemaVersion: 1, repositoryId },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (!this.isActive(session) || this.state.kind !== 'CATALOG_LOADING') return this.state
+    const catalog = this.readRemoteResult(session, result)
+    if (catalog === undefined) return this.state
+    if (
+      catalog.repository?.repositoryId !== repositoryId
+      || catalog.repository.repositoryRevision !== repository.repositoryRevision
+      || catalog.startPreflight !== null
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'CATALOG_PROTOCOL_VIOLATION',
+        message: 'The Security Catalog is not bound to the selected Repository revision.',
+        retryable: false,
+      })
+    }
+    return this.publishWizard(repository, catalog, null)
+  }
+
+  /** Ask the Service to resolve an exact, immutable Start Preflight proposal. */
+  async requestStartPreflight(
+    selection: StartAssessmentSelectionV1,
+  ): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'WIZARD_READY'
+      || current.startSubmission.kind !== 'IDLE'
+      || selection.repositoryId !== current.repository.repositoryId
+      || !current.catalog.assessmentModes.some(mode => (
+        mode.assessmentMode === selection.assessmentMode && mode.support === 'SUPPORTED'
+      ))
+      || !current.catalog.assessmentProfiles.some(
+        profile => profile.assessmentProfileId === selection.assessmentProfileId,
+      )
+      || selection.requestedStrongerControlIds.some(controlId => (
+        !current.catalog.strongerControls.some(control => control.controlId === controlId)
+      ))
+    ) {
+      return current
+    }
+    this.publish(Object.freeze({
+      kind: 'PREFLIGHT_LOADING',
+      repository: current.repository,
+      catalog: current.catalog,
+    }))
+    let result: RemoteResult<SecurityResult<SecurityCatalogSnapshotV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.getCatalog(
+        session.contextId,
+        {
+          schemaVersion: 1,
+          repositoryId: current.repository.repositoryId,
+          proposedStart: selection,
+        },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (!this.isActive(session) || this.state.kind !== 'PREFLIGHT_LOADING') return this.state
+    const catalog = this.readRemoteResult(session, result)
+    if (catalog === undefined) return this.state
+    if (
+      catalog.repository?.repositoryId !== current.repository.repositoryId
+      || catalog.repository.repositoryRevision !== current.repository.repositoryRevision
+      || catalog.startPreflight === null
+      || JSON.stringify(catalog.startPreflight.selection) !== JSON.stringify(selection)
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'PREFLIGHT_PROTOCOL_VIOLATION',
+        message: 'The Start Preflight is not bound to the submitted wizard selection.',
+        retryable: false,
+      })
+    }
+    return this.publishWizard(current.repository, catalog, catalog.startPreflight)
+  }
+
+  /** Cancel the current proposal without mutating any Assessment. */
+  cancelStartPreflight(): SecurityAssuranceWorkbenchStateV1 {
+    const current = this.state
+    if (current.kind !== 'WIZARD_READY' || current.startSubmission.kind !== 'IDLE') return current
+    return this.publishWizard(current.repository, current.catalog, null)
+  }
+
+  /** Confirm the exact proposal digest, then open the committed Assessment Snapshot. */
+  async confirmStartAssessment(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'WIZARD_READY'
+      || current.startSubmission.kind !== 'IDLE'
+      || current.startPreflight === null
+      || !current.startPreflight.admissible
+    ) return current
+    let idempotencyKey: string
+    try {
+      idempotencyKey = nextStartAssessmentIdempotencyKey()
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    this.publishWizard(
+      current.repository,
+      current.catalog,
+      current.startPreflight,
+      Object.freeze({ kind: 'SUBMITTING' }),
+    )
+    let result: RemoteResult<SecurityResult<AssessmentReceiptV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.startAssessment(
+        session.contextId,
+        {
+          ...current.startPreflight.selection,
+          idempotencyKey,
+          startPreflightDigest: current.startPreflight.proposalDigest,
+        },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (
+      !this.isActive(session)
+      || this.state.kind !== 'WIZARD_READY'
+      || this.state.startSubmission.kind !== 'SUBMITTING'
+    ) return this.state
+    const receipt = this.readRemoteResult(session, result)
+    if (receipt === undefined) return this.state
+    if (
+      receipt.operation !== 'start_assessment'
+      || receipt.repositoryId !== current.repository.repositoryId
+      || receipt.repositoryRevision !== current.repository.repositoryRevision
+      || receipt.idempotencyKey !== idempotencyKey
+      || receipt.assessmentRevision !== 1
+      || receipt.state !== 'CREATED'
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'START_RECEIPT_PROTOCOL_VIOLATION',
+        message: 'The Assessment Receipt does not match the confirmed Start Preflight.',
+        retryable: false,
+      })
+    }
+    session.assessmentId = receipt.assessmentId
+    return this.loadAssessment(session, receipt.assessmentId)
+  }
+
+  /** Return to the authority-projected Assessment selector using the same Host context. */
+  async backToAssessmentSelection(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    if (session === undefined) return this.state
+    return this.openAssessmentSelection({
+      securityAssuranceWorkbenchContextId: session.contextId,
     })
   }
 
@@ -1219,6 +1467,23 @@ export class SecurityAssuranceWorkbenchController extends Service {
     return ready
   }
 
+  private publishWizard(
+    repository: RepositorySnapshotV1,
+    catalog: SecurityCatalogSnapshotV1,
+    startPreflight: StartPreflightV1 | null,
+    startSubmission: WorkbenchStartSubmissionStateV1 = START_SUBMISSION_IDLE,
+  ): SecurityAssuranceWorkbenchStateV1 {
+    const ready = Object.freeze({
+      kind: 'WIZARD_READY' as const,
+      repository,
+      catalog,
+      startPreflight,
+      startSubmission,
+    })
+    this.publish(ready)
+    return ready
+  }
+
   private failClient(
     session: LiveAssessmentSession,
     error: unknown,
@@ -1616,6 +1881,13 @@ function nextAssessmentCommandIdempotencyKey(command: 'RESUME' | 'CANCEL'): stri
   return `workbench-${command.toLowerCase()}:${globalThis.crypto.randomUUID()}`
 }
 
+function nextStartAssessmentIdempotencyKey(): string {
+  if (typeof globalThis.crypto?.randomUUID !== 'function') {
+    throw new Error('The browser cannot generate an Assessment start idempotency identity.')
+  }
+  return `workbench-start:${globalThis.crypto.randomUUID()}`
+}
+
 function matchesAssessmentCommandReceipt(
   receipt: AssessmentResumeReceiptV1 | AssessmentCancellationReceiptV1,
   command: 'RESUME' | 'CANCEL',
@@ -1712,18 +1984,24 @@ function installWorkbenchUi(
       locale: WORKBENCH_LOCALE_NAMESPACE,
       inject: (): WorkbenchOverlayInjected => ({
         hooks: { presentation, assessment },
+        backToAssessmentSelection: () => { void controller.backToAssessmentSelection() },
         backToFindingDetail: () => { controller.backToFindingDetail() },
         backToFindingList: () => { controller.backToFindingList() },
+        cancelStartPreflight: () => { controller.cancelStartPreflight() },
         cancelAssessment: reason => { void controller.cancelAssessment(reason) },
         closeWorkbench: () => { presentation.hide() },
+        confirmStartAssessment: () => { void controller.confirmStartAssessment() },
         discloseEvidence: () => { void controller.discloseEvidence() },
         hideEvidenceDisclosure: () => { controller.hideEvidenceDisclosure() },
         loadMoreAssessments: () => { void controller.loadMoreAssessments() },
         loadMoreFindings: () => { void controller.loadMoreFindings() },
         openFindings: () => { void controller.openFindings() },
+        openRepositories: () => { void controller.openRepositories() },
         recordRiskDecision: submission => { void controller.recordRiskDecision(submission) },
         resumeAssessment: reason => { void controller.resumeAssessment(reason) },
         selectAssessment: assessmentId => { void controller.selectAssessment(assessmentId) },
+        selectRepository: repositoryId => { void controller.selectRepository(repositoryId) },
+        requestStartPreflight: selection => { void controller.requestStartPreflight(selection) },
         selectEvidence: artifactId => { void controller.selectEvidence(artifactId) },
         selectFinding: recordId => { void controller.selectFinding(recordId) },
       }),

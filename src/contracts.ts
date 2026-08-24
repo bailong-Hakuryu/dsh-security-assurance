@@ -400,9 +400,8 @@ export const assessmentTargetSelectorV1Schema = z.discriminatedUnion('kind', [
 
 export type AssessmentTargetSelectorV1 = z.infer<typeof assessmentTargetSelectorV1Schema>
 
-export interface StartAssessmentRequest {
+export interface StartAssessmentSelectionV1 {
   readonly schemaVersion: 1
-  readonly idempotencyKey: string
   readonly repositoryId: RepositoryId
   readonly subject: AssessmentSubjectSourceV1
   readonly assessmentMode: AssessmentMode
@@ -414,6 +413,21 @@ export interface StartAssessmentRequest {
 export const RISK_DECISION_WINDOW_CONTROL_ID = 'security/risk-decision-window-v1' as const
 export const CRITICAL_BREAK_GLASS_CONTROL_ID = 'security/critical-break-glass-v1' as const
 
+export const startAssessmentSelectionV1Schema: z.ZodType<StartAssessmentSelectionV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  repositoryId: repositoryIdSchema,
+  subject: assessmentSubjectSourceV1Schema,
+  assessmentMode: assessmentModeSchema,
+  assessmentProfileId: assessmentProfileIdSchema,
+  target: assessmentTargetSelectorV1Schema,
+  requestedStrongerControlIds: z.array(boundedBindingId).max(16),
+})
+
+export interface StartAssessmentRequest extends StartAssessmentSelectionV1 {
+  readonly idempotencyKey: string
+  readonly startPreflightDigest?: DigestEnvelopeV1 | undefined
+}
+
 export const startAssessmentRequestSchema: z.ZodType<StartAssessmentRequest> = z.strictObject({
   schemaVersion: z.literal(1),
   idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
@@ -423,7 +437,180 @@ export const startAssessmentRequestSchema: z.ZodType<StartAssessmentRequest> = z
   assessmentProfileId: assessmentProfileIdSchema,
   target: assessmentTargetSelectorV1Schema,
   requestedStrongerControlIds: z.array(boundedBindingId).max(16),
+  startPreflightDigest: digestEnvelopeV1Schema.optional(),
 })
+
+export interface GetCatalogRequest {
+  readonly schemaVersion: 1
+  readonly repositoryId?: RepositoryId | undefined
+  readonly proposedStart?: StartAssessmentSelectionV1 | undefined
+}
+
+export const getCatalogRequestSchema: z.ZodType<GetCatalogRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  repositoryId: repositoryIdSchema.optional(),
+  proposedStart: startAssessmentSelectionV1Schema.optional(),
+}).superRefine((request, context) => {
+  if (
+    request.proposedStart !== undefined
+    && request.repositoryId !== undefined
+    && request.proposedStart.repositoryId !== request.repositoryId
+  ) {
+    context.addIssue({ code: 'custom', message: 'Catalog Repository and proposed start must match' })
+  }
+})
+
+export interface LocalizedLabelV1 {
+  readonly en: string
+  readonly zhCN: string
+}
+
+const localizedLabelV1Schema: z.ZodType<LocalizedLabelV1> = z.strictObject({
+  en: z.string().min(1).max(128),
+  zhCN: z.string().min(1).max(128),
+})
+
+export interface SecurityCatalogAssessmentModeV1 {
+  readonly assessmentMode: AssessmentMode
+  readonly label: LocalizedLabelV1
+  readonly targetKind: AssessmentTargetSelectorV1['kind']
+  readonly subjectKinds: readonly AssessmentSubjectSourceV1['kind'][]
+  readonly support: 'SUPPORTED' | 'UNSUPPORTED'
+  readonly limitations: readonly string[]
+}
+
+const securityCatalogAssessmentModeV1Schema: z.ZodType<SecurityCatalogAssessmentModeV1> = z.strictObject({
+  assessmentMode: assessmentModeSchema,
+  label: localizedLabelV1Schema,
+  targetKind: z.enum(['repository', 'change', 'targeted']),
+  subjectKinds: z.array(z.enum(['git_revision', 'change', 'workspace_snapshot'])).min(1).max(3),
+  support: z.enum(['SUPPORTED', 'UNSUPPORTED']),
+  limitations: z.array(z.string().min(1).max(512)).max(64),
+})
+
+export interface SecurityCatalogProfileV1 {
+  readonly assessmentProfileId: AssessmentProfileId
+  readonly label: LocalizedLabelV1
+  readonly maximumBudget: { readonly status: 'NOT_REPORTED' }
+  readonly limitations: readonly string[]
+}
+
+const securityCatalogProfileV1Schema: z.ZodType<SecurityCatalogProfileV1> = z.strictObject({
+  assessmentProfileId: assessmentProfileIdSchema,
+  label: localizedLabelV1Schema,
+  maximumBudget: z.strictObject({ status: z.literal('NOT_REPORTED') }),
+  limitations: z.array(z.string().min(1).max(512)).max(64),
+})
+
+export interface SecurityCatalogStrongerControlV1 {
+  readonly controlId: string
+  readonly label: LocalizedLabelV1
+  readonly requiresControlIds: readonly string[]
+}
+
+const securityCatalogStrongerControlV1Schema: z.ZodType<SecurityCatalogStrongerControlV1> = z.strictObject({
+  controlId: boundedBindingId,
+  label: localizedLabelV1Schema,
+  requiresControlIds: z.array(boundedBindingId).max(16),
+})
+
+export interface StartPreflightProviderV1 {
+  readonly providerId: string
+  readonly analyzerId: string
+  readonly analyzerVersion: string
+  readonly executionClass: 'PURE'
+  readonly eligibility: 'ELIGIBLE' | 'INELIGIBLE'
+  readonly reason: string | null
+  readonly coverageObligationIds: readonly string[]
+}
+
+const startPreflightProviderV1Schema: z.ZodType<StartPreflightProviderV1> = z.strictObject({
+  providerId: boundedBindingId,
+  analyzerId: boundedBindingId,
+  analyzerVersion: z.string().min(1).max(128),
+  executionClass: z.literal('PURE'),
+  eligibility: z.enum(['ELIGIBLE', 'INELIGIBLE']),
+  reason: z.string().min(1).max(128).nullable(),
+  coverageObligationIds: z.array(boundedBindingId).max(128),
+})
+
+export interface StartPreflightV1 {
+  readonly schemaVersion: 1
+  readonly repository: {
+    readonly repositoryId: RepositoryId
+    readonly repositoryRevision: number
+    readonly displayName: string
+  }
+  readonly selection: StartAssessmentSelectionV1
+  readonly effectivePolicyId: string
+  readonly effectiveProfileId: AssessmentProfileId
+  readonly providerComposition: readonly StartPreflightProviderV1[]
+  readonly dataEgress: {
+    readonly policyId: string
+    readonly destinationIds: readonly string[]
+    readonly categories: readonly ('NONE')[]
+  }
+  readonly evidenceProtection: { readonly policyId: string }
+  readonly maximumBudget: { readonly status: 'NOT_REPORTED' }
+  readonly unsupportedConditions: readonly string[]
+  readonly claimLimitations: readonly string[]
+  readonly coverageLimitations: readonly string[]
+  readonly admissible: boolean
+  readonly proposalDigest: DigestEnvelopeV1
+}
+
+export const startPreflightV1Schema: z.ZodType<StartPreflightV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  repository: z.strictObject({
+    repositoryId: repositoryIdSchema,
+    repositoryRevision: z.number().int().positive(),
+    displayName: z.string().min(1).max(128),
+  }),
+  selection: startAssessmentSelectionV1Schema,
+  effectivePolicyId: boundedBindingId,
+  effectiveProfileId: assessmentProfileIdSchema,
+  providerComposition: z.array(startPreflightProviderV1Schema).max(128),
+  dataEgress: z.strictObject({
+    policyId: boundedBindingId,
+    destinationIds: z.array(boundedBindingId).max(32),
+    categories: z.array(z.literal('NONE')).max(1),
+  }),
+  evidenceProtection: z.strictObject({ policyId: boundedBindingId }),
+  maximumBudget: z.strictObject({ status: z.literal('NOT_REPORTED') }),
+  unsupportedConditions: z.array(z.string().min(1).max(512)).max(64),
+  claimLimitations: z.array(z.string().min(1).max(512)).max(64),
+  coverageLimitations: z.array(z.string().min(1).max(512)).max(64),
+  admissible: z.boolean(),
+  proposalDigest: digestEnvelopeV1Schema,
+})
+
+export interface SecurityCatalogSnapshotV1 {
+  readonly schemaVersion: 1
+  readonly repository: RepositorySnapshotV1 | null
+  readonly assessmentModes: readonly SecurityCatalogAssessmentModeV1[]
+  readonly assessmentProfiles: readonly SecurityCatalogProfileV1[]
+  readonly strongerControls: readonly SecurityCatalogStrongerControlV1[]
+  readonly supportedEcosystemIds: readonly string[]
+  readonly supportMatrixReferences: readonly string[]
+  readonly startPreflight: StartPreflightV1 | null
+}
+
+export const securityCatalogSnapshotV1Schema: z.ZodType<SecurityCatalogSnapshotV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  repository: repositorySnapshotV1Schema.nullable(),
+  assessmentModes: z.array(securityCatalogAssessmentModeV1Schema).max(3),
+  assessmentProfiles: z.array(securityCatalogProfileV1Schema).max(32),
+  strongerControls: z.array(securityCatalogStrongerControlV1Schema).max(16),
+  supportedEcosystemIds: z.array(boundedBindingId).max(64),
+  supportMatrixReferences: z.array(boundedBindingId).max(32),
+  startPreflight: startPreflightV1Schema.nullable(),
+})
+
+export const securityCatalogResultSchema: z.ZodType<SecurityResult<SecurityCatalogSnapshotV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: securityCatalogSnapshotV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
 
 export const assessmentIdSchema = z.string().regex(/^asm-[0-9a-f-]{36}$/)
 export type AssessmentId = z.infer<typeof assessmentIdSchema>

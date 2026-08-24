@@ -718,6 +718,179 @@ describe('Security Assurance Workbench UI', () => {
     await b.runtime.dispose()
   })
 
+  it('renders a bilingual Catalog-only New Assessment wizard and immutable preflight', async () => {
+    const repository = {
+      schemaVersion: 1 as const,
+      repositoryId: 'repo-00000000-0000-0000-0000-000000000021' as const,
+      repositoryRevision: 4,
+      state: 'ENABLED' as const,
+      displayName: '支付服务',
+      rootIdentityDigest: `sha256:${'2'.repeat(64)}`,
+      bindings: {
+        policyId: 'security/node-package-lifecycle',
+        assessmentProfileId: 'security/standard',
+        evidenceProtectionId: 'evidence/local-protected',
+        dataEgressPolicyId: 'egress/deny-by-default',
+        platform: 'win32' as const,
+        deliveryDestinationIds: [],
+      },
+      createdAt: '2026-08-24T00:00:00.000Z',
+      updatedAt: '2026-08-24T00:04:00.000Z',
+    }
+    const proposalDigest = {
+      schemaVersion: 1 as const,
+      algorithm: 'sha256' as const,
+      mediaType: 'application/vnd.dsh.security.start-preflight+json',
+      byteLength: 1,
+      canonicalization: 'dsh-canonical-json-v1' as const,
+      value: 'e'.repeat(64),
+    }
+    const baseCatalog = {
+      schemaVersion: 1 as const,
+      repository,
+      assessmentModes: [{
+        assessmentMode: 'REPOSITORY' as const,
+        label: { en: 'Repository', zhCN: '完整仓库' },
+        targetKind: 'repository' as const,
+        subjectKinds: ['workspace_snapshot'] as const,
+        support: 'SUPPORTED' as const,
+        limitations: ['Only package lifecycle policy is evaluated.'],
+      }],
+      assessmentProfiles: [{
+        assessmentProfileId: 'security/standard',
+        label: { en: 'Standard', zhCN: '标准' },
+        maximumBudget: { status: 'NOT_REPORTED' as const },
+        limitations: ['No numeric budget is reported.'],
+      }],
+      strongerControls: [{
+        controlId: 'security/risk-decision-window-v1',
+        label: { en: 'Risk decision window', zhCN: '风险决策窗口' },
+        requiresControlIds: [],
+      }],
+      supportedEcosystemIds: ['node-package-manifest'],
+      supportMatrixReferences: ['dsh-security-assurance/support-matrix/v0.1-development'],
+      startPreflight: null,
+    }
+    const b = await bench((_path, endpoint, payload) => {
+      if (endpoint === 'securityAssuranceWorkbench/listAssessments') {
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: {
+            schemaVersion: 1,
+            consistencyWatermark: 'wizard.signature',
+            assessments: [],
+            nextCursor: null,
+          } },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listRepositories') {
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: { schemaVersion: 1, repositories: [repository], truncated: false } },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getCatalog') {
+        const request = (payload as {
+          readonly args: { readonly request: { readonly proposedStart?: import('../src/contracts.ts').StartAssessmentSelectionV1 } }
+        }).args.request
+        if (request.proposedStart === undefined) {
+          return Promise.resolve({ ok: true, value: { ok: true, value: baseCatalog } })
+        }
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: {
+            ...baseCatalog,
+            startPreflight: {
+              schemaVersion: 1,
+              repository: {
+                repositoryId: repository.repositoryId,
+                repositoryRevision: repository.repositoryRevision,
+                displayName: repository.displayName,
+              },
+              selection: request.proposedStart,
+              effectivePolicyId: repository.bindings.policyId,
+              effectiveProfileId: repository.bindings.assessmentProfileId,
+              providerComposition: [{
+                providerId: 'dsh-security-assurance',
+                analyzerId: 'dsh/builtin-node-package-lifecycle',
+                analyzerVersion: '1.0.0',
+                executionClass: 'PURE',
+                eligibility: 'ELIGIBLE',
+                reason: null,
+                coverageObligationIds: ['node-package-install-lifecycle-policy'],
+              }],
+              dataEgress: {
+                policyId: repository.bindings.dataEgressPolicyId,
+                destinationIds: [],
+                categories: ['NONE'],
+              },
+              evidenceProtection: { policyId: repository.bindings.evidenceProtectionId },
+              maximumBudget: { status: 'NOT_REPORTED' },
+              unsupportedConditions: [],
+              claimLimitations: ['Only package lifecycle policy is evaluated.'],
+              coverageLimitations: ['Only package lifecycle policy is evaluated.'],
+              admissible: true,
+              proposalDigest,
+            },
+          } },
+        })
+      }
+      return Promise.reject(new Error(`Unexpected endpoint: ${endpoint}`))
+    })
+    const launcher = b.runtime.renderSlot('sidebar.footer.action', { wide: true })
+    const overlay = b.runtime.renderSlot('shell.overlay', {})
+    await act(async () => {
+      await b.controller.openAssessmentSelection({
+        securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-wizard-ui'),
+      })
+      fireEvent.click(launcher.view.getByRole('button', { name: '打开安全保障工作台' }))
+    })
+    await waitFor(() => {
+      expect(overlay.view.getByRole('button', { name: 'Repositories 与新建 Assessment' })).toBeTruthy()
+    })
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: 'Repositories 与新建 Assessment' }))
+    })
+    await waitFor(() => {
+      expect(overlay.view.getByRole('heading', { name: 'Repositories' })).toBeTruthy()
+    })
+    expect(overlay.view.getByText('支付服务')).toBeTruthy()
+    expect(overlay.view.queryByLabelText('Repository root')).toBeNull()
+
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '新建 Assessment' }))
+    })
+    await waitFor(() => {
+      expect(overlay.view.getByRole('heading', { name: '新建 Assessment' })).toBeTruthy()
+    })
+    expect(overlay.view.getByRole<HTMLSelectElement>('combobox', { name: 'Assessment Mode' }).value).toBe('REPOSITORY')
+    expect(overlay.view.getByText('完整仓库 (REPOSITORY)')).toBeTruthy()
+    expect(overlay.view.getByText('标准 (security/standard)')).toBeTruthy()
+    expect(overlay.view.queryByLabelText('Provider')).toBeNull()
+    expect(overlay.view.queryByLabelText('Analyzer')).toBeNull()
+    expect(overlay.view.queryByLabelText('Policy')).toBeNull()
+
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '生成并复核预检' }))
+    })
+    await waitFor(() => {
+      expect(overlay.view.getByRole('heading', { name: 'Start Preflight' })).toBeTruthy()
+    })
+    expect(overlay.view.getByText('dsh/builtin-node-package-lifecycle@1.0.0')).toBeTruthy()
+    expect(overlay.view.getByText('egress/deny-by-default / NONE')).toBeTruthy()
+    expect(overlay.view.getByText('evidence/local-protected')).toBeTruthy()
+    expect(overlay.view.getByText('NOT_REPORTED')).toBeTruthy()
+    expect(overlay.view.getByText('e'.repeat(64))).toBeTruthy()
+    expect(overlay.view.getByRole('button', { name: '确认并启动 Assessment' })).toBeTruthy()
+
+    act(() => { b.locale.setLocale('en') })
+    expect(overlay.view.getByText('Every value below is resolved by the Security Service. Confirmation accepts only this digest-bound proposal; changing a selection requires a new preflight.')).toBeTruthy()
+
+    await b.feature.dispose()
+    await b.gateway.dispose()
+    await b.runtime.dispose()
+  })
+
   it('opens a bilingual empty dialog from the additive Host slots and returns focus on close', async () => {
     const b = await bench()
     const launcher = b.runtime.renderSlot('sidebar.footer.action', { wide: true })

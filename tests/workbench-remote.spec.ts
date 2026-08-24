@@ -103,6 +103,10 @@ async function harness(strictTypert = false): Promise<{
       principalId: 'workbench-cancellation-operator',
       permissions: ['assessment:read', 'assessment:cancel'],
     }],
+    [authorityContextId('workbench-session-starter'), {
+      principalId: 'workbench-starter',
+      permissions: ['repository:read', 'assessment:start', 'assessment:read'],
+    }],
   ])
   const remoteFiber = await ctx.plugin(SecurityAssuranceWorkbenchRemote, {
     async resolveAuthorityContext(contextId: WorkbenchAuthorityContextId) {
@@ -144,6 +148,73 @@ async function harness(strictTypert = false): Promise<{
 }
 
 describe('Security Assurance Workbench Remote', () => {
+  it('lists Repositories, resolves a digest-bound preflight, and confirms the exact start', async () => {
+    const { ctx, resolvedContextIds } = await harness(true)
+    const authorityId = authorityContextId('workbench-session-starter')
+    const repositories = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'listRepositories',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1, limit: 50, state: 'ENABLED' },
+      },
+    }) as SecurityResult<import('../src/index.ts').RepositoryListSnapshotV1>
+    if (!repositories.ok || repositories.value.repositories[0] === undefined) {
+      throw new Error('Workbench starter could not list the Repository')
+    }
+    const repository = repositories.value.repositories[0]
+    const selection = {
+      schemaVersion: 1 as const,
+      repositoryId: repository.repositoryId,
+      subject: { kind: 'workspace_snapshot' as const },
+      assessmentMode: 'REPOSITORY' as const,
+      assessmentProfileId: repository.bindings.assessmentProfileId,
+      target: { kind: 'repository' as const },
+      requestedStrongerControlIds: [],
+    }
+    const catalog = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getCatalog',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          schemaVersion: 1,
+          repositoryId: repository.repositoryId,
+          proposedStart: selection,
+        },
+      },
+    }) as SecurityResult<import('../src/index.ts').SecurityCatalogSnapshotV1>
+    if (!catalog.ok || catalog.value.startPreflight === null) {
+      throw new Error('Workbench starter could not resolve Start Preflight')
+    }
+    expect(catalog.value.startPreflight).toMatchObject({
+      admissible: true,
+      selection,
+      dataEgress: { categories: ['NONE'] },
+    })
+
+    await expect(ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'startAssessment',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          ...selection,
+          idempotencyKey: 'workbench-confirmed-start-v1',
+          startPreflightDigest: catalog.value.startPreflight.proposalDigest,
+        },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        operation: 'start_assessment',
+        repositoryId: repository.repositoryId,
+        state: 'CREATED',
+      },
+    })
+    expect(resolvedContextIds).toEqual([authorityId, authorityId, authorityId])
+  })
+
   it('lists only redacted Assessments through a freshly resolved Host authority', async () => {
     const { ctx, assessmentId, resolvedContextIds } = await harness()
     const authorityId = authorityContextId('workbench-session-reviewer')

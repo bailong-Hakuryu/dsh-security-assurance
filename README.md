@@ -13,8 +13,9 @@ This repository is under active vertical-slice development, not at the
 - real Cordis registration at `ctx.securityAssurance`;
 - an opaque, runtime-verified Security Invocation boundary;
 - authorized Runtime Health, Repository Registry, Assessment start/query/wait,
-  Finding Summary and Detail, purpose-bound Evidence View, Bundle Manifest,
-  and Assurance Submission operations;
+  effective Security Catalog and digest-bound Start Preflight, Finding Summary
+  and Detail, purpose-bound Evidence View, Bundle Manifest, and Assurance
+  Submission operations;
 - versioned Zod-validated public contracts;
 - one `SecurityResult<T>` success/failure envelope;
 - redacted authorization, validation, cancellation, deadline, and internal
@@ -29,16 +30,18 @@ This repository is under active vertical-slice development, not at the
 - a package-owned `dsh-security-assurance/workbench-remote` Host Adapter plus
   generated strict `dsh-security-assurance/typert` and
   `dsh-security-assurance/remote` artifacts. Its headless Workbench slice
-  exposes authority-projected, watermarked `listAssessments`, exact
-  `getAssessment`, revision-bound Finding queries, strict metadata-only
+  exposes authority-projected Repository and Assessment selection, effective
+  `getCatalog`, digest-bound `startAssessment`, exact `getAssessment`,
+  revision-bound Finding queries, strict metadata-only
   `getEvidenceView`, separate expiring `discloseEvidence`, bounded
   `waitForAssessmentRevision`, and revision-bound, idempotent
   `recordRiskDecision`, `resumeAssessment`, and `cancelAssessment` without putting a Principal, permissions, or Security
   Invocation on the wire;
 - a package-owned `dsh-security-assurance/client` browser entry that mounts the
   generated Remote contribution and provides one transient
-  `ctx.securityAssuranceWorkbench` Controller. It opens an authenticated,
-  redacted Assessment selector, fetches immutable Snapshots,
+  `ctx.securityAssuranceWorkbench` Controller. It opens authenticated, redacted
+  Repository and Assessment selectors, builds the New Assessment Wizard only
+  from Catalog choices, confirms immutable Start Preflight proposals, fetches immutable Snapshots,
   follows committed revisions through cancellable long-polling, fences stale
   responses and disclosure attempts, opens metadata only from an exact Finding
   Evidence Link, separately reauthorizes purpose-bound bounded content,
@@ -197,7 +200,7 @@ Node and application-security coverage, the complete protected Evidence Store,
 model tools, and the complete Workbench information architecture are deliberately not claimed
 as implemented yet. The Workbench Host Remote, authenticated redacted Assessment selection
 with stable cursor continuation, generated Client contract, transient browser
-Controller, read-only Assessment Detail, multidimensional Finding triage,
+Controller, Repositories and digest-bound New Assessment flow, read-only Assessment Detail, multidimensional Finding triage,
 revision-bound Finding Detail navigation, bilingual metadata-first Evidence,
 explicit expiring bounded-content disclosure, and a governed Risk Decision form
 with Critical Dual Authority completion are implemented. This repository ships no production external
@@ -216,6 +219,7 @@ The root plugin is dormant until activated through Cordis and then exposes the
 sole business Interface at `ctx.securityAssurance`. Implemented operations are:
 
 - `getHealth`
+- `getCatalog`
 - `registerRepository`
 - `updateRepository`
 - `disableRepository`
@@ -225,6 +229,7 @@ sole business Interface at `ctx.securityAssurance`. Implemented operations are:
 - `resumeAssessment`
 - `cancelAssessment`
 - `getAssessment`
+- `listAssessments`
 - `listFindings`
 - `getFinding`
 - `getEvidenceView`
@@ -346,7 +351,7 @@ only its Cordis Service; durable Repository Registry history remains owned by
 the root Security Service, so an equal restart resolves the same Repository ID.
 Conflicting replay fails loudly instead of updating Host policy implicitly.
 
-## Workbench Remote, bounded Evidence, and governed Risk Decision UI
+## Workbench Remote, New Assessment, bounded Evidence, and governed actions
 
 The optional `dsh-security-assurance/workbench-remote` entry is a Host Adapter,
 not an authentication provider and not a second business Service. It injects
@@ -380,7 +385,7 @@ fails closed, and the dormant bundle row must not be enabled for an anonymous
 LAN deployment.
 
 The generated Host contribution is published at `./typert`; the generated
-Client contribution is published at `./remote`. All ten operations use strict
+Client contribution is published at `./remote`. All thirteen operations use strict
 generated request/result codecs. Cancellation is forwarded to the root Service,
 mutation retries retain the caller's original idempotency key, and Adapter
 disposal withdraws its lookup and Remote Service without altering Assessments
@@ -388,8 +393,10 @@ or the root plugin.
 
 The package also publishes a Harness-discoverable `./client` entry. It mounts
 `./remote` through `ctx.remote.$mount()` and provides the browser-local
-`ctx.securityAssuranceWorkbench` Controller with eighteen public operations:
+`ctx.securityAssuranceWorkbench` Controller with twenty-four public operations:
 `openAssessmentSelection`, `loadMoreAssessments`, `selectAssessment`,
+`openRepositories`, `selectRepository`, `requestStartPreflight`,
+`cancelStartPreflight`, `confirmStartAssessment`, `backToAssessmentSelection`,
 `openAssessment`, `openFindings`, `loadMoreFindings`, `selectFinding`,
 `backToFindingList`, `recordRiskDecision`, `resumeAssessment`, `cancelAssessment`,
 `selectEvidence`, `discloseEvidence`,
@@ -421,14 +428,21 @@ authority failure, or Service expiry. Those navigation and lifecycle exits also
 abort any in-flight Evidence request before the stale-response fence is applied.
 Remote or Security failures fail closed
 to a payload-free `FAILED` state; reopening re-fetches Service truth by opaque
-Assessment ID.
+Assessment ID. From the selector, the Controller can also list path-free
+Repository Snapshots, resolve a repository-specific Security Catalog, and
+submit only the exact Catalog selection for a Service-derived Start Preflight.
+Confirmation adds a fresh idempotency identity and the proposal digest to the
+unchanged selection; a matching Receipt is required before the newly committed
+Assessment is opened. Changing a selection cancels the proposal and requires a
+new preflight.
 
 The Client entry also registers two additive Harness UI contributions. A
 launcher in `sidebar.footer.action` opens a frame-wide dialog in
 `shell.overlay`; neither replaces a single-owner Host shell slot. The overlay
 subscribes to the Controller through the Slot renderer's observable seam and
 renders `CLOSED`, `SELECTION_LOADING`, `SELECTION_READY`,
-`SELECTION_LOADING_MORE`, `LOADING`, `READY`, and `FAILED` without duplicating
+`SELECTION_LOADING_MORE`, Repository/Catalog/Preflight/Wizard states, `LOADING`,
+`READY`, and `FAILED` without duplicating
 Remote, polling, authorization, or revision logic. `READY` shows canonical machine IDs
 unchanged together with revision, state, Verdict, repository and policy
 bindings, mandatory Coverage, and the Service Snapshot's `availableActions`.
@@ -468,8 +482,10 @@ generates a fresh idempotency identity, and never accepts a Principal or
 permission. Critical second authority shows the first immutable attestation and
 submits only its exact rationale, controls, and expiry through a separately
 resolved Host context. A matching receipt is followed by an Assessment refetch,
-and local form input is discarded. Resume and Cancel remain informational until
-their separate vertical slice is implemented.
+and local form input is discarded. BLOCKED recovery submits Resume and Cancel
+only when those exact revision-bound actions are projected by the Service;
+receipts are followed by a fresh Snapshot and cancellation is never presented
+as terminal before durable quiescence is observed.
 
 The surface ships complete English and Simplified Chinese copy, semantic dialog
 and status roles, keyboard dismissal and focus return, responsive layout, and

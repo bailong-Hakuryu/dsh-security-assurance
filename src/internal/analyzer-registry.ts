@@ -155,6 +155,25 @@ export class AnalyzerRegistry {
     evaluatedAt: string,
   ): readonly AnalyzerPortfolioEntryV1[] {
     this.registrationClosed = true
+    return this.select(policyId, assessmentMode, platform, evaluatedAt)
+  }
+
+  /** Preview the currently qualified composition without closing startup registration. */
+  previewSelection(
+    policyId: string,
+    assessmentMode: AssessmentMode,
+    platform: RepositoryPlatform,
+    evaluatedAt: string,
+  ): readonly AnalyzerPortfolioEntryV1[] {
+    return this.select(policyId, assessmentMode, platform, evaluatedAt)
+  }
+
+  private select(
+    policyId: string,
+    assessmentMode: AssessmentMode,
+    platform: RepositoryPlatform,
+    evaluatedAt: string,
+  ): readonly AnalyzerPortfolioEntryV1[] {
     return deepFreeze([...this.registrations.values()]
       .map(registration => registration.descriptor)
       .filter(descriptor => (

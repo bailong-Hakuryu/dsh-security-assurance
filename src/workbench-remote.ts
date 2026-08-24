@@ -15,16 +15,22 @@ import type {
   EvidenceViewV1,
   FindingDetailViewV1,
   FindingListPageV1,
+  GetCatalogRequest,
   GetAssessmentRequest,
   GetFindingRequest,
   ListFindingsRequest,
   ListAssessmentsRequest,
+  ListRepositoriesRequest,
   CancelAssessmentRequest,
   RecordRiskDecisionRequest,
   ResumeAssessmentRequest,
   RiskDecisionReceiptV1,
+  RepositoryListSnapshotV1,
+  SecurityCatalogSnapshotV1,
   SecurityInvocation,
   SecurityResult,
+  StartAssessmentRequest,
+  AssessmentReceiptV1,
   WaitForAssessmentRevisionRequest,
 } from './contracts.ts'
 import type { SecurityAssuranceService } from './index.ts'
@@ -66,6 +72,11 @@ export interface WorkbenchAuthorityContextResolverV1 {
   resolveAuthorityContext(
     contextId: WorkbenchAuthorityContextId,
   ): AuthenticatedWorkbenchOperatorV1 | undefined | Promise<AuthenticatedWorkbenchOperatorV1 | undefined>
+}
+
+/** Workbench confirmation always carries the exact Service-derived proposal digest. */
+export type WorkbenchStartAssessmentRequestV1 = StartAssessmentRequest & {
+  readonly startPreflightDigest: NonNullable<StartAssessmentRequest['startPreflightDigest']>
 }
 
 /** Strict browser request for the metadata-only Evidence disclosure slice. */
@@ -234,6 +245,48 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
         })
       },
     })
+  }
+
+  /** List authority-visible path-free Repository Registry entries. */
+  @Remote
+  listRepositories(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: ListRepositoriesRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<RepositoryListSnapshotV1>> {
+    return this.ctx.securityAssurance.listRepositories(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
+  }
+
+  /** Resolve Catalog choices and an optional immutable Start Preflight proposal. */
+  @Remote
+  getCatalog(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: GetCatalogRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<SecurityCatalogSnapshotV1>> {
+    return this.ctx.securityAssurance.getCatalog(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
+  }
+
+  /** Confirm one exact digest-bound Start Preflight through the root Service. */
+  @Remote
+  startAssessment(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: WorkbenchStartAssessmentRequestV1,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<AssessmentReceiptV1>> {
+    return this.ctx.securityAssurance.startAssessment(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
   }
 
   /** List authority-visible redacted Assessment identities for Host selection surfaces. */

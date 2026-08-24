@@ -15,6 +15,7 @@ import type {
   WorkbenchFindingsStateV1,
   WorkbenchRiskDecisionSubmissionStateV1,
   WorkbenchRiskDecisionSubmissionV1,
+  WorkbenchStartSubmissionStateV1,
 } from '../index.ts'
 import type {
   WorkbenchEvidenceDisclosureViewV1,
@@ -27,6 +28,10 @@ import type {
   AssessmentSnapshotV1,
   FindingDetailViewV1,
   FindingSummaryV1,
+  RepositorySnapshotV1,
+  SecurityCatalogSnapshotV1,
+  StartAssessmentSelectionV1,
+  StartPreflightV1,
 } from '../../contracts.ts'
 import type { WORKBENCH_LOCALE_NAMESPACE } from './locales.ts'
 import type { WorkbenchPresentationSnapshotV1 } from './presentation.ts'
@@ -39,10 +44,14 @@ export type WorkbenchOverlaySources = {
 export interface WorkbenchOverlayInjected {
   readonly hooks: WorkbenchOverlaySources
   readonly closeWorkbench: () => void
+  readonly backToAssessmentSelection: () => void
+  readonly cancelStartPreflight: () => void
   readonly cancelAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
+  readonly confirmStartAssessment: () => void
   readonly loadMoreAssessments: () => void
   readonly loadMoreFindings: () => void
   readonly openFindings: () => void
+  readonly openRepositories: () => void
   readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
   readonly resumeAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
   readonly backToFindingList: () => void
@@ -50,6 +59,8 @@ export interface WorkbenchOverlayInjected {
   readonly discloseEvidence: () => void
   readonly hideEvidenceDisclosure: () => void
   readonly selectAssessment: (assessmentId: AssessmentId) => void
+  readonly selectRepository: (repositoryId: RepositorySnapshotV1['repositoryId']) => void
+  readonly requestStartPreflight: (selection: StartAssessmentSelectionV1) => void
   readonly selectEvidence: (artifactId: string) => void
   readonly selectFinding: (recordId: string) => void
 }
@@ -66,10 +77,14 @@ export function WorkbenchOverlay({
   usePresentation,
   useAssessment,
   closeWorkbench,
+  backToAssessmentSelection,
+  cancelStartPreflight,
   cancelAssessment,
+  confirmStartAssessment,
   loadMoreAssessments,
   loadMoreFindings,
   openFindings,
+  openRepositories,
   recordRiskDecision,
   resumeAssessment,
   backToFindingList,
@@ -77,6 +92,8 @@ export function WorkbenchOverlay({
   discloseEvidence,
   hideEvidenceDisclosure,
   selectAssessment,
+  selectRepository,
+  requestStartPreflight,
   selectEvidence,
   selectFinding,
 }: WorkbenchOverlayProps) {
@@ -150,7 +167,45 @@ export function WorkbenchOverlay({
               hasMore={state.nextCursor !== null}
               loadingMore={state.kind === 'SELECTION_LOADING_MORE'}
               loadMoreAssessments={loadMoreAssessments}
+              openRepositories={openRepositories}
               selectAssessment={selectAssessment}
+              t={t}
+            />
+          )}
+          {state.kind === 'REPOSITORIES_LOADING' && (
+            <MessageState title={t('repositories.loadingTitle')} body={t('repositories.loadingBody')} role="status" />
+          )}
+          {state.kind === 'REPOSITORIES_READY' && (
+            <RepositorySelection
+              repositories={state.repositories}
+              truncated={state.truncated}
+              backToAssessmentSelection={backToAssessmentSelection}
+              selectRepository={selectRepository}
+              t={t}
+            />
+          )}
+          {(state.kind === 'CATALOG_LOADING' || state.kind === 'PREFLIGHT_LOADING') && (
+            <MessageState
+              title={state.kind === 'CATALOG_LOADING'
+                ? t('wizard.catalogLoadingTitle')
+                : t('wizard.preflightLoadingTitle')}
+              body={state.kind === 'CATALOG_LOADING'
+                ? t('wizard.catalogLoadingBody')
+                : t('wizard.preflightLoadingBody')}
+              detail={state.repository.displayName}
+              role="status"
+            />
+          )}
+          {state.kind === 'WIZARD_READY' && (
+            <NewAssessmentWizard
+              repository={state.repository}
+              catalog={state.catalog}
+              startPreflight={state.startPreflight}
+              startSubmission={state.startSubmission}
+              backToAssessmentSelection={backToAssessmentSelection}
+              cancelStartPreflight={cancelStartPreflight}
+              confirmStartAssessment={confirmStartAssessment}
+              requestStartPreflight={requestStartPreflight}
               t={t}
             />
           )}
@@ -200,6 +255,7 @@ function AssessmentSelection({
   hasMore,
   loadingMore,
   loadMoreAssessments,
+  openRepositories,
   selectAssessment,
   t,
 }: {
@@ -207,13 +263,19 @@ function AssessmentSelection({
   readonly hasMore: boolean
   readonly loadingMore: boolean
   readonly loadMoreAssessments: () => void
+  readonly openRepositories: () => void
   readonly selectAssessment: (assessmentId: AssessmentId) => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
   return (
     <section className="dsh-security-selection" aria-labelledby="dsh-security-selection-title">
       <div>
-        <h2 id="dsh-security-selection-title">{t('selection.title')}</h2>
+        <div className="dsh-security-view-heading">
+          <h2 id="dsh-security-selection-title">{t('selection.title')}</h2>
+          <button type="button" className="dsh-security-secondary-action" onClick={openRepositories}>
+            {t('repositories.open')}
+          </button>
+        </div>
         <p>{t('selection.body')}</p>
       </div>
       {assessments.length === 0
@@ -254,6 +316,362 @@ function AssessmentSelection({
       )}
     </section>
   )
+}
+
+function RepositorySelection({
+  repositories,
+  truncated,
+  backToAssessmentSelection,
+  selectRepository,
+  t,
+}: {
+  readonly repositories: readonly RepositorySnapshotV1[]
+  readonly truncated: boolean
+  readonly backToAssessmentSelection: () => void
+  readonly selectRepository: (repositoryId: RepositorySnapshotV1['repositoryId']) => void
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  return (
+    <section className="dsh-security-selection" aria-labelledby="dsh-security-repositories-title">
+      <div>
+        <button type="button" className="dsh-security-secondary-action" onClick={backToAssessmentSelection}>
+          {t('repositories.back')}
+        </button>
+        <div className="dsh-security-view-heading">
+          <div>
+            <h2 id="dsh-security-repositories-title">{t('repositories.title')}</h2>
+            <p>{t('repositories.body')}</p>
+          </div>
+        </div>
+      </div>
+      {repositories.length === 0
+        ? <p className="dsh-security-muted">{t('repositories.empty')}</p>
+        : (
+            <ul className="dsh-security-repository-list">
+              {repositories.map(repository => (
+                <li key={repository.repositoryId}>
+                  <div className="dsh-security-repository-list__heading">
+                    <div>
+                      <strong>{repository.displayName}</strong>
+                      <code>{repository.repositoryId} @ {repository.repositoryRevision}</code>
+                    </div>
+                    <MachineBadge value={repository.state} />
+                  </div>
+                  <dl className="dsh-security-facts">
+                    <Fact label={t('label.policy')} value={repository.bindings.policyId} machine />
+                    <Fact label={t('wizard.profile')} value={repository.bindings.assessmentProfileId} machine />
+                    <Fact label={t('wizard.evidenceProtection')} value={repository.bindings.evidenceProtectionId} machine />
+                    <Fact label={t('wizard.egress')} value={repository.bindings.dataEgressPolicyId} machine />
+                  </dl>
+                  <button
+                    type="button"
+                    className="dsh-security-risk-decision__submit"
+                    disabled={repository.state !== 'ENABLED'}
+                    onClick={() => { selectRepository(repository.repositoryId) }}
+                  >
+                    {repository.state === 'ENABLED' ? t('repositories.newAssessment') : t('repositories.disabled')}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+      {truncated && <p className="dsh-security-muted">{t('repositories.truncated')}</p>}
+    </section>
+  )
+}
+
+function NewAssessmentWizard({
+  repository,
+  catalog,
+  startPreflight,
+  startSubmission,
+  backToAssessmentSelection,
+  cancelStartPreflight,
+  confirmStartAssessment,
+  requestStartPreflight,
+  t,
+}: {
+  readonly repository: RepositorySnapshotV1
+  readonly catalog: SecurityCatalogSnapshotV1
+  readonly startPreflight: StartPreflightV1 | null
+  readonly startSubmission: WorkbenchStartSubmissionStateV1
+  readonly backToAssessmentSelection: () => void
+  readonly cancelStartPreflight: () => void
+  readonly confirmStartAssessment: () => void
+  readonly requestStartPreflight: (selection: StartAssessmentSelectionV1) => void
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  const supportedModes = catalog.assessmentModes.filter(mode => mode.support === 'SUPPORTED')
+  const [mode, setMode] = useState(supportedModes[0]?.assessmentMode ?? 'REPOSITORY')
+  const activeMode = catalog.assessmentModes.find(candidate => candidate.assessmentMode === mode)
+  const [subjectKind, setSubjectKind] = useState<'git_revision' | 'change' | 'workspace_snapshot'>(
+    activeMode?.subjectKinds[0] ?? 'workspace_snapshot',
+  )
+  const [commit, setCommit] = useState('')
+  const [baseCommit, setBaseCommit] = useState('')
+  const [headCommit, setHeadCommit] = useState('')
+  const [relativePaths, setRelativePaths] = useState('')
+  const [controls, setControls] = useState<readonly string[]>([])
+  const profile = catalog.assessmentProfiles[0]
+
+  if (startPreflight !== null) {
+    return (
+      <StartPreflightPanel
+        preflight={startPreflight}
+        submitting={startSubmission.kind === 'SUBMITTING'}
+        cancelStartPreflight={cancelStartPreflight}
+        confirmStartAssessment={confirmStartAssessment}
+        backToAssessmentSelection={backToAssessmentSelection}
+        t={t}
+      />
+    )
+  }
+
+  const subject = subjectKind === 'git_revision'
+    ? { kind: 'git_revision' as const, commit: commit.trim() }
+    : subjectKind === 'change'
+      ? { kind: 'change' as const, baseCommit: baseCommit.trim(), headCommit: headCommit.trim() }
+      : { kind: 'workspace_snapshot' as const }
+  const paths = relativePaths.split(/\r?\n/u).map(path => path.trim()).filter(Boolean)
+  const target = mode === 'CHANGE'
+    ? { kind: 'change' as const, baseCommit: baseCommit.trim(), headCommit: headCommit.trim(), impactCone: 'POLICY_DEFAULT' as const }
+    : mode === 'TARGETED'
+      ? { kind: 'targeted' as const, relativePaths: paths }
+      : { kind: 'repository' as const }
+  const commitsValid = subjectKind === 'git_revision'
+    ? /^[0-9a-f]{40}$/u.test(commit.trim())
+    : subjectKind === 'change'
+      ? /^[0-9a-f]{40}$/u.test(baseCommit.trim()) && /^[0-9a-f]{40}$/u.test(headCommit.trim())
+      : true
+  const pathsValid = mode !== 'TARGETED' || (
+    paths.length >= 1
+    && paths.length <= 128
+    && paths.every(path => (
+      !path.startsWith('/')
+      && !path.startsWith('\\')
+      && !/^[a-z]:/iu.test(path)
+      && !path.includes('\\')
+      && path.split('/').every(segment => segment.length > 0 && segment !== '.' && segment !== '..')
+    ))
+  )
+  const formValid = activeMode?.support === 'SUPPORTED'
+    && activeMode.subjectKinds.includes(subjectKind)
+    && profile !== undefined
+    && commitsValid
+    && pathsValid
+
+  const submit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    if (!formValid || profile === undefined) return
+    requestStartPreflight({
+      schemaVersion: 1,
+      repositoryId: repository.repositoryId,
+      subject,
+      assessmentMode: mode,
+      assessmentProfileId: profile.assessmentProfileId,
+      target,
+      requestedStrongerControlIds: controls,
+    })
+  }
+  return (
+    <section className="dsh-security-wizard" aria-labelledby="dsh-security-wizard-title">
+      <button type="button" className="dsh-security-secondary-action" onClick={backToAssessmentSelection}>
+        {t('wizard.cancel')}
+      </button>
+      <div>
+        <span className="dsh-security-eyebrow">{t('wizard.repository')}</span>
+        <h2 id="dsh-security-wizard-title">{t('wizard.title')}</h2>
+        <strong>{repository.displayName}</strong>
+        <code className="dsh-security-wizard__repository">{repository.repositoryId} @ {repository.repositoryRevision}</code>
+      </div>
+      <p className="dsh-security-readonly-note">{t('wizard.boundary')}</p>
+      <form className="dsh-security-wizard__form" onSubmit={submit}>
+        <label className="dsh-security-risk-decision__field">
+          <span>{t('wizard.mode')}</span>
+          <select
+            aria-label={t('wizard.mode')}
+            value={mode}
+            onChange={event => {
+              const next = event.currentTarget.value as typeof mode
+              const definition = catalog.assessmentModes.find(candidate => candidate.assessmentMode === next)
+              setMode(next)
+              setSubjectKind(definition?.subjectKinds[0] ?? 'workspace_snapshot')
+            }}
+          >
+            {supportedModes.map(candidate => (
+              <option key={candidate.assessmentMode} value={candidate.assessmentMode}>
+                {catalogLabel(candidate.label, t)} ({candidate.assessmentMode})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="dsh-security-risk-decision__field">
+          <span>{t('wizard.profile')}</span>
+          <select aria-label={t('wizard.profile')} value={profile?.assessmentProfileId ?? ''} disabled>
+            {catalog.assessmentProfiles.map(candidate => (
+              <option key={candidate.assessmentProfileId} value={candidate.assessmentProfileId}>
+                {catalogLabel(candidate.label, t)} ({candidate.assessmentProfileId})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="dsh-security-risk-decision__field">
+          <span>{t('wizard.subject')}</span>
+          <select
+            aria-label={t('wizard.subject')}
+            value={subjectKind}
+            onChange={event => { setSubjectKind(event.currentTarget.value as typeof subjectKind) }}
+          >
+            {activeMode?.subjectKinds.map(kind => <option key={kind} value={kind}>{kind}</option>)}
+          </select>
+        </label>
+        {subjectKind === 'git_revision' && (
+          <label className="dsh-security-risk-decision__field">
+            <span>{t('wizard.commit')}</span>
+            <input aria-label={t('wizard.commit')} value={commit} maxLength={40} onChange={event => { setCommit(event.currentTarget.value) }} />
+          </label>
+        )}
+        {subjectKind === 'change' && (
+          <>
+            <label className="dsh-security-risk-decision__field">
+              <span>{t('wizard.baseCommit')}</span>
+              <input aria-label={t('wizard.baseCommit')} value={baseCommit} maxLength={40} onChange={event => { setBaseCommit(event.currentTarget.value) }} />
+            </label>
+            <label className="dsh-security-risk-decision__field">
+              <span>{t('wizard.headCommit')}</span>
+              <input aria-label={t('wizard.headCommit')} value={headCommit} maxLength={40} onChange={event => { setHeadCommit(event.currentTarget.value) }} />
+            </label>
+          </>
+        )}
+        {mode === 'TARGETED' && (
+          <label className="dsh-security-risk-decision__field">
+            <span>{t('wizard.paths')}</span>
+            <textarea aria-label={t('wizard.paths')} rows={5} value={relativePaths} onChange={event => { setRelativePaths(event.currentTarget.value) }} />
+            <small>{t('wizard.pathsHint')}</small>
+          </label>
+        )}
+        <fieldset className="dsh-security-wizard__controls">
+          <legend>{t('wizard.strongerControls')}</legend>
+          {catalog.strongerControls.map(control => {
+            const checked = controls.includes(control.controlId)
+            const dependenciesMet = control.requiresControlIds.every(required => controls.includes(required))
+            return (
+              <label key={control.controlId}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={!checked && !dependenciesMet}
+                  onChange={event => {
+                    setControls(event.currentTarget.checked
+                      ? [...controls, control.controlId]
+                      : controls.filter(candidate => (
+                          candidate !== control.controlId
+                          && !catalog.strongerControls.some(other => (
+                            other.controlId === candidate
+                            && other.requiresControlIds.includes(control.controlId)
+                          ))
+                        )))
+                  }}
+                />
+                <span>{catalogLabel(control.label, t)}</span>
+                <code>{control.controlId}</code>
+              </label>
+            )
+          })}
+        </fieldset>
+        <button type="submit" className="dsh-security-risk-decision__submit" disabled={!formValid}>
+          {t('wizard.reviewPreflight')}
+        </button>
+      </form>
+    </section>
+  )
+}
+
+function StartPreflightPanel({
+  preflight,
+  submitting,
+  cancelStartPreflight,
+  confirmStartAssessment,
+  backToAssessmentSelection,
+  t,
+}: {
+  readonly preflight: StartPreflightV1
+  readonly submitting: boolean
+  readonly cancelStartPreflight: () => void
+  readonly confirmStartAssessment: () => void
+  readonly backToAssessmentSelection: () => void
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  return (
+    <section className="dsh-security-wizard dsh-security-preflight" aria-labelledby="dsh-security-preflight-title">
+      <h2 id="dsh-security-preflight-title">{t('preflight.title')}</h2>
+      <p className="dsh-security-readonly-note">{t('preflight.immutable')}</p>
+      <dl className="dsh-security-facts">
+        <Fact label={t('wizard.repository')} value={`${preflight.repository.displayName} @ ${preflight.repository.repositoryRevision}`} />
+        <Fact label={t('wizard.subject')} value={preflight.selection.subject.kind} machine />
+        <Fact label={t('wizard.target')} value={JSON.stringify(preflight.selection.target)} machine />
+        <Fact label={t('label.policy')} value={preflight.effectivePolicyId} machine />
+        <Fact label={t('wizard.profile')} value={preflight.effectiveProfileId} machine />
+        <Fact label={t('wizard.evidenceProtection')} value={preflight.evidenceProtection.policyId} machine />
+        <Fact label={t('wizard.egress')} value={`${preflight.dataEgress.policyId} / ${preflight.dataEgress.categories.join(', ')}`} machine />
+        <Fact label={t('wizard.maximumBudget')} value={preflight.maximumBudget.status} machine />
+      </dl>
+      <div>
+        <strong className="dsh-security-recovery__label">{t('preflight.providers')}</strong>
+        <ul className="dsh-security-metadata-list">
+          {preflight.providerComposition.map(provider => (
+            <li key={`${provider.analyzerId}@${provider.analyzerVersion}`}>
+              <code>{provider.analyzerId}@{provider.analyzerVersion}</code>
+              <MachineBadge value={provider.eligibility} />
+              <span>{provider.coverageObligationIds.join(', ')}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <PreflightLimitations title={t('preflight.unsupported')} values={preflight.unsupportedConditions} empty={t('preflight.none')} />
+      <PreflightLimitations title={t('preflight.claimLimitations')} values={preflight.claimLimitations} empty={t('preflight.none')} />
+      <PreflightLimitations title={t('preflight.coverageLimitations')} values={preflight.coverageLimitations} empty={t('preflight.none')} />
+      <div className="dsh-security-preflight__digest">
+        <strong>{t('preflight.digest')}</strong>
+        <code>{preflight.proposalDigest.value}</code>
+      </div>
+      <div className="dsh-security-recovery__actions">
+        <button type="button" className="dsh-security-secondary-action" disabled={submitting} onClick={cancelStartPreflight}>
+          {t('preflight.editSelection')}
+        </button>
+        <button type="button" className="dsh-security-secondary-action" disabled={submitting} onClick={backToAssessmentSelection}>
+          {t('wizard.cancel')}
+        </button>
+        <button
+          type="button"
+          className="dsh-security-risk-decision__submit"
+          disabled={!preflight.admissible || submitting}
+          onClick={confirmStartAssessment}
+        >
+          {submitting ? t('preflight.starting') : t('preflight.confirm')}
+        </button>
+      </div>
+    </section>
+  )
+}
+
+function PreflightLimitations({ title, values, empty }: {
+  readonly title: string
+  readonly values: readonly string[]
+  readonly empty: string
+}) {
+  return (
+    <div>
+      <strong className="dsh-security-recovery__label">{title}</strong>
+      {values.length === 0
+        ? <p className="dsh-security-muted">{empty}</p>
+        : <ul className="dsh-security-preflight__limitations">{values.map(value => <li key={value}>{value}</li>)}</ul>}
+    </div>
+  )
+}
+
+function catalogLabel(label: { readonly en: string; readonly zhCN: string }, t: WorkbenchOverlayProps['t']): string {
+  return t('catalog.locale') === 'zhCN' ? label.zhCN : label.en
 }
 
 function MessageState({

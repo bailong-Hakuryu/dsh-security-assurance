@@ -1794,6 +1794,202 @@ describe('Security Assurance Workbench Client', () => {
     expect(JSON.stringify(cancelPayloads[0])).not.toContain('principalId')
   })
 
+  it('drives Repository selection, digest-bound preflight, and exact Assessment start', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+    const repository = {
+      schemaVersion: 1 as const,
+      repositoryId: 'repo-00000000-0000-0000-0000-000000000001' as const,
+      repositoryRevision: 1,
+      state: 'ENABLED' as const,
+      displayName: 'Workbench starter fixture',
+      rootIdentityDigest: `sha256:${'1'.repeat(64)}`,
+      bindings: {
+        policyId: 'security/node-package-lifecycle',
+        assessmentProfileId: 'security/standard',
+        evidenceProtectionId: 'evidence/local-protected',
+        dataEgressPolicyId: 'egress/deny-by-default',
+        platform: 'win32' as const,
+        deliveryDestinationIds: [],
+      },
+      createdAt: '2026-08-24T00:00:00.000Z',
+      updatedAt: '2026-08-24T00:00:00.000Z',
+    }
+    const selection = {
+      schemaVersion: 1 as const,
+      repositoryId: repository.repositoryId,
+      subject: { kind: 'workspace_snapshot' as const },
+      assessmentMode: 'REPOSITORY' as const,
+      assessmentProfileId: 'security/standard',
+      target: { kind: 'repository' as const },
+      requestedStrongerControlIds: [] as readonly string[],
+    }
+    const proposalDigest = {
+      schemaVersion: 1 as const,
+      algorithm: 'sha256' as const,
+      mediaType: 'application/vnd.dsh.security.start-preflight+json',
+      byteLength: 1,
+      canonicalization: 'dsh-canonical-json-v1' as const,
+      value: 'f'.repeat(64),
+    }
+    const baseCatalog = {
+      schemaVersion: 1 as const,
+      repository,
+      assessmentModes: [{
+        assessmentMode: 'REPOSITORY' as const,
+        label: { en: 'Repository', zhCN: '完整仓库' },
+        targetKind: 'repository' as const,
+        subjectKinds: ['git_revision', 'workspace_snapshot'] as const,
+        support: 'SUPPORTED' as const,
+        limitations: ['Package lifecycle only.'],
+      }],
+      assessmentProfiles: [{
+        assessmentProfileId: 'security/standard',
+        label: { en: 'Standard', zhCN: '标准' },
+        maximumBudget: { status: 'NOT_REPORTED' as const },
+        limitations: [],
+      }],
+      strongerControls: [],
+      supportedEcosystemIds: ['node-package-manifest'],
+      supportMatrixReferences: ['dsh-security-assurance/support-matrix/v0.1-development'],
+      startPreflight: null,
+    }
+    const preflight = {
+      schemaVersion: 1 as const,
+      repository: {
+        repositoryId: repository.repositoryId,
+        repositoryRevision: 1,
+        displayName: repository.displayName,
+      },
+      selection,
+      effectivePolicyId: repository.bindings.policyId,
+      effectiveProfileId: repository.bindings.assessmentProfileId,
+      providerComposition: [{
+        providerId: 'dsh-security-assurance',
+        analyzerId: 'dsh/builtin-node-package-lifecycle',
+        analyzerVersion: '1.0.0',
+        executionClass: 'PURE' as const,
+        eligibility: 'ELIGIBLE' as const,
+        reason: null,
+        coverageObligationIds: ['node-package-install-lifecycle-policy'],
+      }],
+      dataEgress: {
+        policyId: repository.bindings.dataEgressPolicyId,
+        destinationIds: [],
+        categories: ['NONE'] as const,
+      },
+      evidenceProtection: { policyId: repository.bindings.evidenceProtectionId },
+      maximumBudget: { status: 'NOT_REPORTED' as const },
+      unsupportedConditions: [],
+      claimLimitations: ['Package lifecycle only.'],
+      coverageLimitations: ['Package lifecycle only.'],
+      admissible: true,
+      proposalDigest,
+    }
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000091')
+    const payloads: Array<{ readonly endpoint: string; readonly payload: unknown }> = []
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+    ): Promise<unknown> {
+      payloads.push({ endpoint, payload })
+      if (endpoint === 'securityAssuranceWorkbench/listAssessments') {
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: {
+            schemaVersion: 1,
+            consistencyWatermark: 'starter.signature',
+            assessments: [],
+            nextCursor: null,
+          } },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listRepositories') {
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: { schemaVersion: 1, repositories: [repository], truncated: false } },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getCatalog') {
+        const request = (payload as { readonly args: { readonly request: { readonly proposedStart?: unknown } } }).args.request
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: request.proposedStart === undefined
+            ? baseCatalog
+            : { ...baseCatalog, startPreflight: preflight } },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/startAssessment') {
+        const request = (payload as { readonly args: { readonly request: { readonly idempotencyKey: string } } }).args.request
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: {
+            schemaVersion: 1,
+            operation: 'start_assessment',
+            assessmentId: id,
+            assessmentRevision: 1,
+            state: 'CREATED',
+            repositoryId: repository.repositoryId,
+            repositoryRevision: 1,
+            subject: { kind: 'workspace_snapshot', digest: proposalDigest },
+            idempotencyKey: request.idempotencyKey,
+            acceptedAt: '2026-08-24T00:01:00.000Z',
+            correlationId: 'sec-00000000-0000-0000-0000-000000000091',
+          } },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshotAt(id, 2, 'SEALED') } })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+
+    await controller.openAssessmentSelection({
+      securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-starter-client'),
+    })
+    await expect(controller.openRepositories()).resolves.toMatchObject({
+      kind: 'REPOSITORIES_READY',
+      repositories: [{ repositoryId: repository.repositoryId }],
+    })
+    await expect(controller.selectRepository(repository.repositoryId)).resolves.toMatchObject({
+      kind: 'WIZARD_READY',
+      startPreflight: null,
+    })
+    await expect(controller.requestStartPreflight(selection)).resolves.toMatchObject({
+      kind: 'WIZARD_READY',
+      startPreflight: { proposalDigest },
+    })
+    await expect(controller.confirmStartAssessment()).resolves.toMatchObject({
+      kind: 'READY',
+      assessmentId: id,
+      snapshot: { assessmentRevision: 2, state: 'SEALED' },
+    })
+    expect(payloads.map(item => item.endpoint)).toEqual([
+      'securityAssuranceWorkbench/listAssessments',
+      'securityAssuranceWorkbench/listRepositories',
+      'securityAssuranceWorkbench/getCatalog',
+      'securityAssuranceWorkbench/getCatalog',
+      'securityAssuranceWorkbench/startAssessment',
+      'securityAssuranceWorkbench/getAssessment',
+    ])
+    expect(payloads[4]?.payload).toMatchObject({
+      args: {
+        request: {
+          ...selection,
+          idempotencyKey: expect.stringMatching(/^workbench-start:[0-9a-f-]{36}$/u),
+          startPreflightDigest: proposalDigest,
+        },
+      },
+    })
+    expect(JSON.stringify(payloads)).not.toContain('principalId')
+  })
+
   it('keeps one in-memory Snapshot current by revision and erases it on close', async () => {
     const ctx = new Context()
     contexts.push(ctx)
