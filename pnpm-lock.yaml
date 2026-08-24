@@ -18,6 +18,9 @@ importers:
       '@deepseek-ai/dsh-agent':
         specifier: link:../deepseek-harness-master/packages/core/agent
         version: link:../deepseek-harness-master/packages/core/agent
+      '@deepseek-ai/dsh-api-gateway':
+        specifier: link:../deepseek-harness-master/packages/api/gateway
+        version: link:../deepseek-harness-master/packages/api/gateway
       '@deepseek-ai/dsh-home-paths':
         specifier: link:../deepseek-harness-master/packages/util/home-paths
         version: link:../deepseek-harness-master/packages/util/home-paths
@@ -27,6 +30,15 @@ importers:
       '@deepseek-ai/dsh-subprocess-local':
         specifier: link:../deepseek-harness-master/packages/subprocess/subprocess-local
         version: link:../deepseek-harness-master/packages/subprocess/subprocess-local
+      '@deepseek-ai/dsh-typert-generator':
+        specifier: link:../deepseek-harness-master/packages/typert/generator
+        version: link:../deepseek-harness-master/packages/typert/generator
+      '@deepseek-ai/dsh-typert-protocol':
+        specifier: link:../deepseek-harness-master/packages/typert/protocol
+        version: link:../deepseek-harness-master/packages/typert/protocol
+      '@deepseek-ai/dsh-typert-registry':
+        specifier: link:../deepseek-harness-master/packages/typert/registry
+        version: link:../deepseek-harness-master/packages/typert/registry
       '@types/node':
         specifier: ^22.20.0
         version: 22.20.1

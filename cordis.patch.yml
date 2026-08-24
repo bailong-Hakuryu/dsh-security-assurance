@@ -10,3 +10,8 @@
     - id: dsh-security-assurance-host-repository-provider
       name: dsh-security-assurance/host-repository-provider
       disabled: true
+    # Requires a Host-authenticated Workbench authority resolver supplied by
+    # the deployment composition; never enable as an anonymous LAN Remote.
+    - id: dsh-security-assurance-workbench-remote
+      name: dsh-security-assurance/workbench-remote
+      disabled: true

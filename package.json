@@ -29,6 +29,18 @@
       "types": "./lib/types/host-repository-provider.d.ts",
       "default": "./lib/host-repository-provider.js"
     },
+    "./workbench-remote": {
+      "types": "./lib/types/workbench-remote.d.ts",
+      "default": "./lib/workbench-remote.js"
+    },
+    "./typert": {
+      "types": "./lib/typert.host.d.ts",
+      "default": "./lib/typert.host.js"
+    },
+    "./remote": {
+      "types": "./lib/typert.remote-client.d.ts",
+      "default": "./lib/typert.remote-client.js"
+    },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -38,6 +50,11 @@
     "lib/analyzer.js",
     "lib/control-plane-provider.js",
     "lib/host-repository-provider.js",
+    "lib/workbench-remote.js",
+    "lib/typert.host.js",
+    "lib/typert.host.d.ts",
+    "lib/typert.remote-client.js",
+    "lib/typert.remote-client.d.ts",
     "lib/types/index.d.ts",
     "lib/types/index.d.ts.map",
     "lib/types/contracts.d.ts",
@@ -48,6 +65,8 @@
     "lib/types/control-plane-provider.d.ts.map",
     "lib/types/host-repository-provider.d.ts",
     "lib/types/host-repository-provider.d.ts.map",
+    "lib/types/workbench-remote.d.ts",
+    "lib/types/workbench-remote.d.ts.map",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -63,7 +82,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsdown",
+    "build": "tsc -p tsconfig.json && tsdown && node scripts/generate-typert.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
@@ -73,6 +92,7 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-home-paths": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "^0.1.1-rc.2",
     "dsh-engineering-control-plane": "^0.1.0"
   },
   "peerDependenciesMeta": {
@@ -87,8 +107,12 @@
     "@deepseek-ai/cordis": "link:../deepseek-harness-master/vendor/cordis",
     "@deepseek-ai/dsh-home-paths": "link:../deepseek-harness-master/packages/util/home-paths",
     "@deepseek-ai/dsh-agent": "link:../deepseek-harness-master/packages/core/agent",
+    "@deepseek-ai/dsh-api-gateway": "link:../deepseek-harness-master/packages/api/gateway",
     "@deepseek-ai/dsh-subagent": "link:../deepseek-harness-master/packages/subagent/subagent",
     "@deepseek-ai/dsh-subprocess-local": "link:../deepseek-harness-master/packages/subprocess/subprocess-local",
+    "@deepseek-ai/dsh-typert-generator": "link:../deepseek-harness-master/packages/typert/generator",
+    "@deepseek-ai/dsh-typert-protocol": "link:../deepseek-harness-master/packages/typert/protocol",
+    "@deepseek-ai/dsh-typert-registry": "link:../deepseek-harness-master/packages/typert/registry",
     "@types/node": "^22.20.0",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",

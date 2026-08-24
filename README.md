@@ -26,6 +26,12 @@ This repository is under active vertical-slice development, not at the
 - a trusted `dsh-security-assurance/host-repository-provider` composition entry
   that registers Host configuration through the root Service and resolves only
   immutable path-free Repository bindings;
+- a package-owned `dsh-security-assurance/workbench-remote` Host Adapter plus
+  generated strict `dsh-security-assurance/typert` and
+  `dsh-security-assurance/remote` artifacts. Its first headless Workbench slice
+  exposes authority-projected `getAssessment` and revision-bound,
+  idempotent `recordRiskDecision` without putting a Principal, permissions, or
+  Security Invocation on the wire;
 - exact Git revision, Change, and Workspace Snapshot Subject selectors;
 - bounded content-addressed Subject materialization below
   `$DSH_HOME/security-assurance/subjects`, with canonical manifests and no
@@ -164,7 +170,9 @@ This repository is under active vertical-slice development, not at the
 
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
-tools, and Workbench are deliberately not claimed as implemented yet. This
+model tools, and the browser-rendered Workbench UI are deliberately not claimed
+as implemented yet. The Workbench Host Remote and generated Client contract are
+implemented, but no browser surface is shipped in this slice. This
 repository ships no production external Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -309,6 +317,50 @@ only its Cordis Service; durable Repository Registry history remains owned by
 the root Security Service, so an equal restart resolves the same Repository ID.
 Conflicting replay fails loudly instead of updating Host policy implicitly.
 
+## Workbench Remote foundation
+
+The optional `dsh-security-assurance/workbench-remote` entry is a Host Adapter,
+not an authentication provider and not a second business Service. It injects
+the root `ctx.securityAssurance` Service and the Host Typert registry. On every
+call, Typert resolves the browser's bounded opaque
+`securityAssuranceWorkbenchContextId` through
+the deployment-supplied `resolveAuthorityContext` function. Only that Host
+function may return the current authenticated operator's principal and exact
+permissions; the Adapter then mints a process-local, non-serializable Security
+Invocation and delegates one operation to the root Service.
+
+```ts
+import SecurityAssuranceWorkbenchRemote from
+  'dsh-security-assurance/workbench-remote'
+
+await ctx.plugin(SecurityAssuranceWorkbenchRemote, {
+  async resolveAuthorityContext(authorityContextId) {
+    // Deployment-owned authentication/session registry. Return undefined when
+    // the context is missing, expired, logged out, or otherwise ambiguous.
+    return hostOperatorSessions.resolve(authorityContextId)
+  },
+})
+```
+
+Harness `0.1.1-rc.2` protects `trusted-host` Remote traffic against Host-header,
+DNS-rebinding, and cross-site confusion, but that transport fence is explicitly
+not user authentication and does not supply an Operator identity to a Remote
+method. Consequently this Adapter has no anonymous or fixed-superuser fallback:
+activation without a real Host resolver fails, an unknown or malformed context
+fails closed, and the dormant bundle row must not be enabled for an anonymous
+LAN deployment.
+
+The generated Host contribution is published at `./typert`; the generated
+Client contribution is published at `./remote` for a future Client entry to
+mount through `ctx.remote.$mount()`. Both `getAssessment` and
+`recordRiskDecision` use strict generated request/result codecs. Cancellation
+is forwarded to the root Service, mutation retries retain the caller's original
+idempotency key, and Adapter disposal withdraws its lookup and Remote Service
+without altering Assessments or the root plugin. The authority context is
+transient authentication material: a future Workbench may keep it only in
+memory and must never persist it, Findings, Evidence, rationale, or full
+Snapshots in browser storage, URLs, caches, or logs.
+
 ## Optional Control Plane integration
 
 The root plugin remains independently installable. The optional
@@ -394,9 +446,9 @@ pnpm pack:dry-run
 pnpm pack:smoke
 ```
 
-All three bundle rows in `cordis.patch.yml` are disabled by default.
+All four bundle rows in `cordis.patch.yml` are disabled by default.
 Installation alone does not activate a security authority, Host Repository
-Provider, or optional Control Plane Provider.
+Provider, Workbench Remote, or optional Control Plane Provider.
 
 ## Design authority
 

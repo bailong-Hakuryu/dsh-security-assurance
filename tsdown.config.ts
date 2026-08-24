@@ -1,4 +1,7 @@
 import { defineConfig } from 'tsdown'
+import { typertPlugin } from '@deepseek-ai/dsh-typert-generator/tsdown'
+
+const decorators = typertPlugin({ faces: ['host'] })
 
 /** Bundle implemented public entries from declaration-build JavaScript. */
 export default defineConfig([
@@ -51,5 +54,16 @@ export default defineConfig([
     fixedExtension: false,
     dts: false,
     clean: false,
+  },
+  {
+    entry: ['lib/types/workbench-remote.js'],
+    outDir: 'lib',
+    format: ['esm'],
+    platform: 'node',
+    target: 'es2024',
+    fixedExtension: false,
+    dts: false,
+    clean: false,
+    plugins: [{ ...decorators, writeBundle: undefined }],
   },
 ])

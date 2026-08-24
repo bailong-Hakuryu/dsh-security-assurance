@@ -100,6 +100,7 @@ try {
     dependencies: {
       '@deepseek-ai/cordis': '4.0.1',
       '@deepseek-ai/dsh-agent': '0.1.1-rc.2',
+      '@deepseek-ai/dsh-api-gateway': '0.1.1-rc.2',
       '@deepseek-ai/dsh-attachment': '0.1.1-rc.2',
       '@deepseek-ai/dsh-brand': '0.1.1-rc.2',
       '@deepseek-ai/dsh-code-runtime': '0.1.1-rc.2',
@@ -115,6 +116,7 @@ try {
       '@deepseek-ai/dsh-timeout': '0.1.1-rc.2',
       '@deepseek-ai/dsh-tools': '0.1.1-rc.2',
       '@deepseek-ai/dsh-typert-protocol': '0.1.1-rc.2',
+      '@deepseek-ai/dsh-typert-registry': '0.1.1-rc.2',
       '@deepseek-ai/dsh-user-approval': '0.1.1-rc.2',
       '@deepseek-ai/schemastery': '3.18.1',
       'dsh-security-assurance': pathToFileURL(tarball).href,
@@ -175,11 +177,29 @@ const hostRepositories = await import('dsh-security-assurance/host-repository-pr
 if ('resolveTrustedInvocation' in hostRepositories || 'SecurityAuthorityResolver' in hostRepositories) {
   throw new Error('Host Repository Provider export leaked authority minting')
 }
+const workbenchRemote = await import('dsh-security-assurance/workbench-remote')
+const typertContribution = await import('dsh-security-assurance/typert')
+const clientRemoteContribution = await import('dsh-security-assurance/remote')
+if (
+  typeof workbenchRemote.default !== 'function'
+  || typertContribution.TYPERT?.invocations?.length !== 2
+  || clientRemoteContribution.default?.descriptors?.length !== 2
+  || typertContribution.TYPERT.invocations.some(invocation =>
+    invocation.parameters[0]?.wire !== 'securityAssuranceWorkbenchContextId'
+      || invocation.parameters[0]?.lookup !== 'securityAssuranceWorkbenchContext'
+      || invocation.parameters[0]?.codec?.mode !== 'strict')
+) {
+  throw new Error('packed Workbench Remote Typert artifacts are incomplete or non-strict')
+}
 const { Context } = await import('@deepseek-ai/cordis')
+const TypertRegistry = (await import('@deepseek-ai/dsh-typert-registry')).default
+const TypertGatewayService = (await import('@deepseek-ai/dsh-api-gateway')).default
 const ctx = new Context()
 if (ctx.reflect.get('securityAssurance') !== undefined) {
   throw new Error('package import activated the Service')
 }
+const typertFiber = ctx.plugin(TypertRegistry)
+await typertFiber
 const fiber = ctx.plugin(root.default, { dshHome: ${JSON.stringify(securityHome)} })
 await fiber
 if (ctx.reflect.get('securityAssurance') === undefined) {
@@ -194,6 +214,39 @@ if (
 ) {
   throw new Error('Cordis activation did not expose Finding/Evidence/Risk Decision or local Analyzer composition')
 }
+const disposeTypertContribution = ctx.typert.register(typertContribution.TYPERT)
+const workbenchFiber = ctx.plugin(workbenchRemote.default, {
+  resolveAuthorityContext(contextId) {
+    if (contextId !== 'packed-workbench-context-v1') return undefined
+    return {
+      principalId: 'packed-workbench-operator',
+      permissions: ['assessment:read', 'risk:decide'],
+    }
+  },
+})
+await workbenchFiber
+const gatewayFiber = ctx.plugin(TypertGatewayService)
+await gatewayFiber
+const missingAssessment = await ctx.typertGateway.invoke({
+  namespace: 'securityAssuranceWorkbench',
+  method: 'getAssessment',
+  args: {
+    securityAssuranceWorkbenchContextId: 'packed-workbench-context-v1',
+    request: {
+      schemaVersion: 1,
+      assessmentId: 'asm-00000000-0000-0000-0000-000000000000',
+    },
+  },
+})
+if (missingAssessment?.ok !== false || missingAssessment.error?.code !== 'NOT_FOUND') {
+  throw new Error('packed strict Workbench Remote did not delegate to the root Service')
+}
+await workbenchFiber.dispose()
+if (ctx.typert.lookups.get('securityAssuranceWorkbenchContext') !== undefined) {
+  throw new Error('packed Workbench Remote did not withdraw its authority lookup')
+}
+await gatewayFiber.dispose()
+await disposeTypertContribution()
 const repositoryConfig = {
   repositories: [{
     schemaVersion: 1,
@@ -280,6 +333,7 @@ if (restartedIndeterminateBinding?.repositoryId !== indeterminateBinding.reposit
 }
 await restartedHostFiber.dispose()
 await fiber.dispose()
+await typertFiber.dispose()
 if (ctx.reflect.get('securityAssurance') !== undefined) {
   throw new Error('Fiber disposal did not remove securityAssurance')
 }
@@ -288,6 +342,7 @@ process.stdout.write(JSON.stringify({
   analyzerContract: 'PASS',
   lifecycle: 'PASS',
   hostRepositoryProvider: 'PASS',
+  workbenchRemote: 'PASS',
   repositoryId: firstBinding.repositoryId,
   failedRepositoryId: failedBinding.repositoryId,
   indeterminateRepositoryId: indeterminateBinding.repositoryId,
@@ -303,6 +358,7 @@ process.stdout.write(JSON.stringify({
     result.packedImport !== 'PASS'
     || result.analyzerContract !== 'PASS'
     || result.lifecycle !== 'PASS'
+    || result.workbenchRemote !== 'PASS'
   ) {
     throw new Error('packed smoke probe returned an invalid result')
   }
@@ -1098,6 +1154,7 @@ process.stdout.write(JSON.stringify({
     analyzerContract: result.analyzerContract,
     lifecycle: result.lifecycle,
     hostRepositoryProvider: result.hostRepositoryProvider,
+    workbenchRemote: result.workbenchRemote,
     ...adapterResult,
   })}\n`)
 } finally {
