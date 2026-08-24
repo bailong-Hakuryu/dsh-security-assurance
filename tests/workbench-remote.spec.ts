@@ -131,6 +131,27 @@ async function harness(): Promise<{
 }
 
 describe('Security Assurance Workbench Remote', () => {
+  it('lists only redacted Assessments through a freshly resolved Host authority', async () => {
+    const { ctx, assessmentId, resolvedContextIds } = await harness()
+    const authorityId = authorityContextId('workbench-session-reviewer')
+
+    await expect(ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'listAssessments',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1, limit: 50 },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        assessments: [{ assessmentId }],
+        nextCursor: null,
+      },
+    })
+    expect(resolvedContextIds).toEqual([authorityId])
+  })
+
   it('exposes bounded revision signals through the authenticated Remote seam', async () => {
     const { ctx, assessmentId } = await harness()
     const authorityId = authorityContextId('workbench-session-reviewer')

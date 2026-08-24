@@ -1006,6 +1006,70 @@ export const assessmentCoverageSnapshotV1Schema: z.ZodType<AssessmentCoverageSna
   digest: digestEnvelopeV1Schema,
 })
 
+/** Bounded request for the newest authority-visible Assessment identities. */
+export interface ListAssessmentsRequest {
+  readonly schemaVersion: 1
+  readonly limit: number
+  readonly cursor?: string | undefined
+}
+
+export const listAssessmentsRequestSchema: z.ZodType<ListAssessmentsRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  limit: z.number().int().min(1).max(100),
+  cursor: z.string().min(1).max(4096).regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/).optional(),
+})
+
+/** Redacted, path-free Assessment identity suitable for selection surfaces. */
+export interface AssessmentListItemV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly state: AssessmentState
+  readonly repository: {
+    readonly repositoryId: RepositoryId
+    readonly repositoryRevision: number
+  }
+  readonly subjectKind: AssessmentSubjectSourceV1['kind']
+  readonly policyId: string
+  readonly coverageStatus: AssessmentCoverageSnapshotV1['status']
+  readonly verdict: SecurityVerdict | null
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export const assessmentListItemV1Schema: z.ZodType<AssessmentListItemV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  state: assessmentStateSchema,
+  repository: z.strictObject({
+    repositoryId: repositoryIdSchema,
+    repositoryRevision: z.number().int().positive(),
+  }),
+  subjectKind: z.enum(['git_revision', 'change', 'workspace_snapshot']),
+  policyId: boundedBindingId,
+  coverageStatus: z.enum(['PENDING', 'COMPLETE', 'GAP']),
+  verdict: securityVerdictSchema.nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+})
+
+/** One stable keyset page bound to the first page's signed consistency watermark. */
+export interface AssessmentListPageV1 {
+  readonly schemaVersion: 1
+  readonly consistencyWatermark: string
+  readonly assessments: readonly AssessmentListItemV1[]
+  readonly nextCursor: string | null
+}
+
+export const assessmentListPageV1Schema: z.ZodType<AssessmentListPageV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  consistencyWatermark: z.string().min(1).max(4096)
+    .regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/),
+  assessments: z.array(assessmentListItemV1Schema).max(100),
+  nextCursor: z.string().min(1).max(4096).nullable(),
+})
+
 export type FindingDetailDimensionValueV1 = string | number | boolean
 
 export interface FindingDetailDimensionV1 {
@@ -1626,6 +1690,12 @@ export const securityAssuranceSubmissionV1Schema: z.ZodType<SecurityAssuranceSub
 export const assessmentSnapshotResultSchema: z.ZodType<SecurityResult<AssessmentSnapshotV1>> =
   z.discriminatedUnion('ok', [
     z.strictObject({ ok: z.literal(true), value: assessmentSnapshotV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
+
+export const assessmentListResultSchema: z.ZodType<SecurityResult<AssessmentListPageV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: assessmentListPageV1Schema }),
     z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
   ])
 

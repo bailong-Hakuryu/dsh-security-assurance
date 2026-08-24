@@ -107,6 +107,79 @@ function readySnapshot(id: AssessmentId): AssessmentSnapshotV1 {
 }
 
 describe('Security Assurance Workbench UI', () => {
+  it('renders an authority-scoped Assessment selector without credential inputs', async () => {
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000011')
+    const snapshot = readySnapshot(id)
+    const b = await bench((_path, endpoint, _payload, signal) => {
+      if (endpoint === 'securityAssuranceWorkbench/listAssessments') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              consistencyWatermark: 'watermark.signature',
+              assessments: [{
+                schemaVersion: 1,
+                assessmentId: id,
+                assessmentRevision: snapshot.assessmentRevision,
+                state: snapshot.state,
+                repository: snapshot.repository,
+                subjectKind: snapshot.subject.kind,
+                policyId: snapshot.policy.policyId,
+                coverageStatus: snapshot.coverage.status,
+                verdict: snapshot.verdict,
+                createdAt: snapshot.createdAt,
+                updatedAt: snapshot.updatedAt,
+              }],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/waitForAssessmentRevision') {
+        return new Promise(resolve => {
+          signal.addEventListener('abort', () => {
+            resolve({ ok: false, error: { code: 'aborted' } })
+          }, { once: true })
+        })
+      }
+      return Promise.reject(new Error(`Unexpected endpoint: ${endpoint}`))
+    })
+    const launcher = b.runtime.renderSlot('sidebar.footer.action', { wide: true })
+    const overlay = b.runtime.renderSlot('shell.overlay', {})
+    await act(async () => {
+      await b.controller.openAssessmentSelection({
+        securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-selector'),
+      })
+      fireEvent.click(launcher.view.getByRole('button', { name: '打开安全保障工作台' }))
+    })
+
+    expect(overlay.view.getByRole('heading', { name: '选择 Assessment' })).toBeTruthy()
+    expect(overlay.view.getByText(id)).toBeTruthy()
+    expect(overlay.view.queryByRole('textbox')).toBeNull()
+    expect(overlay.view.queryByText('workbench-session-selector')).toBeNull()
+    const selectionButton = overlay.view.getByRole('button', { name: `打开 ${id}` })
+    fireEvent.keyDown(overlay.view.getByRole('dialog'), { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(selectionButton)
+    await act(async () => {
+      fireEvent.click(selectionButton)
+    })
+    expect(overlay.view.getByText('security/standard')).toBeTruthy()
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '关闭工作台' }))
+    })
+    expect(b.controller.getState()).toEqual({ kind: 'CLOSED' })
+    expect(overlay.view.queryByRole('dialog')).toBeNull()
+
+    await b.feature.dispose()
+    await b.gateway.dispose()
+    await b.runtime.dispose()
+  })
+
   it('opens a bilingual empty dialog from the additive Host slots and returns focus on close', async () => {
     const b = await bench()
     const launcher = b.runtime.renderSlot('sidebar.footer.action', { wide: true })

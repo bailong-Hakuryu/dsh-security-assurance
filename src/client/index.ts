@@ -16,6 +16,8 @@ import type {
 import workbenchRemote from 'dsh-security-assurance/remote'
 import type {
   AssessmentId,
+  AssessmentListItemV1,
+  AssessmentListPageV1,
   AssessmentRevisionSignalV1,
   AssessmentSnapshotV1,
   PublicSecurityError,
@@ -63,6 +65,11 @@ export interface OpenAssessmentWorkbenchRequestV1 {
   readonly assessmentId: AssessmentId
 }
 
+/** Authenticated Host request for opening an in-memory Assessment selection session. */
+export interface OpenAssessmentSelectionRequestV1 {
+  readonly securityAssuranceWorkbenchContextId: WorkbenchAuthorityContextId
+}
+
 /** Presentation-safe failure retained after sensitive session state is erased. */
 export interface WorkbenchClientFailureV1 {
   readonly source: 'TRANSPORT' | 'SECURITY' | 'CLIENT'
@@ -74,6 +81,13 @@ export interface WorkbenchClientFailureV1 {
 /** Immutable observable state of the browser-owned Workbench session. */
 export type SecurityAssuranceWorkbenchStateV1 =
   | { readonly kind: 'CLOSED' }
+  | { readonly kind: 'SELECTION_LOADING' }
+  | {
+    readonly kind: 'SELECTION_READY'
+    readonly consistencyWatermark: string
+    readonly assessments: readonly AssessmentListItemV1[]
+    readonly nextCursor: string | null
+  }
   | { readonly kind: 'LOADING'; readonly assessmentId: AssessmentId }
   | {
     readonly kind: 'READY'
@@ -82,7 +96,7 @@ export type SecurityAssuranceWorkbenchStateV1 =
   }
   | {
     readonly kind: 'FAILED'
-    readonly assessmentId: AssessmentId
+    readonly assessmentId: AssessmentId | null
     readonly failure: WorkbenchClientFailureV1
   }
 
@@ -94,7 +108,7 @@ export type SecurityAssuranceWorkbenchListener = (
 interface LiveAssessmentSession {
   readonly generation: number
   readonly contextId: WorkbenchAuthorityContextId
-  readonly assessmentId: AssessmentId
+  assessmentId: AssessmentId | undefined
   readonly abort: AbortController
 }
 
@@ -123,6 +137,55 @@ export class SecurityAssuranceWorkbenchController extends Service {
     }, 'security-assurance-workbench: transient session')
   }
 
+  /** Open one Host-authenticated selector without accepting browser-entered credentials. */
+  async openAssessmentSelection(
+    request: OpenAssessmentSelectionRequestV1,
+  ): Promise<SecurityAssuranceWorkbenchStateV1> {
+    this.eraseSession()
+    const session: LiveAssessmentSession = {
+      generation: ++this.nextGeneration,
+      contextId: request.securityAssuranceWorkbenchContextId,
+      assessmentId: undefined,
+      abort: new AbortController(),
+    }
+    this.session = session
+    this.publish(Object.freeze({ kind: 'SELECTION_LOADING' }))
+
+    let result: RemoteResult<SecurityResult<AssessmentListPageV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.listAssessments(
+        session.contextId,
+        { schemaVersion: 1, limit: 50 },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (!this.isActive(session)) return this.state
+    const page = this.readRemoteResult(session, result)
+    if (page === undefined) return this.state
+    return this.publishSelection(page)
+  }
+
+  /** Select one identity from the current authority-projected page. */
+  async selectAssessment(assessmentId: AssessmentId): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    if (
+      session === undefined
+      || this.state.kind !== 'SELECTION_READY'
+      || !this.state.assessments.some(item => item.assessmentId === assessmentId)
+    ) {
+      return this.failSelection({
+        source: 'CLIENT',
+        code: 'ASSESSMENT_NOT_LISTED',
+        message: 'The Assessment is not present in the current authority-scoped selection.',
+        retryable: false,
+      })
+    }
+    session.assessmentId = assessmentId
+    return this.loadAssessment(session, assessmentId)
+  }
+
   /** Open one Assessment, replacing and erasing any prior in-memory session. */
   async openAssessment(
     request: OpenAssessmentWorkbenchRequestV1,
@@ -135,13 +198,20 @@ export class SecurityAssuranceWorkbenchController extends Service {
       abort: new AbortController(),
     }
     this.session = session
-    this.publish(Object.freeze({ kind: 'LOADING', assessmentId: request.assessmentId }))
+    return this.loadAssessment(session, request.assessmentId)
+  }
+
+  private async loadAssessment(
+    session: LiveAssessmentSession,
+    assessmentId: AssessmentId,
+  ): Promise<SecurityAssuranceWorkbenchStateV1> {
+    this.publish(Object.freeze({ kind: 'LOADING', assessmentId }))
 
     let result: RemoteResult<SecurityResult<AssessmentSnapshotV1>>
     try {
       result = await this.ownerCtx.remote.securityAssuranceWorkbench.getAssessment(
         session.contextId,
-        { schemaVersion: 1, assessmentId: session.assessmentId },
+        { schemaVersion: 1, assessmentId },
         session.abort.signal,
       )
     } catch (error) {
@@ -151,9 +221,9 @@ export class SecurityAssuranceWorkbenchController extends Service {
     const snapshot = this.readRemoteResult(session, result)
     if (snapshot === undefined) return this.state
 
-    const ready = this.publishReady(session, snapshot)
+    const ready = this.publishReady(assessmentId, snapshot)
     if (isTerminal(snapshot)) this.retireAuthority(session)
-    else void this.monitor(session, snapshot.assessmentRevision)
+    else void this.monitor(session, assessmentId, snapshot.assessmentRevision)
     return ready
   }
 
@@ -178,7 +248,11 @@ export class SecurityAssuranceWorkbenchController extends Service {
     return () => { void owned() }
   }
 
-  private async monitor(session: LiveAssessmentSession, firstRevision: number): Promise<void> {
+  private async monitor(
+    session: LiveAssessmentSession,
+    assessmentId: AssessmentId,
+    firstRevision: number,
+  ): Promise<void> {
     let afterRevision = firstRevision
     while (this.isActive(session)) {
       let waited: RemoteResult<SecurityResult<AssessmentRevisionSignalV1>>
@@ -187,7 +261,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
           session.contextId,
           {
             schemaVersion: 1,
-            assessmentId: session.assessmentId,
+            assessmentId,
             afterRevision,
             timeoutMs: LONG_POLL_TIMEOUT_MS,
           },
@@ -206,7 +280,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
       try {
         refreshed = await this.ownerCtx.remote.securityAssuranceWorkbench.getAssessment(
           session.contextId,
-          { schemaVersion: 1, assessmentId: session.assessmentId },
+          { schemaVersion: 1, assessmentId },
           session.abort.signal,
         )
       } catch (error) {
@@ -226,7 +300,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
         return
       }
       afterRevision = snapshot.assessmentRevision
-      this.publishReady(session, snapshot)
+      this.publishReady(assessmentId, snapshot)
       if (isTerminal(snapshot)) {
         this.retireAuthority(session)
         return
@@ -250,12 +324,12 @@ export class SecurityAssuranceWorkbenchController extends Service {
   }
 
   private publishReady(
-    session: LiveAssessmentSession,
+    assessmentId: AssessmentId,
     snapshot: AssessmentSnapshotV1,
   ): SecurityAssuranceWorkbenchStateV1 {
     const ready = Object.freeze({
       kind: 'READY' as const,
-      assessmentId: session.assessmentId,
+      assessmentId,
       snapshot,
     })
     this.publish(ready)
@@ -282,7 +356,33 @@ export class SecurityAssuranceWorkbenchController extends Service {
     this.retireAuthority(session)
     const failed = Object.freeze({
       kind: 'FAILED' as const,
-      assessmentId: session.assessmentId,
+      assessmentId: session.assessmentId ?? null,
+      failure: Object.freeze(failure),
+    })
+    this.publish(failed)
+    return failed
+  }
+
+  private publishSelection(
+    page: AssessmentListPageV1,
+  ): SecurityAssuranceWorkbenchStateV1 {
+    const ready = Object.freeze({
+      kind: 'SELECTION_READY' as const,
+      consistencyWatermark: page.consistencyWatermark,
+      assessments: Object.freeze([...page.assessments]),
+      nextCursor: page.nextCursor,
+    })
+    this.publish(ready)
+    return ready
+  }
+
+  private failSelection(
+    failure: WorkbenchClientFailureV1,
+  ): SecurityAssuranceWorkbenchStateV1 {
+    this.eraseSession()
+    const failed = Object.freeze({
+      kind: 'FAILED' as const,
+      assessmentId: null,
       failure: Object.freeze(failure),
     })
     this.publish(failed)
@@ -402,6 +502,7 @@ function installWorkbenchUi(
       inject: (): WorkbenchOverlayInjected => ({
         hooks: { presentation, assessment },
         closeWorkbench: () => { presentation.hide() },
+        selectAssessment: assessmentId => { void controller.selectAssessment(assessmentId) },
       }),
     }, WorkbenchOverlay))
   } catch (error) {

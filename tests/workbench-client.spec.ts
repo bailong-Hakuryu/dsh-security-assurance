@@ -74,6 +74,91 @@ function snapshotAt(
 }
 
 describe('Security Assurance Workbench Client', () => {
+  it('opens an authenticated selection session and selects only a listed Assessment', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000010')
+    const snapshot = snapshotAt(id, 3, 'SEALED')
+    const authorityId = authorityContextId('workbench-session-selector')
+    const endpoints: string[] = []
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+    ): Promise<unknown> {
+      endpoints.push(endpoint)
+      expect(JSON.stringify(payload)).not.toContain('principalId')
+      if (endpoint === 'securityAssuranceWorkbench/listAssessments') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              consistencyWatermark: 'watermark.signature',
+              assessments: [{
+                schemaVersion: 1,
+                assessmentId: id,
+                assessmentRevision: 3,
+                state: 'SEALED',
+                repository: {
+                  repositoryId: 'repo-00000000-0000-0000-0000-000000000010',
+                  repositoryRevision: 1,
+                },
+                subjectKind: 'workspace_snapshot',
+                policyId: 'security/standard',
+                coverageStatus: 'COMPLETE',
+                verdict: 'SATISFIED',
+                createdAt: '2026-08-24T00:00:00.000Z',
+                updatedAt: '2026-08-24T00:03:00.000Z',
+              }],
+              nextCursor: null,
+            },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+
+    await expect(controller.openAssessmentSelection({
+      securityAssuranceWorkbenchContextId: authorityId,
+    })).resolves.toMatchObject({
+      kind: 'SELECTION_READY',
+      assessments: [{ assessmentId: id }],
+    })
+    expect(JSON.stringify(controller.getState())).not.toContain(authorityId)
+
+    await expect(controller.selectAssessment(
+      assessmentId('asm-00000000-0000-0000-0000-000000000099'),
+    )).resolves.toMatchObject({
+      kind: 'FAILED',
+      assessmentId: null,
+      failure: { source: 'CLIENT', code: 'ASSESSMENT_NOT_LISTED' },
+    })
+    await controller.openAssessmentSelection({
+      securityAssuranceWorkbenchContextId: authorityId,
+    })
+    await expect(controller.selectAssessment(id)).resolves.toMatchObject({
+      kind: 'READY',
+      assessmentId: id,
+      snapshot: { assessmentRevision: 3, state: 'SEALED' },
+    })
+    expect(endpoints).toEqual([
+      'securityAssuranceWorkbench/listAssessments',
+      'securityAssuranceWorkbench/listAssessments',
+      'securityAssuranceWorkbench/getAssessment',
+    ])
+  })
+
   it('keeps one in-memory Snapshot current by revision and erases it on close', async () => {
     const ctx = new Context()
     contexts.push(ctx)

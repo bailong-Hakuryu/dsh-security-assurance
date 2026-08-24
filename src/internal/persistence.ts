@@ -186,6 +186,18 @@ interface AssessmentRow {
   readonly snapshot_json: string
 }
 
+export interface AssessmentListKey {
+  readonly createdAt: string
+  readonly assessmentId: AssessmentId
+}
+
+interface AssessmentListIdentityRow {
+  readonly assessment_id: AssessmentId
+  readonly created_at: string
+}
+
+type AssessmentListRow = AssessmentRow & AssessmentListIdentityRow
+
 function digest(value: unknown): string {
   return `sha256:${sha256Hex(canonicalJson(value))}`
 }
@@ -776,6 +788,61 @@ export class SecurityPersistence {
     return row === undefined
       ? undefined
       : internalAssessmentRecordV1Schema.parse(JSON.parse(row.snapshot_json))
+  }
+
+  getAssessmentListWatermark(): AssessmentListKey | null {
+    this.requireOpen()
+    const row = this.db.prepare(`
+      SELECT assessment_id, created_at
+      FROM assessments
+      ORDER BY created_at DESC, assessment_id DESC
+      LIMIT 1
+    `).get() as AssessmentListIdentityRow | undefined
+    return row === undefined
+      ? null
+      : { createdAt: row.created_at, assessmentId: row.assessment_id }
+  }
+
+  listAssessmentRecordsPage(input: {
+    readonly upperInclusive: AssessmentListKey
+    readonly afterExclusive: AssessmentListKey | null
+    readonly limit: number
+  }): readonly InternalAssessmentRecordV1[] {
+    this.requireOpen()
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 101) {
+      throw new SecurityPersistenceError('corrupt_database', 'Assessment page limit is invalid')
+    }
+    const rows = input.afterExclusive === null
+      ? this.db.prepare(`
+          SELECT assessment_id, created_at, snapshot_json
+          FROM assessments
+          WHERE created_at < ? OR (created_at = ? AND assessment_id <= ?)
+          ORDER BY created_at DESC, assessment_id DESC
+          LIMIT ?
+        `).all(
+          input.upperInclusive.createdAt,
+          input.upperInclusive.createdAt,
+          input.upperInclusive.assessmentId,
+          input.limit,
+        )
+      : this.db.prepare(`
+          SELECT assessment_id, created_at, snapshot_json
+          FROM assessments
+          WHERE (created_at < ? OR (created_at = ? AND assessment_id <= ?))
+            AND (created_at < ? OR (created_at = ? AND assessment_id < ?))
+          ORDER BY created_at DESC, assessment_id DESC
+          LIMIT ?
+        `).all(
+          input.upperInclusive.createdAt,
+          input.upperInclusive.createdAt,
+          input.upperInclusive.assessmentId,
+          input.afterExclusive.createdAt,
+          input.afterExclusive.createdAt,
+          input.afterExclusive.assessmentId,
+          input.limit,
+        )
+    return (rows as unknown as readonly AssessmentListRow[]).map(row =>
+      internalAssessmentRecordV1Schema.parse(JSON.parse(row.snapshot_json)))
   }
 
   listCreatedAssessmentIds(): readonly AssessmentId[] {

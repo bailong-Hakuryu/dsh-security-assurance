@@ -6,8 +6,10 @@ import {
 } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   AssessmentRevisionSignalV1,
+  AssessmentListPageV1,
   AssessmentSnapshotV1,
   GetAssessmentRequest,
+  ListAssessmentsRequest,
   RecordRiskDecisionRequest,
   RiskDecisionReceiptV1,
   SecurityInvocation,
@@ -92,6 +94,20 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
         })
       },
     })
+  }
+
+  /** List authority-visible redacted Assessment identities for Host selection surfaces. */
+  @Remote
+  listAssessments(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: ListAssessmentsRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<AssessmentListPageV1>> {
+    return this.ctx.securityAssurance.listAssessments(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
   }
 
   /** Read one authority-projected Assessment Snapshot. */

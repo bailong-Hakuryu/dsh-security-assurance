@@ -8,7 +8,12 @@ import type {
 import { useEffect, useRef } from 'react'
 import type { KeyboardEvent, MouseEvent } from 'react'
 import type { SecurityAssuranceWorkbenchStateV1 } from '../index.ts'
-import type { AssessmentAvailableActionV1, AssessmentSnapshotV1 } from '../../contracts.ts'
+import type {
+  AssessmentAvailableActionV1,
+  AssessmentId,
+  AssessmentListItemV1,
+  AssessmentSnapshotV1,
+} from '../../contracts.ts'
 import type { WORKBENCH_LOCALE_NAMESPACE } from './locales.ts'
 import type { WorkbenchPresentationSnapshotV1 } from './presentation.ts'
 
@@ -20,6 +25,7 @@ export type WorkbenchOverlaySources = {
 export interface WorkbenchOverlayInjected {
   readonly hooks: WorkbenchOverlaySources
   readonly closeWorkbench: () => void
+  readonly selectAssessment: (assessmentId: AssessmentId) => void
 }
 
 export type WorkbenchOverlayProps =
@@ -34,10 +40,12 @@ export function WorkbenchOverlay({
   usePresentation,
   useAssessment,
   closeWorkbench,
+  selectAssessment,
 }: WorkbenchOverlayProps) {
   const open = usePresentation(snapshot => snapshot.open)
   const state = useAssessment(snapshot => snapshot)
   const closeRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
     if (open) closeRef.current?.focus()
@@ -55,14 +63,25 @@ export function WorkbenchOverlay({
       return
     }
     if (event.key === 'Tab') {
-      event.preventDefault()
-      closeRef.current?.focus()
+      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLButtonElement>(
+        'button:not([disabled])',
+      ) ?? [])]
+      const first = focusable.at(0)
+      const last = focusable.at(-1)
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last?.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first?.focus()
+      }
     }
   }
 
   return (
     <div className="dsh-security-backdrop" onMouseDown={onBackdrop} onKeyDown={onKeyDown}>
       <section
+        ref={dialogRef}
         className="dsh-security-dialog"
         role="dialog"
         aria-modal="true"
@@ -84,6 +103,16 @@ export function WorkbenchOverlay({
         </header>
         <div className="dsh-security-dialog__body">
           {state.kind === 'CLOSED' && <MessageState title={t('empty.title')} body={t('empty.body')} />}
+          {state.kind === 'SELECTION_LOADING' && (
+            <MessageState title={t('selection.loadingTitle')} body={t('selection.loadingBody')} role="status" />
+          )}
+          {state.kind === 'SELECTION_READY' && (
+            <AssessmentSelection
+              assessments={state.assessments}
+              selectAssessment={selectAssessment}
+              t={t}
+            />
+          )}
           {state.kind === 'LOADING' && (
             <MessageState
               title={t('loading.title')}
@@ -104,6 +133,45 @@ export function WorkbenchOverlay({
         </div>
       </section>
     </div>
+  )
+}
+
+function AssessmentSelection({ assessments, selectAssessment, t }: {
+  readonly assessments: readonly AssessmentListItemV1[]
+  readonly selectAssessment: (assessmentId: AssessmentId) => void
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  return (
+    <section className="dsh-security-selection" aria-labelledby="dsh-security-selection-title">
+      <div>
+        <h2 id="dsh-security-selection-title">{t('selection.title')}</h2>
+        <p>{t('selection.body')}</p>
+      </div>
+      {assessments.length === 0
+        ? <p className="dsh-security-muted">{t('selection.empty')}</p>
+        : (
+            <ul className="dsh-security-selection__list">
+              {assessments.map(item => (
+                <li key={item.assessmentId}>
+                  <button
+                    type="button"
+                    aria-label={`${t('selection.open')} ${item.assessmentId}`}
+                    onClick={() => { selectAssessment(item.assessmentId) }}
+                  >
+                    <span className="dsh-security-selection__identity">
+                      <code>{item.assessmentId}</code>
+                      <small>{item.repository.repositoryId} @ {item.repository.repositoryRevision}</small>
+                    </span>
+                    <span className="dsh-security-badges">
+                      <MachineBadge value={item.state} />
+                      <MachineBadge value={item.verdict ?? t('value.pending')} />
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+    </section>
   )
 }
 

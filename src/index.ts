@@ -14,6 +14,7 @@ import {
   getRepositoryRequestSchema,
   getHealthRequestSchema,
   listFindingsRequestSchema,
+  listAssessmentsRequestSchema,
   listRepositoriesRequestSchema,
   repositoryIdSchema,
   registerRepositoryRequestSchema,
@@ -40,6 +41,7 @@ import type {
   AssessmentCancellationReceiptV1,
   AssessmentRevisionSignalV1,
   AssessmentSnapshotV1,
+  AssessmentListPageV1,
   AssessmentSubjectSourceV1,
   AssessmentTargetSelectorV1,
   BundleManifestV1,
@@ -57,6 +59,7 @@ import type {
   FindingDetailViewV1,
   FindingListPageV1,
   ListFindingsRequest,
+  ListAssessmentsRequest,
   ListRepositoriesRequest,
   PublicSecurityErrorCode,
   RegisterRepositoryRequest,
@@ -109,6 +112,10 @@ import {
   type FindingQuerySourceV1,
 } from './internal/finding-query.ts'
 import { publicAssessmentSnapshot } from './internal/assessment-record.ts'
+import {
+  AssessmentListCursorError,
+  AssessmentListQueryModule,
+} from './internal/assessment-list-query.ts'
 import { analyzeNodePackageInstallLifecycle } from './internal/builtin-node-package-lifecycle-analyzer.ts'
 import {
   checkSealReadiness,
@@ -265,6 +272,7 @@ export class SecurityAssuranceService extends Service {
   private readonly authorityResolver = new SecurityAuthorityResolver()
   private readonly analyzerRegistry = new AnalyzerRegistry()
   private readonly findingQueries = new FindingQueryModule()
+  private readonly assessmentLists = new AssessmentListQueryModule()
   private readonly evidenceViews = new EvidenceViewModule()
   private readonly riskDecisions = new RiskDecisionModule()
   private readonly ready: Promise<SecurityPersistence | undefined>
@@ -810,6 +818,42 @@ export class SecurityAssuranceService extends Service {
         return failure('UNAVAILABLE', 'The private Security Assurance store is unavailable.', true)
       }
       return failure('INTERNAL', 'Security Assurance could not complete the operation.', true)
+    }
+  }
+
+  /** List redacted Assessment identities through an authority-bound stable keyset cursor. */
+  async listAssessments(
+    invocation: SecurityInvocation,
+    request: ListAssessmentsRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<AssessmentListPageV1>> {
+    try {
+      const authority = this.authorityResolver.authority(invocation)
+      if (authority === undefined || !authority.permissions.has('assessment:read')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to list Assessments.')
+      }
+      const interrupted = interruption<AssessmentListPageV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = listAssessmentsRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match listAssessments schema version 1.')
+      }
+      const persistence = await this.ready
+      if (persistence === undefined || this.disposed) {
+        return failure('UNAVAILABLE', 'Assessment queries are unavailable while the private store is offline.', true)
+      }
+      return deepFreeze({
+        ok: true,
+        value: this.assessmentLists.list(persistence, parsed.data, {
+          kind: authority.kind,
+          principalId: authority.principalId,
+        }),
+      })
+    } catch (error) {
+      if (error instanceof AssessmentListCursorError) {
+        return failure('INVALID_REQUEST', 'The Assessment list cursor is invalid for this request.')
+      }
+      return this.assessmentReadFailure(error)
     }
   }
 

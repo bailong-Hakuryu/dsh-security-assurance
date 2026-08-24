@@ -150,7 +150,11 @@ if ('SecurityAuthorityResolver' in contracts || 'resolveTrustedInvocation' in co
   throw new Error('contracts export leaked authority minting')
 }
 if (
-  typeof contracts.listFindingsRequestSchema?.parse !== 'function'
+  typeof contracts.listAssessmentsRequestSchema?.parse !== 'function'
+  || typeof contracts.assessmentListItemV1Schema?.parse !== 'function'
+  || typeof contracts.assessmentListPageV1Schema?.parse !== 'function'
+  || typeof contracts.assessmentListResultSchema?.parse !== 'function'
+  || typeof contracts.listFindingsRequestSchema?.parse !== 'function'
   || typeof contracts.findingListResultSchema?.parse !== 'function'
   || typeof contracts.getFindingRequestSchema?.parse !== 'function'
   || typeof contracts.findingDetailViewV1Schema?.parse !== 'function'
@@ -190,8 +194,10 @@ const typertContribution = await import('dsh-security-assurance/typert')
 const clientRemoteContribution = await import('dsh-security-assurance/remote')
 if (
   typeof workbenchRemote.default !== 'function'
-  || typertContribution.TYPERT?.invocations?.length !== 3
-  || clientRemoteContribution.default?.descriptors?.length !== 3
+  || typertContribution.TYPERT?.invocations?.length !== 4
+  || clientRemoteContribution.default?.descriptors?.length !== 4
+  || !clientRemoteContribution.default.descriptors.some(descriptor =>
+    descriptor.method === 'listAssessments')
   || !clientRemoteContribution.default.descriptors.some(descriptor =>
     descriptor.method === 'waitForAssessmentRevision')
   || typertContribution.TYPERT.invocations.some(invocation =>
@@ -253,6 +259,7 @@ if (ctx.reflect.get('securityAssurance') === undefined) {
 if (
   typeof ctx.securityAssurance.registerAnalyzer !== 'function'
   || typeof ctx.securityAssurance.registerAnalyzerQualification !== 'function'
+  || typeof ctx.securityAssurance.listAssessments !== 'function'
   || typeof ctx.securityAssurance.getFinding !== 'function'
   || typeof ctx.securityAssurance.getEvidenceView !== 'function'
   || typeof ctx.securityAssurance.recordRiskDecision !== 'function'
@@ -272,6 +279,21 @@ const workbenchFiber = ctx.plugin(workbenchRemote.default, {
 await workbenchFiber
 const gatewayFiber = ctx.plugin(TypertGatewayService)
 await gatewayFiber
+const assessmentList = await ctx.typertGateway.invoke({
+  namespace: 'securityAssuranceWorkbench',
+  method: 'listAssessments',
+  args: {
+    securityAssuranceWorkbenchContextId: 'packed-workbench-context-v1',
+    request: { schemaVersion: 1, limit: 50 },
+  },
+})
+if (
+  assessmentList?.ok !== true
+  || assessmentList.value?.assessments?.length !== 0
+  || typeof assessmentList.value?.consistencyWatermark !== 'string'
+) {
+  throw new Error('packed strict Workbench Remote did not list redacted Assessments')
+}
 const missingAssessment = await ctx.typertGateway.invoke({
   namespace: 'securityAssuranceWorkbench',
   method: 'getAssessment',

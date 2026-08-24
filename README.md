@@ -29,13 +29,15 @@ This repository is under active vertical-slice development, not at the
 - a package-owned `dsh-security-assurance/workbench-remote` Host Adapter plus
   generated strict `dsh-security-assurance/typert` and
   `dsh-security-assurance/remote` artifacts. Its headless Workbench slice
-  exposes authority-projected `getAssessment`, bounded
+  exposes authority-projected, watermarked `listAssessments`, exact
+  `getAssessment`, bounded
   `waitForAssessmentRevision`, and revision-bound, idempotent
   `recordRiskDecision` without putting a Principal, permissions, or Security
   Invocation on the wire;
 - a package-owned `dsh-security-assurance/client` browser entry that mounts the
   generated Remote contribution and provides one transient
-  `ctx.securityAssuranceWorkbench` Controller. It fetches immutable Snapshots,
+  `ctx.securityAssuranceWorkbench` Controller. It opens an authenticated,
+  redacted Assessment selector, fetches immutable Snapshots,
   follows committed revisions through cancellable long-polling, fences stale
   responses, and erases its authority context and Assessment payload on close.
   The same entry contributes an additive bilingual launcher at
@@ -180,11 +182,11 @@ This repository is under active vertical-slice development, not at the
 
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
-model tools, authenticated browser-side Assessment selection, Risk Decision
-forms, and the complete Workbench information architecture are deliberately not
-claimed as implemented yet. The Workbench Host Remote, generated Client
-contract, transient browser Controller, and read-only Assessment Detail visual
-foundation are implemented. This
+model tools, Risk Decision forms, selector pagination beyond the newest bounded
+page, and the complete Workbench information architecture are deliberately not
+claimed as implemented yet. The Workbench Host Remote, authenticated redacted
+Assessment selection, generated Client contract, transient browser Controller,
+and read-only Assessment Detail visual foundation are implemented. This
 repository ships no production external Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -363,7 +365,7 @@ fails closed, and the dormant bundle row must not be enabled for an anonymous
 LAN deployment.
 
 The generated Host contribution is published at `./typert`; the generated
-Client contribution is published at `./remote`. All three operations use strict
+Client contribution is published at `./remote`. All four operations use strict
 generated request/result codecs. Cancellation is forwarded to the root Service,
 mutation retries retain the caller's original idempotency key, and Adapter
 disposal withdraws its lookup and Remote Service without altering Assessments
@@ -371,8 +373,14 @@ or the root plugin.
 
 The package also publishes a Harness-discoverable `./client` entry. It mounts
 `./remote` through `ctx.remote.$mount()` and provides the browser-local
-`ctx.securityAssuranceWorkbench` Controller with four public operations:
-`openAssessment`, `closeAssessment`, `getState`, and `subscribe`. One open call
+`ctx.securityAssuranceWorkbench` Controller with six public operations:
+`openAssessmentSelection`, `selectAssessment`, `openAssessment`,
+`closeAssessment`, `getState`, and `subscribe`. The Host passes its current
+opaque authority-context ID to `openAssessmentSelection`; the browser receives
+only the newest bounded page of redacted, authority-visible identities and can
+open only an ID from that page. No credential, Principal, permission set, or
+Security Invocation is accepted by the selector. `openAssessment` remains the
+direct Host seam when the Assessment ID is already known. Either open path
 loads the current immutable Snapshot and internally follows
 `waitForAssessmentRevision`; `CHANGED` fetches the next Snapshot, `TIMED_OUT`
 continues from the same committed revision, and close or Client disposal aborts
@@ -390,7 +398,8 @@ The Client entry also registers two additive Harness UI contributions. A
 launcher in `sidebar.footer.action` opens a frame-wide dialog in
 `shell.overlay`; neither replaces a single-owner Host shell slot. The overlay
 subscribes to the Controller through the Slot renderer's observable seam and
-renders `CLOSED`, `LOADING`, `READY`, and `FAILED` without duplicating Remote,
+renders `CLOSED`, `SELECTION_LOADING`, `SELECTION_READY`, `LOADING`, `READY`,
+and `FAILED` without duplicating Remote,
 polling, authorization, or revision logic. `READY` shows canonical machine IDs
 unchanged together with revision, state, Verdict, repository and policy
 bindings, mandatory Coverage, and the Service Snapshot's `availableActions`.
@@ -400,9 +409,16 @@ controls.
 The surface ships complete English and Simplified Chinese copy, semantic dialog
 and status roles, keyboard dismissal and focus return, responsive layout, and
 text-bearing state indicators. It loads no third-party scripts, fonts, remote
-content, trackers, or analytics. Opening an Assessment still belongs to an
-authenticated Host integration calling `openAssessment`; the launcher does not
-accept, infer, persist, or mint an authority context.
+content, trackers, or analytics. Opening the selector still belongs to an
+authenticated Host integration calling `openAssessmentSelection`; the launcher
+does not accept, infer, persist, or mint an authority context. Selection buttons
+only forward identities already projected by the Security Service.
+
+```ts
+await ctx.securityAssuranceWorkbench.openAssessmentSelection({
+  securityAssuranceWorkbenchContextId: currentHostSession.workbenchContextId,
+})
+```
 
 ## Optional Control Plane integration
 
