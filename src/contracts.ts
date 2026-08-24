@@ -411,6 +411,8 @@ export interface StartAssessmentRequest {
   readonly requestedStrongerControlIds: readonly string[]
 }
 
+export const RISK_DECISION_WINDOW_CONTROL_ID = 'security/risk-decision-window-v1' as const
+
 export const startAssessmentRequestSchema: z.ZodType<StartAssessmentRequest> = z.strictObject({
   schemaVersion: z.literal(1),
   idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
@@ -754,6 +756,138 @@ export const getEvidenceViewRequestSchema: z.ZodType<GetEvidenceViewRequest> = z
   ]),
 })
 
+export type RiskDecisionKindV1 = 'DENY' | 'ACCEPT'
+
+export interface RecordRiskDecisionRequest {
+  readonly schemaVersion: 1
+  readonly idempotencyKey: string
+  readonly assessmentId: AssessmentId
+  readonly expectedAssessmentRevision: number
+  readonly finding: {
+    readonly recordId: string
+    readonly recordRevision: number
+  }
+  readonly decision: RiskDecisionKindV1
+  readonly rationale: string
+  readonly compensatingControls: readonly string[]
+  readonly expiresAt: string | null
+}
+
+export const recordRiskDecisionRequestSchema: z.ZodType<RecordRiskDecisionRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+  assessmentId: assessmentIdSchema,
+  expectedAssessmentRevision: z.number().int().positive(),
+  finding: z.strictObject({
+    recordId: z.string().regex(/^finding-[0-9a-f]{64}$/),
+    recordRevision: z.number().int().positive(),
+  }),
+  decision: z.enum(['DENY', 'ACCEPT']),
+  rationale: z.string().trim().min(20).max(2_000),
+  compensatingControls: z.array(z.string().trim().min(3).max(256)).max(16),
+  expiresAt: z.iso.datetime({ offset: true }).nullable(),
+}).superRefine((request, context) => {
+  if (request.decision === 'DENY' && (request.expiresAt !== null || request.compensatingControls.length > 0)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'DENY decisions cannot declare expiry or compensating controls',
+    })
+  }
+  if (request.decision === 'ACCEPT' && (request.expiresAt === null || request.compensatingControls.length === 0)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'ACCEPT decisions require expiry and compensating controls',
+    })
+  }
+})
+
+export interface RiskDecisionRecordV1 {
+  readonly schemaVersion: 1
+  readonly decisionId: string
+  readonly assessmentId: AssessmentId
+  readonly finding: {
+    readonly recordId: string
+    readonly recordRevision: number
+  }
+  readonly decision: RiskDecisionKindV1
+  readonly resolution: 'DENIED' | 'ACCEPTED'
+  readonly rationale: string
+  readonly compensatingControls: readonly string[]
+  readonly expiresAt: string | null
+  readonly decisionMaker: {
+    readonly kind: 'host-operator' | 'control-plane'
+    readonly principalId: string
+  }
+  readonly recordedAt: string
+}
+
+export const riskDecisionRecordV1Schema: z.ZodType<RiskDecisionRecordV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  decisionId: z.string().regex(/^risk-decision-[0-9a-f-]{36}$/),
+  assessmentId: assessmentIdSchema,
+  finding: z.strictObject({
+    recordId: z.string().regex(/^finding-[0-9a-f]{64}$/),
+    recordRevision: z.number().int().positive(),
+  }),
+  decision: z.enum(['DENY', 'ACCEPT']),
+  resolution: z.enum(['DENIED', 'ACCEPTED']),
+  rationale: z.string().trim().min(20).max(2_000),
+  compensatingControls: z.array(z.string().trim().min(3).max(256)).max(16),
+  expiresAt: z.iso.datetime({ offset: true }).nullable(),
+  decisionMaker: z.strictObject({
+    kind: z.enum(['host-operator', 'control-plane']),
+    principalId: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/i),
+  }),
+  recordedAt: z.iso.datetime({ offset: true }),
+}).superRefine((record, context) => {
+  if (record.decision === 'DENY' && (
+    record.resolution !== 'DENIED'
+    || record.expiresAt !== null
+    || record.compensatingControls.length > 0
+  )) context.addIssue({ code: 'custom', message: 'DENY Risk Decision fields disagree' })
+  if (record.decision === 'ACCEPT' && (
+    record.resolution !== 'ACCEPTED'
+    || record.expiresAt === null
+    || record.compensatingControls.length === 0
+  )) context.addIssue({ code: 'custom', message: 'ACCEPT Risk Decision fields disagree' })
+})
+
+export interface RiskDecisionReceiptV1 {
+  readonly schemaVersion: 1
+  readonly operation: 'record_risk_decision'
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly acceptedState: 'BLOCKED'
+  readonly decisionId: string
+  readonly finding: {
+    readonly recordId: string
+    readonly recordRevision: number
+  }
+  readonly decision: RiskDecisionKindV1
+  readonly resolution: 'DENIED' | 'ACCEPTED'
+  readonly idempotencyKey: string
+  readonly recordedAt: string
+  readonly correlationId: string
+}
+
+export const riskDecisionReceiptV1Schema: z.ZodType<RiskDecisionReceiptV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  operation: z.literal('record_risk_decision'),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  acceptedState: z.literal('BLOCKED'),
+  decisionId: z.string().regex(/^risk-decision-[0-9a-f-]{36}$/),
+  finding: z.strictObject({
+    recordId: z.string().regex(/^finding-[0-9a-f]{64}$/),
+    recordRevision: z.number().int().positive(),
+  }),
+  decision: z.enum(['DENY', 'ACCEPT']),
+  resolution: z.enum(['DENIED', 'ACCEPTED']),
+  idempotencyKey: z.string().min(1).max(128),
+  recordedAt: z.iso.datetime({ offset: true }),
+  correlationId: z.string().regex(/^sec-[0-9a-f-]{36}$/),
+})
+
 export interface WaitForAssessmentRevisionRequest {
   readonly schemaVersion: 1
   readonly assessmentId: AssessmentId
@@ -873,7 +1007,12 @@ export interface FindingDetailViewV1 {
   } | null
   readonly policySignificance: PolicySignificance | null
   readonly coverageRelations: readonly AssessmentCoverageResolutionV1[]
-  readonly riskDecision: { readonly state: 'NOT_RECORDED' }
+  readonly riskDecision:
+    | { readonly state: 'NOT_RECORDED' }
+    | ({ readonly state: 'DENIED' | 'ACCEPTED' } & Omit<
+        RiskDecisionRecordV1,
+        'schemaVersion' | 'assessmentId' | 'finding' | 'decision' | 'resolution'
+      >)
   readonly evidenceLinks: readonly FindingEvidenceLinkMetadataV1[]
   readonly attackPath: { readonly state: 'NOT_AVAILABLE' }
 }
@@ -949,7 +1088,21 @@ export const findingDetailViewV1Schema: z.ZodType<FindingDetailViewV1> = z.stric
   }).nullable(),
   policySignificance: policySignificanceSchema.nullable(),
   coverageRelations: z.array(assessmentCoverageResolutionV1Schema).max(256),
-  riskDecision: z.strictObject({ state: z.literal('NOT_RECORDED') }),
+  riskDecision: z.union([
+    z.strictObject({ state: z.literal('NOT_RECORDED') }),
+    z.strictObject({
+      state: z.enum(['DENIED', 'ACCEPTED']),
+      decisionId: z.string().regex(/^risk-decision-[0-9a-f-]{36}$/),
+      rationale: z.string().trim().min(20).max(2_000),
+      compensatingControls: z.array(z.string().trim().min(3).max(256)).max(16),
+      expiresAt: z.iso.datetime({ offset: true }).nullable(),
+      decisionMaker: z.strictObject({
+        kind: z.enum(['host-operator', 'control-plane']),
+        principalId: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/i),
+      }),
+      recordedAt: z.iso.datetime({ offset: true }),
+    }),
+  ]),
   evidenceLinks: z.array(findingEvidenceLinkMetadataV1Schema).max(128),
   attackPath: z.strictObject({ state: z.literal('NOT_AVAILABLE') }),
 })
@@ -1248,6 +1401,8 @@ export interface SecurityAssuranceSubmissionV1 {
     readonly providerPolicy: SecuritySubmissionArtifactV1
     readonly coverage: SecuritySubmissionArtifactV1
     readonly findings: SecuritySubmissionArtifactV1
+    /** Added during v1 development; absent only on legacy pre-Risk-Decision Seals. */
+    readonly riskDecisions?: SecuritySubmissionArtifactV1 | undefined
     readonly sourceSeal: SecuritySubmissionArtifactV1
     readonly provenance: SecuritySubmissionArtifactV1
     readonly evidence: readonly SecuritySubmissionArtifactV1[]
@@ -1275,6 +1430,7 @@ export const securityAssuranceSubmissionV1Schema: z.ZodType<SecurityAssuranceSub
     providerPolicy: securitySubmissionArtifactV1Schema,
     coverage: securitySubmissionArtifactV1Schema,
     findings: securitySubmissionArtifactV1Schema,
+    riskDecisions: securitySubmissionArtifactV1Schema.optional(),
     sourceSeal: securitySubmissionArtifactV1Schema,
     provenance: securitySubmissionArtifactV1Schema,
     evidence: z.array(securitySubmissionArtifactV1Schema).min(1).max(128),
@@ -1303,6 +1459,12 @@ export const findingDetailResultSchema: z.ZodType<SecurityResult<FindingDetailVi
 export const evidenceViewResultSchema: z.ZodType<SecurityResult<EvidenceViewV1>> =
   z.discriminatedUnion('ok', [
     z.strictObject({ ok: z.literal(true), value: evidenceViewV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
+
+export const riskDecisionReceiptResultSchema: z.ZodType<SecurityResult<RiskDecisionReceiptV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: riskDecisionReceiptV1Schema }),
     z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
   ])
 

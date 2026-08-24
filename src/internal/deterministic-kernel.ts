@@ -661,6 +661,12 @@ export function checkSealReadiness(
   publishedEvidence: readonly EvidencePublicationReceiptV1[] = [],
 ): { readonly ready: true } | { readonly ready: false; readonly violations: readonly string[] } {
   const violations: string[] = []
+  const blockingFindings = outcome.findings.filter(finding => (
+    typeof finding === 'object'
+    && finding !== null
+    && !Array.isArray(finding)
+    && finding.policySignificance === 'BLOCKING'
+  ))
   if (contract.coverage.status !== 'PENDING') violations.push('frozen_plan_not_pending_at_start')
   if (outcome.coverage.mandatoryObligations !== 1) violations.push('mandatory_obligation_count_mismatch')
   if (outcome.coverage.resolutions.length !== 1) violations.push('coverage_resolution_count_mismatch')
@@ -668,14 +674,14 @@ export function checkSealReadiness(
     if (outcome.coverage.status !== 'GAP' || outcome.coverage.gapObligations !== 1) {
       violations.push('indeterminate_without_mandatory_gap')
     }
-    if (outcome.findings.length !== 0) violations.push('blocking_finding_did_not_take_precedence')
+    if (blockingFindings.length !== 0) violations.push('blocking_finding_did_not_take_precedence')
   } else if (outcome.verdict === 'SATISFIED') {
     if (outcome.coverage.status !== 'COMPLETE' || outcome.coverage.satisfiedObligations !== 1) {
       violations.push('satisfied_without_complete_coverage')
     }
-    if (outcome.findings.length !== 0) violations.push('satisfied_with_blocking_finding')
+    if (blockingFindings.length !== 0) violations.push('satisfied_with_blocking_finding')
   } else {
-    if (outcome.findings.length === 0) violations.push('failed_without_validated_finding')
+    if (blockingFindings.length === 0) violations.push('failed_without_blocking_finding')
   }
   if (publishedEvidence.length !== outcome.evidence.length) {
     violations.push('evidence_publication_count_mismatch')

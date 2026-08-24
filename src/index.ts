@@ -17,11 +17,15 @@ import {
   listRepositoriesRequestSchema,
   repositoryIdSchema,
   registerRepositoryRequestSchema,
+  recordRiskDecisionRequestSchema,
   resumeAssessmentRequestSchema,
   startAssessmentRequestSchema,
   updateRepositoryRequestSchema,
   REQUIRED_NODE_RANGE,
+  RISK_DECISION_WINDOW_CONTROL_ID,
   runtimeHealthSnapshotSchema,
+  securitySubmissionArtifactV1Schema,
+  securitySubmissionJsonV1Schema,
   SECURITY_ASSURANCE_PRODUCT_NAME,
   SECURITY_ASSURANCE_PRODUCT_VERSION,
   TARGET_HARNESS_VERSION,
@@ -54,11 +58,13 @@ import type {
   ListRepositoriesRequest,
   PublicSecurityErrorCode,
   RegisterRepositoryRequest,
+  RecordRiskDecisionRequest,
   ResumeAssessmentRequest,
   RepositoryCommandReceiptV1,
   RepositoryListSnapshotV1,
   RepositorySnapshotV1,
   RepositoryBindingsV1,
+  RiskDecisionReceiptV1,
   RuntimeHealthSnapshot,
   SecurityAssuranceSubmissionV1,
   SecurityInvocation,
@@ -98,6 +104,7 @@ import {
   FindingQueryModule,
   FindingQueryNotFoundError,
   FindingQueryRevisionError,
+  type FindingQuerySourceV1,
 } from './internal/finding-query.ts'
 import { publicAssessmentSnapshot } from './internal/assessment-record.ts'
 import { analyzeNodePackageInstallLifecycle } from './internal/builtin-node-package-lifecycle-analyzer.ts'
@@ -106,12 +113,19 @@ import {
   evaluateDeterministicAssessment,
   prepareAssessmentContract,
 } from './internal/deterministic-kernel.ts'
-import { publishEvidenceSet } from './internal/evidence-persistence.ts'
+import {
+  publishEvidenceSet,
+  readPublishedEvidenceSet,
+} from './internal/evidence-persistence.ts'
 import {
   openSecurityPersistence,
   SecurityPersistenceError,
 } from './internal/persistence.ts'
 import type { SecurityPersistence } from './internal/persistence.ts'
+import {
+  RiskDecisionModule,
+  RiskDecisionPolicyError,
+} from './internal/risk-decision.ts'
 import {
   assembleSealedArtifacts,
   publishSealedArtifacts,
@@ -250,6 +264,7 @@ export class SecurityAssuranceService extends Service {
   private readonly analyzerRegistry = new AnalyzerRegistry()
   private readonly findingQueries = new FindingQueryModule()
   private readonly evidenceViews = new EvidenceViewModule()
+  private readonly riskDecisions = new RiskDecisionModule()
   private readonly ready: Promise<SecurityPersistence | undefined>
   private readonly securityRoot: string
   private readonly runningAssessments = new Map<AssessmentId, {
@@ -592,8 +607,14 @@ export class SecurityAssuranceService extends Service {
       )) {
         return failure('INVALID_REQUEST', 'The request does not match startAssessment schema version 1.')
       }
-      if (parsed.data.requestedStrongerControlIds.length > 0) {
-        return failure('INVALID_REQUEST', 'No requested stronger controls are registered in this development slice.')
+      if (
+        parsed.data.requestedStrongerControlIds.some(
+          controlId => controlId !== RISK_DECISION_WINDOW_CONTROL_ID,
+        )
+        || new Set(parsed.data.requestedStrongerControlIds).size
+          !== parsed.data.requestedStrongerControlIds.length
+      ) {
+        return failure('INVALID_REQUEST', 'The request contains an unknown or duplicate stronger control.')
       }
       const persistence = await this.ready
       if (persistence === undefined || this.disposed) {
@@ -811,7 +832,7 @@ export class SecurityAssuranceService extends Service {
     }
   }
 
-  /** List bounded redacted Finding Summaries from one verified sealed Assessment. */
+  /** List bounded redacted Finding Summaries from a verified Seal or Risk Decision Window. */
   async listFindings(
     invocation: SecurityInvocation,
     request: ListFindingsRequest,
@@ -828,17 +849,17 @@ export class SecurityAssuranceService extends Service {
       if (!parsed.success) {
         return failure('INVALID_REQUEST', 'The request does not match listFindings schema version 1.')
       }
-      const sealed = await this.verifiedSealedRecord(parsed.data.assessmentId)
-      if (sealed === undefined) {
+      const source = await this.findingQuerySource(parsed.data.assessmentId)
+      if (source === undefined) {
         const persistence = await this.ready
         if (persistence?.getAssessmentRecord(parsed.data.assessmentId) === undefined) {
           return failure('NOT_FOUND', 'The Assessment does not exist.')
         }
-        return failure('CONFLICT', 'The Assessment has not produced sealed Finding records.')
+        return failure('CONFLICT', 'The Assessment has not produced queryable Finding records.')
       }
       return deepFreeze({
         ok: true,
-        value: this.findingQueries.list(sealed.submission, parsed.data, {
+        value: this.findingQueries.list(source, parsed.data, {
           kind: authority.kind,
           principalId: authority.principalId,
         }),
@@ -867,17 +888,17 @@ export class SecurityAssuranceService extends Service {
       if (!parsed.success) {
         return failure('INVALID_REQUEST', 'The request does not match getFinding schema version 1.')
       }
-      const sealed = await this.verifiedSealedRecord(parsed.data.assessmentId)
-      if (sealed === undefined) {
+      const source = await this.findingQuerySource(parsed.data.assessmentId)
+      if (source === undefined) {
         const persistence = await this.ready
         if (persistence?.getAssessmentRecord(parsed.data.assessmentId) === undefined) {
           return failure('NOT_FOUND', 'The Assessment does not exist.')
         }
-        return failure('CONFLICT', 'The Assessment has not produced sealed Finding records.')
+        return failure('CONFLICT', 'The Assessment has not produced queryable Finding records.')
       }
       return deepFreeze({
         ok: true,
-        value: this.findingQueries.get(sealed.submission, parsed.data),
+        value: this.findingQueries.get(source, parsed.data),
       })
     } catch (error) {
       if (error instanceof FindingQueryNotFoundError) {
@@ -951,6 +972,93 @@ export class SecurityAssuranceService extends Service {
         return failure('CONFLICT', 'The requested Finding revision does not match the sealed record.')
       }
       return this.assessmentReadFailure(error, true)
+    }
+  }
+
+  /** Record one immutable authority-derived decision inside an explicit pre-Seal window. */
+  async recordRiskDecision(
+    invocation: SecurityInvocation,
+    request: RecordRiskDecisionRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<RiskDecisionReceiptV1>> {
+    try {
+      const authority = this.authorityResolver.authority(invocation)
+      if (
+        authority === undefined
+        || !authority.permissions.has('risk:decide')
+        || (authority.kind !== 'host-operator' && authority.kind !== 'control-plane')
+      ) {
+        return failure('UNAUTHORIZED', 'The caller has no Risk Decision Authority.')
+      }
+      const interrupted = interruption<RiskDecisionReceiptV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = recordRiskDecisionRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match recordRiskDecision schema version 1.')
+      }
+      const persistence = await this.ready
+        if (persistence === undefined || this.disposed) {
+          return failure('UNAVAILABLE', 'Risk Decision mutations are unavailable in read-only-safe mode.', true)
+        }
+        const persistenceInput = {
+          principalId: authority.principalId,
+          authorityKind: authority.kind,
+          request: parsed.data,
+          canonicalRequest: parsed.data,
+        } as const
+        const replay = persistence.replayRiskDecision(persistenceInput)
+        if (replay !== undefined) {
+          try {
+            await this.finalizeResolvedRiskDecision(persistence, replay.assessmentId)
+          } catch {
+            // The immutable receipt remains replayable while a failed Seal stays BLOCKED for recovery.
+          }
+          return deepFreeze({ ok: true, value: replay })
+        }
+        const source = await this.findingQuerySource(parsed.data.assessmentId)
+      if (source === undefined) {
+        if (persistence.getAssessmentRecord(parsed.data.assessmentId) === undefined) {
+          return failure('NOT_FOUND', 'The Assessment does not exist.')
+        }
+        return failure('CONFLICT', 'The Assessment has no active or recorded Risk Decision context.')
+      }
+      const finding = this.findingQueries.get(source, {
+        schemaVersion: 1,
+        assessmentId: parsed.data.assessmentId,
+        assessmentRevision: parsed.data.expectedAssessmentRevision,
+        recordId: parsed.data.finding.recordId,
+        recordRevision: parsed.data.finding.recordRevision,
+      })
+      if (finding.riskDecision.state === 'NOT_RECORDED') {
+        this.riskDecisions.admit(finding, parsed.data, new Date().toISOString())
+      }
+        const receipt = persistence.recordRiskDecision(persistenceInput)
+      try {
+        await this.finalizeResolvedRiskDecision(persistence, receipt.assessmentId)
+      } catch {
+        // The decision commit is authoritative; a failed Seal remains visibly BLOCKED for recovery.
+      }
+      return deepFreeze({ ok: true, value: receipt })
+    } catch (error) {
+      if (error instanceof FindingQueryNotFoundError) {
+        return failure('NOT_FOUND', 'The Finding record does not exist.')
+      }
+      if (error instanceof FindingQueryRevisionError || error instanceof RiskDecisionPolicyError) {
+        return failure('CONFLICT', 'The Risk Decision is not admissible for this Finding or revision.')
+      }
+      if (error instanceof SecurityPersistenceError) {
+        if (error.code === 'idempotency_conflict') {
+          return failure('IDEMPOTENCY_CONFLICT', 'The idempotency key is bound to a different request.')
+        }
+        if (error.code === 'assessment_not_found') {
+          return failure('NOT_FOUND', 'The Assessment does not exist.')
+        }
+        if (error.code === 'revision_conflict') {
+          return failure('CONFLICT', 'The Risk Decision conflicts with the current Assessment revision or window.')
+        }
+        return failure('UNAVAILABLE', 'The private Security Assurance store is unavailable.', true)
+      }
+      return failure('INTERNAL', 'Security Assurance could not record the Risk Decision.', true)
     }
   }
 
@@ -1149,6 +1257,30 @@ export class SecurityAssuranceService extends Service {
         running.subject.digest,
         outcome.evidence,
       )
+      if (
+        running.contract.requestedStrongerControlIds.includes(RISK_DECISION_WINDOW_CONTROL_ID)
+        && outcome.findings.length > 0
+      ) {
+        const findingRecordIds = outcome.findings.map(finding => {
+          if (typeof finding !== 'object' || finding === null || Array.isArray(finding)) {
+            throw new TypeError('Risk Decision Window Finding is not an object')
+          }
+          const findingId = (finding as Readonly<Record<string, unknown>>).findingId
+          if (typeof findingId !== 'string' || !/^finding-[0-9a-f]{64}$/.test(findingId)) {
+            throw new TypeError('Risk Decision Window Finding identity is invalid')
+          }
+          return findingId
+        })
+        persistence.openRiskDecisionWindow({
+          assessmentId,
+          expectedAssessmentRevision: runningRevision,
+          evaluationInstant: sealedAt,
+          findingRecordIds,
+          outcome,
+          evidenceReceipts: publishedEvidence,
+        })
+        return
+      }
       const readiness = checkSealReadiness(running.contract, outcome, publishedEvidence)
       if (!readiness.ready) throw new Error(`seal readiness failed: ${readiness.violations.join(',')}`)
       const artifacts = assembleSealedArtifacts(running, outcome, {
@@ -1209,6 +1341,109 @@ export class SecurityAssuranceService extends Service {
       submission: record.submission,
       bindings: record.repository.bindings,
     }
+  }
+
+  private async findingQuerySource(assessmentId: AssessmentId): Promise<FindingQuerySourceV1 | undefined> {
+    const sealed = await this.verifiedSealedRecord(assessmentId)
+    if (sealed !== undefined) return sealed.submission
+    const persistence = await this.ready
+    if (persistence === undefined || this.disposed) {
+      throw new SecurityPersistenceError('corrupt_database', 'Assessment store is unavailable')
+    }
+    const record = persistence.getAssessmentRecord(assessmentId)
+    if (
+      record === undefined
+      || record.state !== 'BLOCKED'
+      || record.failureCode !== 'RISK_DECISION_WINDOW'
+    ) return undefined
+    const window = record.riskDecisionWindow
+    if (window === null) return undefined
+    const values = await readPublishedEvidenceSet(
+      this.securityRoot,
+      assessmentId,
+      record.subject.digest,
+      window.evidenceReceipts,
+    )
+    if (values.length !== window.evidenceReceipts.length) {
+      throw new TypeError('Risk Decision Window Evidence receipt count changed')
+    }
+    const evidence = values.map((value, index) => {
+      const receipt = window.evidenceReceipts[index]
+      if (receipt === undefined || receipt.artifactId !== value.artifactId || receipt.schemaId !== value.schemaId) {
+        throw new TypeError('Risk Decision Window Evidence order or identity changed')
+      }
+      return securitySubmissionArtifactV1Schema.parse({
+        artifactId: value.artifactId,
+        schemaId: value.schemaId,
+        schemaVersion: 1,
+        digest: receipt.digest,
+        value: value.value,
+      })
+    })
+    return {
+      payload: {
+        assessment: {
+          assessmentId: record.assessmentId,
+          assessmentRevision: record.assessmentRevision,
+        },
+        binding: { repositoryId: record.repository.repositoryId },
+        coverage: { value: securitySubmissionJsonV1Schema.parse(record.coverage) },
+        findings: {
+          value: securitySubmissionJsonV1Schema.parse({
+            schemaVersion: 1,
+            findings: record.findings,
+          }),
+        },
+        riskDecisions: {
+          value: securitySubmissionJsonV1Schema.parse({
+            schemaVersion: 1,
+            decisions: record.riskDecisions,
+          }),
+        },
+        evidence,
+      },
+    }
+  }
+
+  private async finalizeResolvedRiskDecision(
+    persistence: SecurityPersistence,
+    assessmentId: AssessmentId,
+  ): Promise<void> {
+    const record = persistence.getAssessmentRecord(assessmentId)
+    const window = record?.riskDecisionWindow
+    if (
+      record === undefined
+      || record.state !== 'BLOCKED'
+      || window === undefined
+      || window === null
+      || window.state !== 'RESOLVED'
+    ) return
+    const evidence = await readPublishedEvidenceSet(
+      this.securityRoot,
+      assessmentId,
+      record.subject.digest,
+      window.evidenceReceipts,
+    )
+    const outcome = this.riskDecisions.finalizedOutcome(record, evidence)
+    const readiness = checkSealReadiness(record.contract, outcome, window.evidenceReceipts)
+    if (!readiness.ready) throw new Error(`seal readiness failed: ${readiness.violations.join(',')}`)
+    const artifacts = assembleSealedArtifacts(record, outcome, {
+      sealId: `seal-${randomUUID()}`,
+      sealedAt: new Date().toISOString(),
+    })
+    await publishSealedArtifacts(this.securityRoot, assessmentId, artifacts)
+    persistence.sealAssessment({
+      assessmentId,
+      expectedAssessmentRevision: record.assessmentRevision,
+      coverage: outcome.coverage,
+      findings: outcome.findings,
+      evaluationTrace: outcome.evaluationTrace,
+      verdict: outcome.verdict,
+      seal: artifacts.seal,
+      bundleManifest: artifacts.bundleManifest,
+      submission: artifacts.submission,
+      publicationDigest: artifacts.publicationDigest,
+    })
   }
 
   private async initialize(config: Config): Promise<SecurityPersistence | undefined> {

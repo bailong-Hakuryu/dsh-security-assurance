@@ -8,6 +8,8 @@ import {
   assessmentReceiptV1Schema,
   assessmentResumeReceiptV1Schema,
   assessmentCancellationReceiptV1Schema,
+  riskDecisionReceiptV1Schema,
+  riskDecisionRecordV1Schema,
 } from '../contracts.ts'
 import type {
   AssessmentId,
@@ -23,6 +25,8 @@ import type {
   RepositoryId,
   RepositoryListSnapshotV1,
   RepositorySnapshotV1,
+  RecordRiskDecisionRequest,
+  RiskDecisionReceiptV1,
   SecurityAssuranceSubmissionV1,
 } from '../contracts.ts'
 import { canonicalJson, sha256Hex } from './canonical.ts'
@@ -30,7 +34,11 @@ import {
   internalAssessmentRecordV1Schema,
 } from './assessment-record.ts'
 import type { InternalAssessmentRecordV1 } from './assessment-record.ts'
-import type { PreparedAssessmentContractV1 } from './deterministic-kernel.ts'
+import type {
+  DeterministicAssessmentOutcomeV1,
+  PreparedAssessmentContractV1,
+} from './deterministic-kernel.ts'
+import type { EvidencePublicationReceiptV1 } from './evidence-persistence.ts'
 
 const APPLICATION_ID = 0x4453_4853
 const SCHEMA_VERSION = 1
@@ -138,12 +146,29 @@ export interface SealAssessmentPersistenceInput {
   readonly publicationDigest: DigestEnvelopeV1
 }
 
+export interface OpenRiskDecisionWindowPersistenceInput {
+  readonly assessmentId: AssessmentId
+  readonly expectedAssessmentRevision: number
+  readonly evaluationInstant: string
+  readonly findingRecordIds: readonly string[]
+  readonly outcome: DeterministicAssessmentOutcomeV1
+  readonly evidenceReceipts: readonly EvidencePublicationReceiptV1[]
+}
+
+export interface RecordRiskDecisionPersistenceInput {
+  readonly principalId: string
+  readonly authorityKind: 'host-operator' | 'control-plane'
+  readonly request: RecordRiskDecisionRequest
+  readonly canonicalRequest: unknown
+}
+
 export interface SecurityPersistenceOptions {
   readonly databasePath: string
   readonly now?: () => string
   readonly nextRepositoryId?: () => RepositoryId
   readonly nextCorrelationId?: () => string
   readonly nextAssessmentId?: () => AssessmentId
+  readonly nextRiskDecisionId?: () => string
 }
 
 interface IdempotencyRow {
@@ -325,6 +350,7 @@ export class SecurityPersistence {
     private readonly nextRepositoryId: () => RepositoryId,
     private readonly nextCorrelationId: () => string,
     private readonly nextAssessmentId: () => AssessmentId,
+    private readonly nextRiskDecisionId: () => string,
   ) {}
 
   registerRepository(input: RegisterRepositoryPersistenceInput): RepositoryCommandReceiptV1 {
@@ -695,6 +721,8 @@ export class SecurityPersistence {
         submission: null,
         publicationDigest: null,
         failureCode: null,
+        riskDecisionWindow: null,
+        riskDecisions: [],
         operatorActions: [],
         pendingCancellation: null,
         createdAt: acceptedAt,
@@ -822,6 +850,7 @@ export class SecurityPersistence {
       if (
         current.state !== 'BLOCKED'
         || current.assessmentRevision !== input.expectedAssessmentRevision
+        || current.riskDecisionWindow !== null
       ) {
         throw new SecurityPersistenceError('revision_conflict', 'Assessment is not resumable at this revision')
       }
@@ -1033,7 +1062,10 @@ export class SecurityPersistence {
         throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
       }
       if (
-        current.state !== 'RUNNING'
+        (
+          current.state !== 'RUNNING'
+          && !(current.state === 'BLOCKED' && current.riskDecisionWindow?.state === 'RESOLVED')
+        )
         || current.assessmentRevision !== input.expectedAssessmentRevision
       ) {
         throw new SecurityPersistenceError('revision_conflict', 'Assessment is not sealable at this revision')
@@ -1057,6 +1089,197 @@ export class SecurityPersistence {
       this.commitAssessmentRevision(sealed, 'assessment_sealed', committedAt)
       this.db.exec('COMMIT')
       return sealed
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Persist established Findings and an explicit pre-Seal Risk Decision Window. */
+  openRiskDecisionWindow(
+    input: OpenRiskDecisionWindowPersistenceInput,
+  ): InternalAssessmentRecordV1 {
+    this.requireOpen()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const current = this.getAssessmentRecord(input.assessmentId)
+      if (current === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
+      if (
+        current.state !== 'RUNNING'
+        || current.assessmentRevision !== input.expectedAssessmentRevision
+        || current.riskDecisionWindow !== null
+      ) {
+        throw new SecurityPersistenceError('revision_conflict', 'Assessment cannot open a Risk Decision Window')
+      }
+      const committedAt = this.now()
+      const blocked = internalAssessmentRecordV1Schema.parse({
+        ...current,
+        assessmentRevision: current.assessmentRevision + 1,
+        state: 'BLOCKED',
+        coverage: input.outcome.coverage,
+        findings: input.outcome.findings,
+        evaluationTrace: input.outcome.evaluationTrace,
+        verdict: null,
+        failureCode: 'RISK_DECISION_WINDOW',
+        riskDecisionWindow: {
+          schemaVersion: 1,
+          state: 'OPEN',
+          controlId: 'security/risk-decision-window-v1',
+          openedAt: committedAt,
+          evaluationInstant: input.evaluationInstant,
+          proposedVerdict: input.outcome.verdict,
+          findingRecordIds: input.findingRecordIds,
+          providerComposition: input.outcome.providerComposition,
+          evidenceReceipts: input.evidenceReceipts,
+          resolvedAt: null,
+        },
+        updatedAt: committedAt,
+      })
+      this.commitAssessmentRevision(blocked, 'risk_decision_window_opened', committedAt)
+      this.db.exec('COMMIT')
+      return blocked
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Resolve an exact authority-scoped idempotent Risk Decision replay without mutation. */
+  replayRiskDecision(
+    input: RecordRiskDecisionPersistenceInput,
+  ): RiskDecisionReceiptV1 | undefined {
+    this.requireOpen()
+    const requestDigest = digest(input.canonicalRequest)
+    const replayRow = this.db.prepare(`
+      SELECT request_digest, receipt_json
+      FROM idempotency_records
+      WHERE principal_id = ? AND authority_kind = ? AND operation = ?
+        AND target_key = ? AND idempotency_key = ?
+    `).get(
+      input.principalId,
+      input.authorityKind,
+      'record_risk_decision',
+      input.request.assessmentId,
+      input.request.idempotencyKey,
+    ) as IdempotencyRow | undefined
+    if (replayRow === undefined) return undefined
+    if (replayRow.request_digest !== requestDigest) {
+      throw new SecurityPersistenceError(
+        'idempotency_conflict',
+        'Risk Decision idempotency key conflicts with a different request',
+      )
+    }
+    return riskDecisionReceiptV1Schema.parse(JSON.parse(replayRow.receipt_json))
+  }
+
+  /** Append one authority-derived immutable decision at exact Assessment revision. */
+  recordRiskDecision(input: RecordRiskDecisionPersistenceInput): RiskDecisionReceiptV1 {
+    this.requireOpen()
+    const requestDigest = digest(input.canonicalRequest)
+    const { request } = input
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const replayRow = this.db.prepare(`
+        SELECT request_digest, receipt_json
+        FROM idempotency_records
+        WHERE principal_id = ? AND authority_kind = ? AND operation = ?
+          AND target_key = ? AND idempotency_key = ?
+      `).get(
+        input.principalId,
+        input.authorityKind,
+        'record_risk_decision',
+        request.assessmentId,
+        request.idempotencyKey,
+      ) as IdempotencyRow | undefined
+      if (replayRow !== undefined) {
+        if (replayRow.request_digest !== requestDigest) {
+          throw new SecurityPersistenceError(
+            'idempotency_conflict',
+            'Risk Decision idempotency key conflicts with a different request',
+          )
+        }
+        const replay = riskDecisionReceiptV1Schema.parse(JSON.parse(replayRow.receipt_json))
+        this.db.exec('COMMIT')
+        return replay
+      }
+      const current = this.getAssessmentRecord(request.assessmentId)
+      const window = current?.riskDecisionWindow
+      if (
+        current === undefined
+        || current.state !== 'BLOCKED'
+        || current.assessmentRevision !== request.expectedAssessmentRevision
+        || current.failureCode !== 'RISK_DECISION_WINDOW'
+        || window === undefined
+        || window === null
+        || window.state !== 'OPEN'
+        || !window.findingRecordIds.includes(request.finding.recordId)
+        || request.finding.recordRevision !== 1
+        || current.riskDecisions.some(decision => decision.finding.recordId === request.finding.recordId)
+      ) {
+        throw new SecurityPersistenceError('revision_conflict', 'Risk Decision Window does not admit this decision')
+      }
+      const recordedAt = this.now()
+      const resolution = request.decision === 'DENY' ? 'DENIED' : 'ACCEPTED'
+      const decision = riskDecisionRecordV1Schema.parse({
+        schemaVersion: 1,
+        decisionId: this.nextRiskDecisionId(),
+        assessmentId: request.assessmentId,
+        finding: request.finding,
+        decision: request.decision,
+        resolution,
+        rationale: request.rationale,
+        compensatingControls: request.compensatingControls,
+        expiresAt: request.expiresAt,
+        decisionMaker: {
+          kind: input.authorityKind,
+          principalId: input.principalId,
+        },
+        recordedAt,
+      })
+      const decisions = [...current.riskDecisions, decision]
+      const resolved = window.findingRecordIds.every(recordId => (
+        decisions.some(candidate => candidate.finding.recordId === recordId)
+      ))
+      const updated = internalAssessmentRecordV1Schema.parse({
+        ...current,
+        assessmentRevision: current.assessmentRevision + 1,
+        riskDecisions: decisions,
+        riskDecisionWindow: {
+          ...window,
+          state: resolved ? 'RESOLVED' : 'OPEN',
+          resolvedAt: resolved ? recordedAt : null,
+        },
+        updatedAt: recordedAt,
+      })
+      const receipt = riskDecisionReceiptV1Schema.parse({
+        schemaVersion: 1,
+        operation: 'record_risk_decision',
+        assessmentId: request.assessmentId,
+        assessmentRevision: updated.assessmentRevision,
+        acceptedState: 'BLOCKED',
+        decisionId: decision.decisionId,
+        finding: decision.finding,
+        decision: decision.decision,
+        resolution: decision.resolution,
+        idempotencyKey: request.idempotencyKey,
+        recordedAt,
+        correlationId: this.nextCorrelationId(),
+      })
+      this.commitAssessmentRevision(updated, 'risk_decision_recorded', recordedAt)
+      this.recordIdempotency(
+        input.principalId,
+        input.authorityKind,
+        'record_risk_decision',
+        request.assessmentId,
+        request.idempotencyKey,
+        requestDigest,
+        receipt,
+        recordedAt,
+      )
+      this.db.exec('COMMIT')
+      return receipt
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
@@ -1263,5 +1486,6 @@ export async function openSecurityPersistence(
     options.nextRepositoryId ?? (() => `repo-${randomUUID()}` as RepositoryId),
     options.nextCorrelationId ?? (() => `sec-${randomUUID()}`),
     options.nextAssessmentId ?? (() => `asm-${randomUUID()}` as AssessmentId),
+    options.nextRiskDecisionId ?? (() => `risk-decision-${randomUUID()}`),
   )
 }

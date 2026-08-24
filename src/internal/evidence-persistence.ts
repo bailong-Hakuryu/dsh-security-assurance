@@ -9,6 +9,12 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { join } from 'node:path'
+import { z } from 'zod'
+import {
+  assessmentIdSchema,
+  digestEnvelopeV1Schema,
+  securitySubmissionJsonV1Schema,
+} from '../contracts.ts'
 import type {
   AssessmentId,
   DigestEnvelopeV1,
@@ -29,6 +35,16 @@ export interface EvidencePublicationReceiptV1 {
   readonly schemaId: string
   readonly digest: DigestEnvelopeV1
 }
+
+const evidenceEnvelopeV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  subjectDigest: digestEnvelopeV1Schema,
+  artifactId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/u),
+  schemaId: z.string().regex(/^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*){1,7}$/),
+  digest: digestEnvelopeV1Schema,
+  value: securitySubmissionJsonV1Schema,
+})
 
 function evidenceEnvelope(input: {
   readonly assessmentId: AssessmentId
@@ -120,4 +136,47 @@ export async function publishEvidenceSet(
     })
   }
   return receipts
+}
+
+/** Read only exact published identities after re-verifying canonical bytes and every binding. */
+export async function readPublishedEvidenceSet(
+  securityRoot: string,
+  assessmentId: AssessmentId,
+  subjectDigest: DigestEnvelopeV1,
+  receipts: readonly EvidencePublicationReceiptV1[],
+): Promise<readonly EvidencePublicationInputV1[]> {
+  const records: EvidencePublicationInputV1[] = []
+  for (const receipt of receipts) {
+    const path = join(
+      securityRoot,
+      'evidence',
+      assessmentId,
+      receipt.artifactId,
+      receipt.digest.value,
+      'evidence.json',
+    )
+    const status = await lstat(path)
+    if (!status.isFile() || status.isSymbolicLink()) {
+      throw new Error('Evidence object is not a regular file')
+    }
+    const bytes = await readFile(path, 'utf8')
+    const envelope = evidenceEnvelopeV1Schema.parse(JSON.parse(bytes))
+    if (
+      bytes !== canonicalJson(envelope)
+      || envelope.assessmentId !== assessmentId
+      || envelope.artifactId !== receipt.artifactId
+      || envelope.schemaId !== receipt.schemaId
+      || canonicalJson(envelope.subjectDigest) !== canonicalJson(subjectDigest)
+      || canonicalJson(envelope.digest) !== canonicalJson(receipt.digest)
+      || canonicalJson(structuredDigest(receipt.digest.mediaType, envelope.value))
+        !== canonicalJson(receipt.digest)
+    ) throw new Error('Evidence object failed identity or digest verification')
+    records.push({
+      artifactId: envelope.artifactId,
+      schemaId: envelope.schemaId,
+      mediaType: envelope.digest.mediaType,
+      value: envelope.value,
+    })
+  }
+  return records
 }

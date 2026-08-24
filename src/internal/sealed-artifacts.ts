@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import {
   assessmentSealV1Schema,
   bundleManifestV1Schema,
+  digestEnvelopeV1Schema,
   securityAssuranceSubmissionV1Schema,
   securitySubmissionArtifactV1Schema,
   securitySubmissionJsonV1Schema,
@@ -80,14 +81,20 @@ function record(
   }
 }
 
-/** Purely assemble all terminal artifacts from one durable RUNNING revision. */
+/** Purely assemble all terminal artifacts from one seal-admissible durable revision. */
 export function assembleSealedArtifacts(
   assessment: InternalAssessmentRecordV1,
   outcome: DeterministicAssessmentOutcomeV1,
   identity: SealIdentityV1,
 ): SealedArtifactsV1 {
-  if (assessment.state !== 'RUNNING') {
-    throw new TypeError('only a RUNNING Assessment can be sealed')
+  if (
+    assessment.state !== 'RUNNING'
+    && !(
+      assessment.state === 'BLOCKED'
+      && assessment.riskDecisionWindow?.state === 'RESOLVED'
+    )
+  ) {
+    throw new TypeError('only a RUNNING or resolved Risk Decision Assessment can be sealed')
   }
   const terminalRevision = assessment.assessmentRevision + 1
   const subject = json({
@@ -98,6 +105,7 @@ export function assembleSealedArtifacts(
   })
   const coverage = json(outcome.coverage)
   const findings = json({ schemaVersion: 1, findings: outcome.findings })
+  const riskDecisions = json({ schemaVersion: 1, decisions: assessment.riskDecisions })
   const evaluationTrace = json(outcome.evaluationTrace)
   const verdict = json({
     schemaVersion: 1,
@@ -129,6 +137,10 @@ export function assembleSealedArtifacts(
     policyDigest: assessment.contract.policy.digest,
     coverageDigest: outcome.coverage.digest,
     findingsDigest: structuredDigest('application/vnd.dsh.security.findings+json', findings),
+    riskDecisionsDigest: structuredDigest(
+      'application/vnd.dsh.security.risk-decisions+json',
+      riskDecisions,
+    ),
     verdict: outcome.verdict,
     sealedAt: identity.sealedAt,
   })
@@ -145,6 +157,12 @@ export function assembleSealedArtifacts(
     record('policy', 'dsh/security-policy', 'application/vnd.dsh.security.policy+json', assessment.contract.policy.value),
     record('coverage', 'dsh/security-coverage', 'application/vnd.dsh.security.coverage+json', coverage),
     record('findings', 'dsh/security-findings', 'application/vnd.dsh.security.findings+json', findings),
+    record(
+      'risk-decisions',
+      'dsh/security-risk-decisions',
+      'application/vnd.dsh.security.risk-decisions+json',
+      riskDecisions,
+    ),
     record('verdict', 'dsh/security-verdict', 'application/vnd.dsh.security.verdict+json', verdict),
     record('provenance', 'dsh/security-provenance', 'application/vnd.dsh.security.provenance+json', provenance),
     ...outcome.evidence.map(value => record(
@@ -194,6 +212,12 @@ export function assembleSealedArtifacts(
     'dsh/security-findings',
     'application/vnd.dsh.security.findings+json',
     findings,
+  )
+  const riskDecisionsArtifact = artifact(
+    'risk-decisions',
+    'dsh/security-risk-decisions',
+    'application/vnd.dsh.security.risk-decisions+json',
+    riskDecisions,
   )
   const sourceSeal = artifact(
     'source-seal',
@@ -245,6 +269,7 @@ export function assembleSealedArtifacts(
     providerPolicy,
     coverage: coverageArtifact,
     findings: findingsArtifact,
+    riskDecisions: riskDecisionsArtifact,
     sourceSeal,
     provenance: provenanceArtifact,
     evidence,
@@ -282,11 +307,13 @@ function verifySealedArtifactSemantics(artifacts: SealedArtifactsV1): void {
   const { digest: manifestDigest, ...manifestCore } = manifest
   requireDigest(manifestDigest, manifestCore)
   requireDigest(submission.digest, submission.payload)
+  const riskDecisions = submission.payload.riskDecisions
   for (const embedded of [
     submission.payload.providerComposition,
     submission.payload.providerPolicy,
     submission.payload.coverage,
     submission.payload.findings,
+    ...(riskDecisions === undefined ? [] : [riskDecisions]),
     submission.payload.sourceSeal,
     submission.payload.provenance,
     ...submission.payload.evidence,
@@ -299,6 +326,20 @@ function verifySealedArtifactSemantics(artifacts: SealedArtifactsV1): void {
   }
   const embeddedSeal = assessmentSealV1Schema.parse(sourceSeal.seal)
   const binding = securitySubmissionJsonV1Schema.parse(sourceSeal.binding)
+  if (binding === null || Array.isArray(binding) || typeof binding !== 'object') {
+    throw new Error('source seal binding is invalid')
+  }
+  const boundRiskDecisionsDigest = binding.riskDecisionsDigest
+  if ((riskDecisions === undefined) !== (boundRiskDecisionsDigest === undefined)) {
+    throw new Error('source seal Risk Decision binding is incomplete')
+  }
+  if (riskDecisions !== undefined) {
+    const expectedRiskDecisionsDigest = digestEnvelopeV1Schema.parse(boundRiskDecisionsDigest)
+    requireDigest(expectedRiskDecisionsDigest, riskDecisions.value)
+    if (canonicalJson(expectedRiskDecisionsDigest) !== canonicalJson(riskDecisions.digest)) {
+      throw new Error('source seal Risk Decision digest does not match the Submission artifact')
+    }
+  }
   if (canonicalJson(embeddedSeal) !== canonicalJson(artifacts.seal)) {
     throw new Error('source seal does not match the Assessment Seal')
   }

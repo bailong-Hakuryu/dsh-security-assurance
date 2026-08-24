@@ -16,6 +16,7 @@ import {
   assessmentTargetSelectorV1Schema,
   assessmentSealV1Schema,
   assessmentOperatorReasonV1Schema,
+  riskDecisionRecordV1Schema,
 } from '../contracts.ts'
 import type {
   AssessmentSnapshotV1,
@@ -35,6 +36,24 @@ const preparedContractV1Schema = z.strictObject({
   }),
   analyzerPortfolio: z.array(analyzerPortfolioEntryV1Schema).max(64).default([]),
   coverage: assessmentCoverageSnapshotV1Schema,
+})
+
+const riskDecisionWindowV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  state: z.enum(['OPEN', 'RESOLVED']),
+  controlId: z.literal('security/risk-decision-window-v1'),
+  openedAt: z.iso.datetime({ offset: true }),
+  evaluationInstant: z.iso.datetime({ offset: true }),
+  proposedVerdict: securityVerdictSchema,
+  findingRecordIds: z.array(z.string().regex(/^finding-[0-9a-f]{64}$/)).min(1).max(1024),
+  providerComposition: securitySubmissionJsonV1Schema,
+  evidenceReceipts: z.array(z.strictObject({
+    schemaVersion: z.literal(1),
+    artifactId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/u),
+    schemaId: z.string().regex(/^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*){1,7}$/),
+    digest: digestEnvelopeV1Schema,
+  })).min(1).max(128),
+  resolvedAt: z.iso.datetime({ offset: true }).nullable(),
 })
 
 export const internalAssessmentRecordV1Schema = z.strictObject({
@@ -68,6 +87,8 @@ export const internalAssessmentRecordV1Schema = z.strictObject({
   submission: securityAssuranceSubmissionV1Schema.nullable(),
   publicationDigest: digestEnvelopeV1Schema.nullable(),
   failureCode: z.string().nullable(),
+  riskDecisionWindow: riskDecisionWindowV1Schema.nullable().default(null),
+  riskDecisions: z.array(riskDecisionRecordV1Schema).max(1024).default([]),
   operatorActions: z.array(z.strictObject({
     operation: z.enum(['resume_assessment', 'cancel_assessment']),
     principalId: z.string().min(1).max(128),

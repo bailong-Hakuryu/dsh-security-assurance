@@ -7,6 +7,7 @@ import {
   findingDetailViewV1Schema,
   findingListPageV1Schema,
   policySignificanceSchema,
+  riskDecisionRecordV1Schema,
   technicalSeveritySchema,
 } from '../contracts.ts'
 import type {
@@ -16,7 +17,10 @@ import type {
   FindingSummaryV1,
   GetFindingRequest,
   ListFindingsRequest,
-  SecurityAssuranceSubmissionV1,
+  AssessmentId,
+  RepositoryId,
+  SecuritySubmissionArtifactV1,
+  SecuritySubmissionJsonV1,
 } from '../contracts.ts'
 import { canonicalJson, sha256Hex } from './canonical.ts'
 
@@ -178,6 +182,21 @@ const cursorPayloadSchema = z.strictObject({
 
 type CursorPayloadV1 = z.infer<typeof cursorPayloadSchema>
 
+/** Minimum immutable record set required by Finding projections before or after Seal. */
+export interface FindingQuerySourceV1 {
+  readonly payload: {
+    readonly assessment: {
+      readonly assessmentId: AssessmentId
+      readonly assessmentRevision: number
+    }
+    readonly binding: { readonly repositoryId: RepositoryId }
+    readonly coverage: { readonly value: SecuritySubmissionJsonV1 }
+    readonly findings: { readonly value: SecuritySubmissionJsonV1 }
+      readonly riskDecisions?: { readonly value: SecuritySubmissionJsonV1 } | undefined
+    readonly evidence: readonly SecuritySubmissionArtifactV1[]
+  }
+}
+
 export interface FindingQueryAuthority {
   readonly kind: 'harness-session' | 'host-operator' | 'control-plane'
   readonly principalId: string
@@ -235,8 +254,39 @@ function sortedDimensions(
     .map(([dimension, value]) => ({ dimension, value }))
 }
 
+const riskDecisionsArtifactSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  decisions: z.array(riskDecisionRecordV1Schema).max(1024),
+})
+
+function findingRiskDecision(
+  submission: FindingQuerySourceV1,
+  recordId: string,
+  recordRevision: number,
+): FindingDetailViewV1['riskDecision'] {
+  const artifact = submission.payload.riskDecisions
+  if (artifact === undefined) return { state: 'NOT_RECORDED' }
+  const decisions = riskDecisionsArtifactSchema.parse(artifact.value)
+    .decisions.filter(decision => (
+      decision.finding.recordId === recordId
+      && decision.finding.recordRevision === recordRevision
+    ))
+  const decision = decisions[0]
+  if (decision === undefined) return { state: 'NOT_RECORDED' }
+  if (decisions.length !== 1) throw new TypeError('Finding has ambiguous Risk Decisions')
+  return {
+    state: decision.resolution,
+    decisionId: decision.decisionId,
+    rationale: decision.rationale,
+    compensatingControls: decision.compensatingControls,
+    expiresAt: decision.expiresAt,
+    decisionMaker: decision.decisionMaker,
+    recordedAt: decision.recordedAt,
+  }
+}
+
 function builtinValidatedFindingDetail(
-  submission: SecurityAssuranceSubmissionV1,
+  submission: FindingQuerySourceV1,
   finding: z.infer<typeof validatedFindingSchema>,
 ): FindingDetailViewV1 {
   const evidenceDigest = finding.validation.evidenceDigest
@@ -292,7 +342,7 @@ function builtinValidatedFindingDetail(
     },
     policySignificance: finding.policySignificance,
     coverageRelations: coverage.resolutions,
-    riskDecision: { state: 'NOT_RECORDED' },
+    riskDecision: findingRiskDecision(submission, finding.findingId, 1),
     evidenceLinks: [{
       artifactId: evidenceArtifact.artifactId,
       schemaId: evidenceArtifact.schemaId,
@@ -306,7 +356,7 @@ function builtinValidatedFindingDetail(
 }
 
 function validatedFindingDetail(
-  submission: SecurityAssuranceSubmissionV1,
+  submission: FindingQuerySourceV1,
   finding: z.infer<typeof validatedFindingSchema>,
 ): FindingDetailViewV1 {
   if (finding.validation.evidenceDigest !== undefined) {
@@ -390,14 +440,14 @@ function validatedFindingDetail(
     },
     policySignificance: finding.policySignificance,
     coverageRelations: coverage.resolutions,
-    riskDecision: { state: 'NOT_RECORDED' },
+    riskDecision: findingRiskDecision(submission, finding.findingId, 1),
     evidenceLinks,
     attackPath: { state: 'NOT_AVAILABLE' },
   })
 }
 
 function candidateFindingDetail(
-  submission: SecurityAssuranceSubmissionV1,
+  submission: FindingQuerySourceV1,
   admission: z.infer<typeof candidateAdmissionSchema>,
   outcome: z.infer<typeof candidateOutcomeSchema>,
   outcomeArtifactId: string,
@@ -476,14 +526,14 @@ function candidateFindingDetail(
     evidenceConfidence: null,
     policySignificance: null,
     coverageRelations: coverage.resolutions,
-    riskDecision: { state: 'NOT_RECORDED' },
+    riskDecision: findingRiskDecision(submission, admission.candidateId, 1),
     evidenceLinks,
     attackPath: { state: 'NOT_AVAILABLE' },
   })
 }
 
 function projectFindingSummaries(
-  submission: SecurityAssuranceSubmissionV1,
+  submission: FindingQuerySourceV1,
 ): FindingSummaryV1[] {
   const value = findingsArtifactValueSchema.parse(submission.payload.findings.value)
   const findings: FindingSummaryV1[] = value.findings.map(finding => ({
@@ -547,7 +597,7 @@ export class FindingQueryModule {
   readonly #cursorKey = randomBytes(32)
 
   list(
-    submission: SecurityAssuranceSubmissionV1,
+    submission: FindingQuerySourceV1,
     request: ListFindingsRequest,
     authority: FindingQueryAuthority,
   ): FindingListPageV1 {
@@ -594,7 +644,7 @@ export class FindingQueryModule {
   }
 
   get(
-    submission: SecurityAssuranceSubmissionV1,
+    submission: FindingQuerySourceV1,
     request: GetFindingRequest,
   ): FindingDetailViewV1 {
     if (request.assessmentRevision !== submission.payload.assessment.assessmentRevision) {

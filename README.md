@@ -80,6 +80,18 @@ This repository is under active vertical-slice development, not at the
   lineage, separate Severity/Confidence/Policy dimensions, Coverage and Risk
   status, and digest-bound Evidence Link metadata without returning Evidence
   values or read capabilities;
+- an opt-in frozen `security/risk-decision-window-v1` stronger control that
+  persists validated Findings and verified Evidence before opening an explicit
+  pre-Seal `BLOCKED` window. Authorized `recordRiskDecision` commands bind the
+  exact Assessment and Finding revisions, derive the decision maker only from
+  the opaque Security Invocation, commit immutable idempotent Receipts, and
+  prevent `resumeAssessment` from bypassing the window;
+- deterministic ordinary Risk Denial and non-Critical Risk Acceptance: denial
+  preserves the blocking Policy Significance and `FAILED` Verdict, while an
+  eligible time-bounded acceptance requires compensating controls, retains
+  Technical Severity, changes only Policy Significance to `NON_BLOCKING`, and
+  may produce `SATISFIED` only with complete mandatory Coverage. Risk Decision
+  records are digest-bound into the final Seal, Bundle, and Submission;
 - revision-bound `getEvidenceView` projections that require exact Assessment,
   consuming Finding revision, Evidence artifact, and digest identity. The
   metadata-only Profile needs Assessment read authority and always redacts
@@ -134,8 +146,9 @@ This repository is under active vertical-slice development, not at the
   mid-Attempt without falling back to another registered version.
 
 Production-qualified external Analyzers, process or agent Analyzers, general
-Node and application-security coverage, the complete protected Evidence Store,
-tools, and Workbench are deliberately not claimed as implemented yet. This
+Node and application-security coverage, Critical Risk Acceptance with two
+independent Decision Authorities, the complete protected Evidence Store, tools,
+and Workbench are deliberately not claimed as implemented yet. This
 repository ships no production external Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -163,6 +176,7 @@ sole business Interface at `ctx.securityAssurance`. Implemented operations are:
 - `listFindings`
 - `getFinding`
 - `getEvidenceView`
+- `recordRiskDecision`
 - `waitForAssessmentRevision`
 - `getBundleManifest`
 - `getAssuranceSubmission`
@@ -180,17 +194,32 @@ versioned, JSON-safe, recursively immutable, and bounded. Assessment and list
 projections are path-free; a Finding Detail View may contain only a canonical
 Subject-relative Source Anchor and never an absolute Host or Store path.
 
-`listFindings` is available only after the Assessment is sealed. It returns no
-total count and no Source or Evidence content. Its process-local cursor key is
-rotated when the Service restarts, so clients must restart pagination from the
-first page after reconnect instead of treating cursors as durable records.
+`listFindings` is available after the Assessment is sealed and during an
+explicit pre-Seal Risk Decision Window. It returns no total count and no Source
+or Evidence content. Its process-local cursor key is rotated when the Service
+restarts, so clients must restart pagination from the first page after
+reconnect instead of treating cursors as durable records.
 
-`getFinding` is also SEALED-only and requires the exact `assessmentRevision`,
-`recordId`, and `recordRevision` returned by `listFindings`. A mismatched
-revision fails with `CONFLICT`; an unknown record fails with `NOT_FOUND`.
+`getFinding` is available in those same two states and requires the exact
+`assessmentRevision`, `recordId`, and `recordRevision` returned by
+`listFindings`. A mismatched revision fails with `CONFLICT`; an unknown record
+fails with `NOT_FOUND`.
 Evidence Links carry only artifact identity, schema, digest, purpose, and the
 bound Eligibility Decision. They never contain the Evidence payload and are
 not reusable disclosure capabilities.
+
+`recordRiskDecision` is available only when the frozen stronger-control set
+contains `security/risk-decision-window-v1` and the Assessment is in its exact
+pre-Seal window revision. The request carries no identity field: the Service
+accepts only trusted Host Operator or Control Plane Decision Authority with
+`risk:decide`, and records the resolved principal from the opaque Invocation.
+Denial cannot carry controls or expiry. Ordinary acceptance requires at least
+one compensating control and a future expiry; High severity is capped at seven
+days and other currently admitted non-Critical severities at thirty days.
+Critical acceptance fails closed because its two-independent-authority flow is
+not implemented in this slice. Exact replay returns the original Receipt even
+after sealing; key reuse with different content returns
+`IDEMPOTENCY_CONFLICT`.
 
 `getEvidenceView` is also SEALED-only. Its request repeats the exact Assessment
 and Finding revisions plus the linked Evidence artifact ID and digest, then

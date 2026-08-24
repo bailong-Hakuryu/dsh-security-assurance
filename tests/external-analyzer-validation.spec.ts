@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import SecurityAssuranceService, {
   analyzerContributionV1Schema,
   evidenceViewV1Schema,
+  securityAssuranceSubmissionV1Schema,
   securitySubmissionJsonV1Schema,
 } from '../src/index.ts'
 import type {
@@ -55,6 +56,9 @@ interface ReferenceValidationScenario<Observation = undefined> {
   readonly additionalObservedValues?: readonly ('VIOLATED' | 'SATISFIED')[]
   readonly evidencePaddingBytes?: number
   readonly evidenceProtectionId?: string
+  readonly requestedStrongerControlIds?: readonly string[]
+  readonly beforeInspectState?: 'SEALED' | 'BLOCKED'
+  readonly skipSubmissionAfterInspect?: boolean
   readonly inspect?: (
     service: SecurityAssuranceService,
     invocation: SecurityInvocation,
@@ -62,10 +66,11 @@ interface ReferenceValidationScenario<Observation = undefined> {
   ) => Promise<Observation>
 }
 
-async function waitUntilSealed(
+async function waitUntilAssessmentState(
   service: SecurityAssuranceService,
   invocation: SecurityInvocation,
   assessmentId: AssessmentId,
+  expectedState: 'SEALED' | 'BLOCKED',
 ): Promise<void> {
   let revision = 1
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -78,11 +83,13 @@ async function waitUntilSealed(
     if (!changed.ok) throw new Error(`wait failed: ${changed.error.code}`)
     const assessment = await service.getAssessment(invocation, { schemaVersion: 1, assessmentId })
     if (!assessment.ok) throw new Error(`query failed: ${assessment.error.code}`)
-    if (assessment.value.state === 'SEALED') return
-    if (assessment.value.state === 'BLOCKED') throw new Error('Assessment unexpectedly blocked')
+    if (assessment.value.state === expectedState) return
+    if (assessment.value.state === 'SEALED' || assessment.value.state === 'BLOCKED') {
+      throw new Error(`Assessment reached ${assessment.value.state} instead of ${expectedState}`)
+    }
     revision = assessment.value.assessmentRevision
   }
-  throw new Error('Assessment did not reach SEALED')
+  throw new Error(`Assessment did not reach ${expectedState}`)
 }
 
 async function runReferenceValidationScenario<Observation = undefined>(
@@ -261,23 +268,31 @@ async function runReferenceValidationScenario<Observation = undefined>(
       assessmentMode: 'REPOSITORY',
       assessmentProfileId: 'security/standard',
       target: { kind: 'repository' },
-      requestedStrongerControlIds: [],
+      requestedStrongerControlIds: scenario.requestedStrongerControlIds ?? [],
     })
     if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
-    await waitUntilSealed(ctx.securityAssurance, invocation, started.value.assessmentId)
+    await waitUntilAssessmentState(
+      ctx.securityAssurance,
+      invocation,
+      started.value.assessmentId,
+      scenario.beforeInspectState ?? 'SEALED',
+    )
+    const observation = scenario.inspect === undefined
+      ? undefined
+      : await scenario.inspect(ctx.securityAssurance, invocation, started.value.assessmentId)
     const assessment = await ctx.securityAssurance.getAssessment(invocation, {
       schemaVersion: 1,
       assessmentId: started.value.assessmentId,
     })
     if (!assessment.ok) throw new Error(`query failed: ${assessment.error.code}`)
+    if (scenario.skipSubmissionAfterInspect === true) {
+      return { assessment: assessment.value, candidateId, observation, submission: undefined }
+    }
     const submission = await ctx.securityAssurance.getAssuranceSubmission(invocation, {
       schemaVersion: 1,
       assessmentId: started.value.assessmentId,
     })
     if (!submission.ok) throw new Error(`submission failed: ${submission.error.code}`)
-    const observation = scenario.inspect === undefined
-      ? undefined
-      : await scenario.inspect(ctx.securityAssurance, invocation, started.value.assessmentId)
     return { assessment: assessment.value, candidateId, observation, submission: submission.value }
   } finally {
     disposeQualification()
@@ -287,6 +302,20 @@ async function runReferenceValidationScenario<Observation = undefined>(
 }
 
 describe('external Analyzer Candidate validation', () => {
+  it('keeps Submission v1 readable when a pre-Risk-Decision sealed record has no decision artifact', async () => {
+    const { submission } = await runReferenceValidationScenario({
+      id: 'legacy-submission-without-risk-decisions',
+      referenceControl: 'SATISFIED',
+      observedValue: 'SATISFIED',
+      candidateHex: 'e',
+    })
+    if (submission === undefined) throw new Error('legacy Submission fixture did not seal')
+    const legacySubmission = structuredClone(submission)
+    Reflect.deleteProperty(legacySubmission.payload, 'riskDecisions')
+
+    expect(securityAssuranceSubmissionV1Schema.safeParse(legacySubmission).success).toBe(true)
+  })
+
   it('rejects a Candidate that is not bound to contributed Evidence', () => {
     const digest = {
       schemaVersion: 1 as const,
@@ -374,6 +403,447 @@ describe('external Analyzer Candidate validation', () => {
           expect.objectContaining({ schemaId: 'dsh/security-validation-outcome' }),
           expect.objectContaining({ schemaId: 'dsh/security-validation-evidence-eligibility-decision' }),
         ]),
+      },
+    })
+  })
+
+  it('opens an explicit pre-Seal Risk Decision Window only when its stronger control is frozen', async () => {
+    const { assessment, candidateId, observation, submission } = await runReferenceValidationScenario({
+      id: 'risk-decision-window',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '0',
+      requestedStrongerControlIds: ['security/risk-decision-window-v1'],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: (service, invocation, assessmentId) => service.listFindings(invocation, {
+        schemaVersion: 1,
+        assessmentId,
+        limit: 10,
+      }),
+    })
+
+    expect(assessment).toMatchObject({
+      assessmentRevision: 3,
+      state: 'BLOCKED',
+      coverage: { status: 'COMPLETE' },
+      verdict: null,
+      seal: null,
+    })
+    expect(observation).toMatchObject({
+      ok: true,
+      value: {
+        assessmentRevision: 3,
+        findings: [{
+          recordKind: 'FINDING',
+          candidateId,
+          recordRevision: 1,
+          validationState: 'VALIDATED',
+          technicalSeverity: 'HIGH',
+          policySignificance: 'BLOCKING',
+        }],
+      },
+    })
+    expect(submission).toBeUndefined()
+  })
+
+  it('fails closed at every Risk Decision authority, schema, revision, scope, and lifecycle boundary', async () => {
+    const { assessment, observation } = await runReferenceValidationScenario({
+      id: 'risk-decision-boundaries',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '1',
+      requestedStrongerControlIds: ['security/risk-decision-window-v1'],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed }
+        const finding = listed.value.findings[0]
+        const request = {
+          schemaVersion: 1,
+          idempotencyKey: 'risk-decision-boundaries-v1',
+          assessmentId,
+          expectedAssessmentRevision: listed.value.assessmentRevision,
+          finding: {
+            recordId: finding.recordId,
+            recordRevision: finding.recordRevision,
+          },
+          decision: 'DENY',
+          rationale: 'This denial is valid in shape but must only be accepted by Risk Decision Authority.',
+          compensatingControls: [],
+          expiresAt: null,
+        } as const
+        const unauthorizedInvocation = referenceHostInvocationWithPermissions(
+          service,
+          ['assessment:read'],
+          'read-only-reviewer',
+        )
+        const unauthorized = await service.recordRiskDecision(unauthorizedInvocation, request)
+        const forgedRequest: unknown = {
+          ...request,
+          idempotencyKey: 'risk-decision-forged-maker-v1',
+          decisionMaker: { kind: 'host-operator', principalId: 'forged-principal' },
+        }
+        const forged = await service.recordRiskDecision(
+          invocation,
+          forgedRequest as Parameters<SecurityAssuranceService['recordRiskDecision']>[1],
+        )
+        const stale = await service.recordRiskDecision(invocation, {
+          ...request,
+          idempotencyKey: 'risk-decision-stale-v1',
+          expectedAssessmentRevision: listed.value.assessmentRevision - 1,
+        })
+        const wrongFinding = await service.recordRiskDecision(invocation, {
+          ...request,
+          idempotencyKey: 'risk-decision-wrong-finding-v1',
+          finding: {
+            recordId: `finding-${'f'.repeat(64)}`,
+            recordRevision: 1,
+          },
+        })
+        const missingControls = await service.recordRiskDecision(invocation, {
+          ...request,
+          idempotencyKey: 'risk-decision-missing-controls-v1',
+          decision: 'ACCEPT',
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString(),
+        })
+        const overCeiling = await service.recordRiskDecision(invocation, {
+          ...request,
+          idempotencyKey: 'risk-decision-over-ceiling-v1',
+          decision: 'ACCEPT',
+          compensatingControls: ['Restrict deployment to the authenticated internal gateway.'],
+          expiresAt: new Date(Date.now() + 8 * 24 * 60 * 60 * 1_000).toISOString(),
+        })
+        const resume = await service.resumeAssessment(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          expectedAssessmentRevision: listed.value.assessmentRevision,
+          idempotencyKey: 'resume-risk-decision-window-v1',
+          reason: {
+            code: 'HOST_RECONCILIATION',
+            summary: 'An active Risk Decision Window cannot be bypassed through resume.',
+          },
+        })
+        return {
+          listed,
+          unauthorized,
+          forged,
+          stale,
+          wrongFinding,
+          missingControls,
+          overCeiling,
+          resume,
+          after: await service.getAssessment(invocation, { schemaVersion: 1, assessmentId }),
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      unauthorized: { ok: false, error: { code: 'UNAUTHORIZED' } },
+      forged: { ok: false, error: { code: 'INVALID_REQUEST' } },
+      stale: { ok: false, error: { code: 'CONFLICT' } },
+      wrongFinding: { ok: false, error: { code: 'NOT_FOUND' } },
+      missingControls: { ok: false, error: { code: 'INVALID_REQUEST' } },
+      overCeiling: { ok: false, error: { code: 'CONFLICT' } },
+      resume: { ok: false, error: { code: 'CONFLICT' } },
+      after: {
+        ok: true,
+        value: { assessmentRevision: 3, state: 'BLOCKED', verdict: null, seal: null },
+      },
+    })
+    expect(assessment).toMatchObject({
+      assessmentRevision: 3,
+      state: 'BLOCKED',
+      verdict: null,
+      seal: null,
+    })
+  })
+
+  it('records an immutable authorized DENY decision before sealing the original FAILED Verdict', async () => {
+    const rationale = 'The validated High risk is denied and must be remediated before approval.'
+    const { assessment, observation, submission } = await runReferenceValidationScenario({
+      id: 'deny-risk-decision',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '2',
+      requestedStrongerControlIds: ['security/risk-decision-window-v1'],
+      beforeInspectState: 'BLOCKED',
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed }
+        const summary = listed.value.findings[0]
+        const request = {
+          schemaVersion: 1,
+          idempotencyKey: 'deny-risk-decision-v1',
+          assessmentId,
+          expectedAssessmentRevision: listed.value.assessmentRevision,
+          finding: {
+            recordId: summary.recordId,
+            recordRevision: summary.recordRevision,
+          },
+          decision: 'DENY',
+          rationale,
+          compensatingControls: [],
+          expiresAt: null,
+        } as const
+        const receipt = await service.recordRiskDecision(invocation, request)
+        if (!receipt.ok) return { listed, receipt }
+        await waitUntilAssessmentState(service, invocation, assessmentId, 'SEALED')
+        const replay = await service.recordRiskDecision(invocation, request)
+        const conflictingReplay = await service.recordRiskDecision(invocation, {
+          ...request,
+          rationale: 'A materially different denial rationale cannot reuse the same idempotency key.',
+        })
+        const sealedList = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!sealedList.ok || sealedList.value.findings[0] === undefined) {
+          return { listed, receipt, replay, conflictingReplay, sealedList }
+        }
+        const sealedSummary = sealedList.value.findings[0]
+        return {
+          listed,
+          receipt,
+          replay,
+          conflictingReplay,
+          sealedList,
+          detail: await service.getFinding(invocation, {
+            schemaVersion: 1,
+            assessmentId,
+            assessmentRevision: sealedList.value.assessmentRevision,
+            recordId: sealedSummary.recordId,
+            recordRevision: sealedSummary.recordRevision,
+          }),
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      receipt: {
+        ok: true,
+        value: {
+          schemaVersion: 1,
+          operation: 'record_risk_decision',
+          assessmentId: assessment.assessmentId,
+          assessmentRevision: 4,
+          acceptedState: 'BLOCKED',
+          decisionId: expect.stringMatching(/^risk-decision-[0-9a-f-]{36}$/),
+          finding: {
+            recordId: expect.stringMatching(/^finding-[0-9a-f]{64}$/),
+            recordRevision: 1,
+          },
+          decision: 'DENY',
+          resolution: 'DENIED',
+          idempotencyKey: 'deny-risk-decision-v1',
+          recordedAt: expect.any(String),
+          correlationId: expect.stringMatching(/^sec-[0-9a-f-]{36}$/),
+        },
+      },
+      replay: { ok: true },
+      conflictingReplay: {
+        ok: false,
+        error: { code: 'IDEMPOTENCY_CONFLICT' },
+      },
+      sealedList: {
+        ok: true,
+        value: { assessmentRevision: 5 },
+      },
+      detail: {
+        ok: true,
+        value: {
+          technicalSeverity: { value: 'HIGH' },
+          policySignificance: 'BLOCKING',
+          riskDecision: {
+            state: 'DENIED',
+            decisionId: expect.stringMatching(/^risk-decision-[0-9a-f-]{36}$/),
+            rationale,
+            compensatingControls: [],
+            expiresAt: null,
+            decisionMaker: {
+              kind: 'host-operator',
+              principalId: 'reference-host-operator',
+            },
+            recordedAt: expect.any(String),
+          },
+        },
+      },
+    })
+    if (
+      observation !== undefined
+      && typeof observation === 'object'
+      && 'receipt' in observation
+      && 'replay' in observation
+    ) expect(observation.replay).toEqual(observation.receipt)
+    expect(assessment).toMatchObject({
+      assessmentRevision: 5,
+      state: 'SEALED',
+      verdict: 'FAILED',
+    })
+    expect(submission).toMatchObject({
+      payload: {
+        assessment: { assessmentRevision: 5, verdict: 'FAILED' },
+        riskDecisions: {
+          value: {
+            decisions: [{
+              decision: 'DENY',
+              rationale,
+              decisionMaker: {
+                kind: 'host-operator',
+                principalId: 'reference-host-operator',
+              },
+            }],
+          },
+        },
+      },
+    })
+  })
+
+  it('accepts eligible High risk with controls and short expiry without changing Technical Severity', async () => {
+    const rationale = 'The bounded deployment accepts this High risk while the compensating control is enforced.'
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString()
+    const { observation } = await runReferenceValidationScenario({
+      id: 'accept-high-risk-decision',
+      referenceControl: 'VIOLATED',
+      observedValue: 'VIOLATED',
+      candidateHex: '3',
+      requestedStrongerControlIds: ['security/risk-decision-window-v1'],
+      beforeInspectState: 'BLOCKED',
+      skipSubmissionAfterInspect: true,
+      inspect: async (service, invocation, assessmentId) => {
+        const listed = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!listed.ok || listed.value.findings[0] === undefined) return { listed }
+        const summary = listed.value.findings[0]
+        const receipt = await service.recordRiskDecision(invocation, {
+          schemaVersion: 1,
+          idempotencyKey: 'accept-high-risk-decision-v1',
+          assessmentId,
+          expectedAssessmentRevision: listed.value.assessmentRevision,
+          finding: {
+            recordId: summary.recordId,
+            recordRevision: summary.recordRevision,
+          },
+          decision: 'ACCEPT',
+          rationale,
+          compensatingControls: ['Deploy only behind the authenticated internal gateway.'],
+          expiresAt,
+        })
+        if (!receipt.ok) return { listed, receipt }
+        await waitUntilAssessmentState(service, invocation, assessmentId, 'SEALED')
+        const sealedAssessment = await service.getAssessment(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+        })
+        const sealedList = await service.listFindings(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+          limit: 10,
+        })
+        if (!sealedList.ok || sealedList.value.findings[0] === undefined) {
+          return { listed, receipt, sealedAssessment, sealedList }
+        }
+        const sealedSummary = sealedList.value.findings[0]
+        return {
+          listed,
+          receipt,
+          sealedAssessment,
+          sealedList,
+          detail: await service.getFinding(invocation, {
+            schemaVersion: 1,
+            assessmentId,
+            assessmentRevision: sealedList.value.assessmentRevision,
+            recordId: sealedSummary.recordId,
+            recordRevision: sealedSummary.recordRevision,
+          }),
+          submission: await service.getAssuranceSubmission(invocation, {
+            schemaVersion: 1,
+            assessmentId,
+          }),
+        }
+      },
+    })
+
+    expect(observation).toMatchObject({
+      receipt: {
+        ok: true,
+        value: {
+          assessmentRevision: 4,
+          decision: 'ACCEPT',
+          resolution: 'ACCEPTED',
+        },
+      },
+      sealedAssessment: {
+        ok: true,
+        value: {
+          assessmentRevision: 5,
+          state: 'SEALED',
+          verdict: 'SATISFIED',
+        },
+      },
+      sealedList: {
+        ok: true,
+        value: {
+          findings: [{
+            technicalSeverity: 'HIGH',
+            policySignificance: 'NON_BLOCKING',
+          }],
+        },
+      },
+      detail: {
+        ok: true,
+        value: {
+          technicalSeverity: { value: 'HIGH' },
+          policySignificance: 'NON_BLOCKING',
+          riskDecision: {
+            state: 'ACCEPTED',
+            rationale,
+            compensatingControls: ['Deploy only behind the authenticated internal gateway.'],
+            expiresAt,
+            decisionMaker: {
+              kind: 'host-operator',
+              principalId: 'reference-host-operator',
+            },
+          },
+        },
+      },
+      submission: {
+        ok: true,
+        value: {
+          payload: {
+            assessment: { verdict: 'SATISFIED' },
+            findings: {
+              value: {
+                findings: [{
+                  technicalSeverity: { value: 'HIGH' },
+                  policySignificance: 'NON_BLOCKING',
+                }],
+              },
+            },
+            riskDecisions: {
+              value: {
+                decisions: [{
+                  decision: 'ACCEPT',
+                  resolution: 'ACCEPTED',
+                  expiresAt,
+                }],
+              },
+            },
+          },
+        },
       },
     })
   })
