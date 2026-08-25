@@ -106,7 +106,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "pack:dry-run": "npm --cache .scratch/npm-cache pack --dry-run",
-    "pack:smoke": "node scripts/packed-smoke.mjs"
+    "pack:smoke": "node scripts/packed-smoke.mjs",
+    "pack:browser-e2e": "node scripts/packed-browser-e2e.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",

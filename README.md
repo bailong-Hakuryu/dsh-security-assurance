@@ -195,7 +195,13 @@ This repository is under active vertical-slice development, not at the
 - packed fail-closed Gate proof for a real Security `FAILED → REWORK_REQUIRED`,
   a real Security `INDETERMINATE → BLOCKED`, a digest-tampered Submission that
   is rejected before Evidence import, and a frozen Provider that disappears
-  mid-Attempt without falling back to another registered version.
+  mid-Attempt without falling back to another registered version; and
+- a fresh packed Harness `0.1.1-rc.2` Reference Host driven through a real
+  Chrome-family browser. The scenario proves Host-authenticated selection,
+  keyboard/focus behavior, Runtime Health, digest-bound start, `BLOCKED` Risk
+  Denial, sealed metadata-first Evidence and explicit bounded disclosure,
+  bilingual responsive rendering, reload, offline/reconnect, denied authority,
+  browser-state and remote-resource redaction, and Host lifecycle shutdown.
 
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
@@ -603,7 +609,15 @@ pnpm test
 pnpm build
 pnpm pack:dry-run
 pnpm pack:smoke
+pnpm pack:browser-e2e
 ```
+
+`pack:browser-e2e` packs the current Security artifact, installs the exact
+registry Harness release into a fresh temporary profile, adds a temporary
+test-only Reference Host authority layer, and drives a locally installed Chrome
+or Edge through the assembled Client. It does not modify Harness or ship that
+test authority layer. Shared Web HMR remains disabled in the qualified Harness
+reference, so this command deliberately makes no HMR coverage claim.
 
 All four bundle rows in `cordis.patch.yml` are disabled by default.
 Installation alone does not activate a security authority, Host Repository
