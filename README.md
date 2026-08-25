@@ -431,9 +431,19 @@ timing, unavailable denominators, incomplete adjudication, and inapplicable
 Control Plane evidence fail closed instead of becoming zero-value claims.
 Satisfaction surveys are intentionally outside this proof contract.
 
-These slices are not an Effectiveness, Utility, or release claim. Release
-Constitution thresholds, Scorecards, and the Release Evidence Manifest remain
-separate future proof slices.
+`evaluateReleaseConstitutionV1` is the sole pure promotion-decision interface.
+Its versioned Constitution retains pre-Holdout registration and Development or
+Qualification calibration Evidence, then evaluates a fixed ordered set of Hard
+Safety Floors, exact qualified-artifact identity, packed Windows/Linux/macOS
+Conformance, matched-budget paired evidence, mandatory-Stratum non-inferiority,
+five conservative Effectiveness confidence bounds, and nine observed Utility
+thresholds. Any known failure returns `BLOCKED`; absent proof returns
+`INCONCLUSIVE` only when no known failure exists. Post-hoc thresholds, changed
+promotion artifacts, incomplete platform proof, and caller-authored overrides
+cannot produce `PROMOTE`.
+
+These slices are not an Effectiveness, Utility, or release claim. Scorecards and
+the Release Evidence Manifest remain separate future proof slices.
 
 ## Model-facing Assessment operations
 

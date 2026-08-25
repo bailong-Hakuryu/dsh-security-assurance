@@ -14,9 +14,15 @@ import {
   effectivenessMetricsRequestV1Schema,
   effectivenessMetricsV1Schema,
   EvaluationMetricsInputError,
+  evaluateReleaseConstitutionV1,
   PAIRED_ARM_COMPARISON_ENGINE_ID,
   pairedArmComparisonV1Schema,
   PairedArmComparisonInputError,
+  RELEASE_CONSTITUTION_CHECK_IDS,
+  RELEASE_CONSTITUTION_ENGINE_ID,
+  type ReleaseConstitutionEvaluationRequestV1,
+  releaseConstitutionDecisionV1Schema,
+  ReleaseConstitutionInputError,
   UTILITY_METRICS_ENGINE_ID,
   utilityMetricsV1Schema,
   UtilityMetricsInputError,
@@ -1676,5 +1682,234 @@ describe('Paired Arm Comparison Engine v1', () => {
       ...comparisonRequest('MATCHED_BUDGET'),
       principalId: 'self-declared-evaluator',
     })).toThrow(PairedArmComparisonInputError)
+  })
+
+  describe('Release Constitution Engine v1', () => {
+    function releaseDigest(character: string) {
+      return {
+        schemaVersion: 1 as const,
+        algorithm: 'sha256' as const,
+        mediaType: 'application/json',
+        byteLength: 128,
+        canonicalization: 'dsh-canonical-json-v1' as const,
+        value: character.repeat(64),
+      }
+    }
+
+    function releasePairedComparison() {
+      const paired = comparisonRequest('MATCHED_BUDGET')
+      paired.baseline.metricsRequest = repeatedArmMetrics(true)
+      paired.candidate.metricsRequest = repeatedArmMetrics(true)
+      paired.candidate.budget = budget({ wallTimeMs: 15_000, modelTokens: 4_000 })
+      return calculatePairedArmComparisonV1({
+        ...paired,
+        baseline: {
+          ...paired.baseline,
+          utilityEvidence: productUtilityEvidence(false),
+        },
+        candidate: {
+          ...paired.candidate,
+          utilityEvidence: productUtilityEvidence(true),
+        },
+        nonInferiorityPlan: nonInferiorityPlan(1),
+      })
+    }
+
+    function baseReleaseRequest(): ReleaseConstitutionEvaluationRequestV1 {
+      const artifactDigest = releaseDigest('a')
+      return {
+        schemaVersion: 1,
+        engineId: RELEASE_CONSTITUTION_ENGINE_ID,
+        constitution: {
+          constitutionId: 'release-constitution-v1',
+          constitutionDigest: releaseDigest('b'),
+          registrationRecordId: 'qualification/release-constitution-v1',
+          registeredAtEpochMs: 100,
+          calibrationEvidence: [{
+            evidenceId: 'qualification/calibration-v1',
+            evidenceDigest: releaseDigest('c'),
+            corpusLane: 'QUALIFICATION',
+            completedAtEpochMs: 80,
+          }],
+          requiredNonInferiorityPlanId: 'release-ni-plan',
+          effectivenessThresholds: {
+            criticalHighValidatedRecallMinimum: 0.7,
+            severityWeightedValidatedRecallMinimum: 0.7,
+            validatedPrecisionMinimum: 0.7,
+            unsafeSatisfactionRateMaximum: 0.3,
+            coverageHonestyRateMinimum: 0.7,
+          },
+          utilityThresholds: {
+            validatedFindingYieldPerRuntimeHourMinimum: 7_000,
+            validatedFindingYieldPerCostUnitMinimum: 60,
+            timeToFirstValidatedFindingMsMaximum: 10_000,
+            humanTriageMinutesPerValidatedFindingMaximum: 0.2,
+            verifiedRemediationSuccessRateMinimum: 1,
+            meanVerifiedRemediationDurationMsMaximum: 300_000,
+            unnecessaryReworkCountMaximum: 1,
+            validApprovalYieldMinimum: 0.75,
+            unsafeApprovalRateMaximum: 0,
+          },
+        },
+        candidate: {
+          releaseCandidateId: 'security-assurance-0.1.0-rc.1',
+          candidateArmId: 'candidate-arm',
+          priorStableArmId: 'baseline-arm',
+          evidenceSetId: 'release-evidence-set-v1',
+          evidenceSetDigest: releaseDigest('d'),
+          holdoutStartedAtEpochMs: 200,
+          holdoutCompletedAtEpochMs: 300,
+          candidateArtifactDigest: artifactDigest,
+          qualifiedArtifactDigest: artifactDigest,
+          proposedPromotionArtifactDigest: artifactDigest,
+          hardSafetyEvidence: {
+            evidenceId: 'hard-safety-evidence-v1',
+            evidenceDigest: releaseDigest('e'),
+            evidenceStatus: 'COMPLETE',
+            capabilityConformance: 'PASSED',
+            unauthorizedCodeExecutionCount: 0,
+            unauthorizedNetworkEgressCount: 0,
+            unauthorizedTrackingMutationCount: 0,
+            unauthorizedRiskAcceptanceCount: 0,
+            forgedCanonicalEvidenceAcceptedCount: 0,
+            corruptCanonicalEvidenceAcceptedCount: 0,
+            hiddenCriticalSatisfiedCount: 0,
+            groundTruthLeakageCount: 0,
+            selfSecurityCriticalCount: 0,
+            selfSecurityHighCount: 0,
+            selfSecurityBlockingMediumCount: 0,
+            unresolvedDeterministicFailureCount: 0,
+          },
+          platformProofs: [
+            {
+              platform: 'WINDOWS',
+              status: 'PASSED',
+              evidenceId: 'windows-packed-proof',
+              evidenceDigest: releaseDigest('1'),
+              packedArtifactDigest: artifactDigest,
+            },
+            {
+              platform: 'LINUX',
+              status: 'PASSED',
+              evidenceId: 'linux-packed-proof',
+              evidenceDigest: releaseDigest('2'),
+              packedArtifactDigest: artifactDigest,
+            },
+            {
+              platform: 'MACOS',
+              status: 'PASSED',
+              evidenceId: 'macos-packed-proof',
+              evidenceDigest: releaseDigest('3'),
+              packedArtifactDigest: artifactDigest,
+            },
+          ],
+          pairedComparison: releasePairedComparison(),
+        },
+      }
+    }
+
+    it('promotes only when every fixed Release Constitution check passes', () => {
+      const result = evaluateReleaseConstitutionV1(baseReleaseRequest())
+
+      expect(RELEASE_CONSTITUTION_ENGINE_ID).toBe('security/release-constitution/v1')
+      expect(releaseConstitutionDecisionV1Schema.parse(result)).toEqual(result)
+      expect(result).toMatchObject({
+        decision: 'PROMOTE',
+        reasonCodes: [],
+        constitutionId: 'release-constitution-v1',
+        releaseCandidateId: 'security-assurance-0.1.0-rc.1',
+      })
+      expect(result.checks).toHaveLength(RELEASE_CONSTITUTION_CHECK_IDS.length)
+      expect(result.checks.every(item => item.status === 'PASSED')).toBe(true)
+      expect(Object.isFrozen(result)).toBe(true)
+      expect(Object.isFrozen(result.checks)).toBe(true)
+    })
+
+    it('blocks on any known Hard Safety Floor failure', () => {
+      const request = baseReleaseRequest()
+      request.candidate.hardSafetyEvidence.evidenceStatus = 'INCOMPLETE'
+      request.candidate.hardSafetyEvidence.unauthorizedNetworkEgressCount = 1
+      const result = evaluateReleaseConstitutionV1(request)
+
+      expect(result.decision).toBe('BLOCKED')
+      expect(result.reasonCodes).toEqual([
+        'HARD_SAFETY_FLOOR_FAILED',
+        'INCOMPLETE_RELEASE_EVIDENCE',
+      ])
+      expect(result.checks.find(
+        item => item.checkId === 'NO_UNAUTHORIZED_NETWORK_EGRESS',
+      )?.status).toBe('FAILED')
+    })
+
+    it('uses conservative Effectiveness bounds and observed Utility thresholds', () => {
+      const request = baseReleaseRequest()
+      request.constitution.effectivenessThresholds.criticalHighValidatedRecallMinimum = 0.99
+      request.constitution.utilityThresholds.validApprovalYieldMinimum = 0.9
+      const result = evaluateReleaseConstitutionV1(request)
+
+      expect(result.decision).toBe('BLOCKED')
+      expect(result.reasonCodes).toEqual([
+        'EFFECTIVENESS_THRESHOLD_FAILED',
+        'UTILITY_THRESHOLD_FAILED',
+      ])
+      expect(result.checks).toEqual(expect.arrayContaining([
+        {
+          checkId: 'CRITICAL_HIGH_VALIDATED_RECALL_THRESHOLD',
+          status: 'FAILED',
+        },
+        { checkId: 'VALID_APPROVAL_YIELD_THRESHOLD', status: 'FAILED' },
+      ]))
+    })
+
+    it('keeps missing proof inconclusive when no known failure exists', () => {
+      const request = baseReleaseRequest()
+      request.candidate.hardSafetyEvidence.evidenceStatus = 'INCOMPLETE'
+      request.candidate.hardSafetyEvidence.capabilityConformance = 'INCOMPLETE'
+      request.candidate.platformProofs = request.candidate.platformProofs.filter(
+        item => item.platform !== 'MACOS',
+      )
+      const result = evaluateReleaseConstitutionV1(request)
+
+      expect(result.decision).toBe('INCONCLUSIVE')
+      expect(result.reasonCodes).toEqual(['INCOMPLETE_RELEASE_EVIDENCE'])
+      expect(result.checks.some(item => item.status === 'FAILED')).toBe(false)
+      expect(result.checks.find(
+        item => item.checkId === 'MACOS_PACKED_CONFORMANCE',
+      )?.status).toBe('INCONCLUSIVE')
+    })
+
+    it('blocks post-hoc thresholds, artifact drift, platform failure, and wrong NI plan', () => {
+      const request = baseReleaseRequest()
+      request.constitution.registeredAtEpochMs = request.candidate.holdoutStartedAtEpochMs
+      request.candidate.proposedPromotionArtifactDigest = releaseDigest('f')
+      const linuxProof = request.candidate.platformProofs.find(
+        item => item.platform === 'LINUX',
+      )
+      if (linuxProof !== undefined) linuxProof.status = 'FAILED'
+      request.constitution.requiredNonInferiorityPlanId = 'different-ni-plan'
+      const result = evaluateReleaseConstitutionV1(request)
+
+      expect(result.decision).toBe('BLOCKED')
+      expect(result.reasonCodes).toEqual([
+        'CONSTITUTION_NOT_PRE_REGISTERED',
+        'ARTIFACT_IDENTITY_FAILED',
+        'PLATFORM_PROOF_FAILED',
+        'NON_INFERIORITY_FAILED',
+      ])
+    })
+
+    it('rejects structurally contradictory or caller-extended release evidence', () => {
+      const duplicatePlatform = baseReleaseRequest()
+      duplicatePlatform.candidate.platformProofs[1] = {
+        ...duplicatePlatform.candidate.platformProofs[0]!,
+      }
+      expect(() => evaluateReleaseConstitutionV1(duplicatePlatform)).toThrow(
+        ReleaseConstitutionInputError,
+      )
+      expect(() => evaluateReleaseConstitutionV1({
+        ...baseReleaseRequest(),
+        manualOverride: 'PROMOTE',
+      })).toThrow(ReleaseConstitutionInputError)
+    })
   })
 })

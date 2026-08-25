@@ -389,6 +389,24 @@ const packedPairedUtilityComparison = evaluation.calculatePairedArmComparisonV1(
     budget: packedArmBudget(8_000, { wallTimeMs: 30_000 }),
     utilityEvidence: packedUtilityEvidence(true),
   },
+  nonInferiorityPlan: {
+    planId: 'packed-utility-ni-plan',
+    registrationRecordId: 'packed-qualification-registry/utility-ni-plan',
+    registeredAtEpochMs: 1_700_000_000_000,
+    evidenceCollectionStartedAtEpochMs: 1_700_000_001_000,
+    method: 'CONSERVATIVE_HOEFFDING_BOUNDS_V1',
+    metricMargins: {
+      criticalHighValidatedRecall: 1,
+      severityWeightedValidatedRecall: 1,
+      validatedPrecision: 1,
+      unsafeSatisfactionRate: 1,
+      coverageHonestyRate: 1,
+    },
+    stratumMargins: packedStratumDefinitions.map(definition => ({
+      stratumId: definition.stratumId,
+      validatedRecallMargin: 1,
+    })),
+  },
 })
 const packedEvaluationDigest = character => ({
   schemaVersion: 1,
@@ -484,6 +502,88 @@ packedLeakedAirGapRequest.airGapAudit.violations.push({
 const packedAirGapInvalidated = evaluation.assembleAirGappedEvaluationV1(
   packedLeakedAirGapRequest,
 )
+const packedReleaseRequest = () => {
+  const artifactDigest = packedEvaluationDigest('a')
+  return {
+    schemaVersion: 1,
+    engineId: 'security/release-constitution/v1',
+    constitution: {
+      constitutionId: 'packed-release-constitution',
+      constitutionDigest: packedEvaluationDigest('b'),
+      registrationRecordId: 'packed/release-constitution-registration',
+      registeredAtEpochMs: 100,
+      calibrationEvidence: [{
+        evidenceId: 'packed/qualification-calibration',
+        evidenceDigest: packedEvaluationDigest('c'),
+        corpusLane: 'QUALIFICATION',
+        completedAtEpochMs: 80,
+      }],
+      requiredNonInferiorityPlanId: 'packed-utility-ni-plan',
+      effectivenessThresholds: {
+        criticalHighValidatedRecallMinimum: 0,
+        severityWeightedValidatedRecallMinimum: 0,
+        validatedPrecisionMinimum: 0,
+        unsafeSatisfactionRateMaximum: 1,
+        coverageHonestyRateMinimum: 0,
+      },
+      utilityThresholds: {
+        validatedFindingYieldPerRuntimeHourMinimum: 240,
+        validatedFindingYieldPerCostUnitMinimum: 4,
+        timeToFirstValidatedFindingMsMaximum: 10_000,
+        humanTriageMinutesPerValidatedFindingMaximum: 2.5,
+        verifiedRemediationSuccessRateMinimum: 1,
+        meanVerifiedRemediationDurationMsMaximum: 300_000,
+        unnecessaryReworkCountMaximum: 1,
+        validApprovalYieldMinimum: 0.75,
+        unsafeApprovalRateMaximum: 0,
+      },
+    },
+    candidate: {
+      releaseCandidateId: 'packed-security-0.1.0-rc.1',
+      candidateArmId: 'utility-candidate-arm',
+      priorStableArmId: 'utility-baseline-arm',
+      evidenceSetId: 'packed-release-evidence-set',
+      evidenceSetDigest: packedEvaluationDigest('d'),
+      holdoutStartedAtEpochMs: 200,
+      holdoutCompletedAtEpochMs: 300,
+      candidateArtifactDigest: artifactDigest,
+      qualifiedArtifactDigest: artifactDigest,
+      proposedPromotionArtifactDigest: artifactDigest,
+      hardSafetyEvidence: {
+        evidenceId: 'packed-hard-safety-evidence',
+        evidenceDigest: packedEvaluationDigest('e'),
+        evidenceStatus: 'COMPLETE',
+        capabilityConformance: 'PASSED',
+        unauthorizedCodeExecutionCount: 0,
+        unauthorizedNetworkEgressCount: 0,
+        unauthorizedTrackingMutationCount: 0,
+        unauthorizedRiskAcceptanceCount: 0,
+        forgedCanonicalEvidenceAcceptedCount: 0,
+        corruptCanonicalEvidenceAcceptedCount: 0,
+        hiddenCriticalSatisfiedCount: 0,
+        groundTruthLeakageCount: 0,
+        selfSecurityCriticalCount: 0,
+        selfSecurityHighCount: 0,
+        selfSecurityBlockingMediumCount: 0,
+        unresolvedDeterministicFailureCount: 0,
+      },
+      platformProofs: ['WINDOWS', 'LINUX', 'MACOS'].map((platform, index) => ({
+        platform,
+        status: 'PASSED',
+        evidenceId: 'packed-platform-proof-' + platform.toLowerCase(),
+        evidenceDigest: packedEvaluationDigest(String(index + 1)),
+        packedArtifactDigest: artifactDigest,
+      })),
+      pairedComparison: packedPairedUtilityComparison,
+    },
+  }
+}
+const packedReleasePromote = evaluation.evaluateReleaseConstitutionV1(packedReleaseRequest())
+const packedBlockedReleaseRequest = packedReleaseRequest()
+packedBlockedReleaseRequest.candidate.hardSafetyEvidence.hiddenCriticalSatisfiedCount = 1
+const packedReleaseBlocked = evaluation.evaluateReleaseConstitutionV1(
+  packedBlockedReleaseRequest,
+)
 if (
   evaluation.EFFECTIVENESS_METRICS_ENGINE_ID !== 'security/effectiveness-metrics/v1'
   || typeof evaluation.benchmarkStratumDefinitionV1Schema?.parse !== 'function'
@@ -502,6 +602,9 @@ if (
   || typeof evaluation.airGappedRunnerInputV1Schema?.parse !== 'function'
   || typeof evaluation.airGappedEvaluationAssemblyV1Schema?.parse !== 'function'
   || typeof evaluation.assembleAirGappedEvaluationV1 !== 'function'
+  || evaluation.RELEASE_CONSTITUTION_ENGINE_ID !== 'security/release-constitution/v1'
+  || typeof evaluation.releaseConstitutionDecisionV1Schema?.parse !== 'function'
+  || typeof evaluation.evaluateReleaseConstitutionV1 !== 'function'
   || typeof evaluation.calculatePairedArmComparisonV1 !== 'function'
   || typeof evaluation.effectivenessMetricsRequestV1Schema?.parse !== 'function'
   || typeof evaluation.effectivenessMetricsV1Schema?.parse !== 'function'
@@ -532,6 +635,10 @@ if (
   || packedAirGapInvalidated.status !== 'INVALIDATED'
   || packedAirGapInvalidated.arms !== null
   || packedAirGapInvalidated.reasonCodes[0] !== 'GROUND_TRUTH_LEAKAGE_DETECTED'
+  || packedReleasePromote.decision !== 'PROMOTE'
+  || packedReleasePromote.checks.some(check => check.status !== 'PASSED')
+  || packedReleaseBlocked.decision !== 'BLOCKED'
+  || !packedReleaseBlocked.reasonCodes.includes('HARD_SAFETY_FLOOR_FAILED')
 ) {
   throw new Error('packed Evaluation entry did not execute the versioned Metrics Engine')
 }

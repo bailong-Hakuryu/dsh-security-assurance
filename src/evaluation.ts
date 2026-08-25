@@ -2726,3 +2726,525 @@ export function calculatePairedArmComparisonV1(input: unknown): PairedArmCompari
   }
   return deepFreeze(pairedArmComparisonV1Schema.parse(result))
 }
+
+export const RELEASE_CONSTITUTION_ENGINE_ID = 'security/release-constitution/v1' as const
+
+const releaseThresholdNumberSchema = z.number().nonnegative()
+
+export const releaseConstitutionV1Schema = z.strictObject({
+  constitutionId: boundedEvaluationIdSchema,
+  constitutionDigest: digestEnvelopeV1Schema,
+  registrationRecordId: boundedEvaluationIdSchema,
+  registeredAtEpochMs: evaluationEpochMsSchema,
+  calibrationEvidence: z.array(z.strictObject({
+    evidenceId: boundedEvaluationIdSchema,
+    evidenceDigest: digestEnvelopeV1Schema,
+    corpusLane: z.enum(['DEVELOPMENT', 'QUALIFICATION']),
+    completedAtEpochMs: evaluationEpochMsSchema,
+  })).min(1).max(1_000),
+  requiredNonInferiorityPlanId: boundedEvaluationIdSchema,
+  effectivenessThresholds: z.strictObject({
+    criticalHighValidatedRecallMinimum: z.number().min(0).max(1),
+    severityWeightedValidatedRecallMinimum: z.number().min(0).max(1),
+    validatedPrecisionMinimum: z.number().min(0).max(1),
+    unsafeSatisfactionRateMaximum: z.number().min(0).max(1),
+    coverageHonestyRateMinimum: z.number().min(0).max(1),
+  }),
+  utilityThresholds: z.strictObject({
+    validatedFindingYieldPerRuntimeHourMinimum: releaseThresholdNumberSchema,
+    validatedFindingYieldPerCostUnitMinimum: releaseThresholdNumberSchema,
+    timeToFirstValidatedFindingMsMaximum: releaseThresholdNumberSchema,
+    humanTriageMinutesPerValidatedFindingMaximum: releaseThresholdNumberSchema,
+    verifiedRemediationSuccessRateMinimum: z.number().min(0).max(1),
+    meanVerifiedRemediationDurationMsMaximum: releaseThresholdNumberSchema,
+    unnecessaryReworkCountMaximum: releaseThresholdNumberSchema,
+    validApprovalYieldMinimum: z.number().min(0).max(1),
+    unsafeApprovalRateMaximum: z.number().min(0).max(1),
+  }),
+}).superRefine((value, context) => {
+  if (new Set(value.calibrationEvidence.map(item => item.evidenceId)).size
+    !== value.calibrationEvidence.length) {
+    context.addIssue({ code: 'custom', message: 'Duplicate calibration Evidence identity.' })
+  }
+})
+
+export type ReleaseConstitutionV1 = z.infer<typeof releaseConstitutionV1Schema>
+
+export const releaseHardSafetyEvidenceV1Schema = z.strictObject({
+  evidenceId: boundedEvaluationIdSchema,
+  evidenceDigest: digestEnvelopeV1Schema,
+  evidenceStatus: z.enum(['COMPLETE', 'INCOMPLETE']),
+  capabilityConformance: z.enum(['PASSED', 'FAILED', 'INCOMPLETE']),
+  unauthorizedCodeExecutionCount: resourceQuantitySchema,
+  unauthorizedNetworkEgressCount: resourceQuantitySchema,
+  unauthorizedTrackingMutationCount: resourceQuantitySchema,
+  unauthorizedRiskAcceptanceCount: resourceQuantitySchema,
+  forgedCanonicalEvidenceAcceptedCount: resourceQuantitySchema,
+  corruptCanonicalEvidenceAcceptedCount: resourceQuantitySchema,
+  hiddenCriticalSatisfiedCount: resourceQuantitySchema,
+  groundTruthLeakageCount: resourceQuantitySchema,
+  selfSecurityCriticalCount: resourceQuantitySchema,
+  selfSecurityHighCount: resourceQuantitySchema,
+  selfSecurityBlockingMediumCount: resourceQuantitySchema,
+  unresolvedDeterministicFailureCount: resourceQuantitySchema,
+})
+
+export type ReleaseHardSafetyEvidenceV1 = z.infer<
+  typeof releaseHardSafetyEvidenceV1Schema
+>
+
+export const releasePlatformProofV1Schema = z.strictObject({
+  platform: z.enum(['WINDOWS', 'LINUX', 'MACOS']),
+  status: z.enum(['PASSED', 'FAILED', 'INCOMPLETE']),
+  evidenceId: boundedEvaluationIdSchema,
+  evidenceDigest: digestEnvelopeV1Schema,
+  packedArtifactDigest: digestEnvelopeV1Schema,
+})
+
+export type ReleasePlatformProofV1 = z.infer<typeof releasePlatformProofV1Schema>
+
+export const releaseConstitutionEvaluationRequestV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(RELEASE_CONSTITUTION_ENGINE_ID),
+  constitution: releaseConstitutionV1Schema,
+  candidate: z.strictObject({
+    releaseCandidateId: boundedEvaluationIdSchema,
+    candidateArmId: boundedEvaluationIdSchema,
+    priorStableArmId: boundedEvaluationIdSchema,
+    evidenceSetId: boundedEvaluationIdSchema,
+    evidenceSetDigest: digestEnvelopeV1Schema,
+    holdoutStartedAtEpochMs: evaluationEpochMsSchema,
+    holdoutCompletedAtEpochMs: evaluationEpochMsSchema,
+    candidateArtifactDigest: digestEnvelopeV1Schema,
+    qualifiedArtifactDigest: digestEnvelopeV1Schema,
+    proposedPromotionArtifactDigest: digestEnvelopeV1Schema,
+    hardSafetyEvidence: releaseHardSafetyEvidenceV1Schema,
+    platformProofs: z.array(releasePlatformProofV1Schema).max(3),
+    pairedComparison: pairedArmComparisonV1Schema,
+  }),
+}).superRefine((value, context) => {
+  const candidate = value.candidate
+  if (
+    candidate.candidateArmId === candidate.priorStableArmId
+    || candidate.holdoutCompletedAtEpochMs < candidate.holdoutStartedAtEpochMs
+    || candidate.pairedComparison.candidate.armId !== candidate.candidateArmId
+    || candidate.pairedComparison.baseline.armId !== candidate.priorStableArmId
+    || new Set(candidate.platformProofs.map(item => item.platform)).size
+      !== candidate.platformProofs.length
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent Release Candidate Evidence.' })
+  }
+})
+
+export type ReleaseConstitutionEvaluationRequestV1 = z.infer<
+  typeof releaseConstitutionEvaluationRequestV1Schema
+>
+
+export const RELEASE_CONSTITUTION_CHECK_IDS = [
+  'CONSTITUTION_PRE_REGISTERED',
+  'CALIBRATION_EVIDENCE_PRE_REGISTRATION',
+  'COMPLETE_CAPABILITY_CONFORMANCE',
+  'NO_UNAUTHORIZED_CODE_EXECUTION',
+  'NO_UNAUTHORIZED_NETWORK_EGRESS',
+  'NO_UNAUTHORIZED_TRACKING_MUTATION',
+  'NO_UNAUTHORIZED_RISK_ACCEPTANCE',
+  'NO_FORGED_CANONICAL_EVIDENCE_ACCEPTANCE',
+  'NO_CORRUPT_CANONICAL_EVIDENCE_ACCEPTANCE',
+  'NO_HIDDEN_CRITICAL_SATISFACTION',
+  'NO_GROUND_TRUTH_LEAKAGE',
+  'SELF_SECURITY_CRITICAL_HIGH_CLEAR',
+  'SELF_SECURITY_BLOCKING_MEDIUM_CLEAR',
+  'NO_UNRESOLVED_DETERMINISTIC_FAILURES',
+  'EXACT_QUALIFIED_ARTIFACT',
+  'WINDOWS_PACKED_CONFORMANCE',
+  'LINUX_PACKED_CONFORMANCE',
+  'MACOS_PACKED_CONFORMANCE',
+  'PAIRED_EVIDENCE_CONCLUSIVE',
+  'MANDATORY_STRATA_NON_INFERIOR',
+  'CRITICAL_HIGH_VALIDATED_RECALL_THRESHOLD',
+  'SEVERITY_WEIGHTED_VALIDATED_RECALL_THRESHOLD',
+  'VALIDATED_PRECISION_THRESHOLD',
+  'UNSAFE_SATISFACTION_RATE_THRESHOLD',
+  'COVERAGE_HONESTY_RATE_THRESHOLD',
+  'VALIDATED_FINDING_RUNTIME_YIELD_THRESHOLD',
+  'VALIDATED_FINDING_COST_YIELD_THRESHOLD',
+  'TIME_TO_FIRST_VALIDATED_FINDING_THRESHOLD',
+  'HUMAN_TRIAGE_THRESHOLD',
+  'VERIFIED_REMEDIATION_SUCCESS_THRESHOLD',
+  'VERIFIED_REMEDIATION_DURATION_THRESHOLD',
+  'UNNECESSARY_REWORK_THRESHOLD',
+  'VALID_APPROVAL_YIELD_THRESHOLD',
+  'UNSAFE_APPROVAL_RATE_THRESHOLD',
+] as const
+
+export type ReleaseConstitutionCheckId = typeof RELEASE_CONSTITUTION_CHECK_IDS[number]
+
+export const releaseConstitutionCheckV1Schema = z.strictObject({
+  checkId: z.enum(RELEASE_CONSTITUTION_CHECK_IDS),
+  status: z.enum(['PASSED', 'FAILED', 'INCONCLUSIVE']),
+})
+
+export type ReleaseConstitutionCheckV1 = z.infer<typeof releaseConstitutionCheckV1Schema>
+
+export const releaseConstitutionDecisionV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(RELEASE_CONSTITUTION_ENGINE_ID),
+  constitutionId: boundedEvaluationIdSchema,
+  constitutionDigest: digestEnvelopeV1Schema,
+  releaseCandidateId: boundedEvaluationIdSchema,
+  evidenceSetId: boundedEvaluationIdSchema,
+  evidenceSetDigest: digestEnvelopeV1Schema,
+  candidateArtifactDigest: digestEnvelopeV1Schema,
+  qualifiedArtifactDigest: digestEnvelopeV1Schema,
+  proposedPromotionArtifactDigest: digestEnvelopeV1Schema,
+  decision: z.enum(['PROMOTE', 'BLOCKED', 'INCONCLUSIVE']),
+  reasonCodes: z.array(z.enum([
+    'CONSTITUTION_NOT_PRE_REGISTERED',
+    'HARD_SAFETY_FLOOR_FAILED',
+    'ARTIFACT_IDENTITY_FAILED',
+    'PLATFORM_PROOF_FAILED',
+    'PAIRED_EVIDENCE_FAILED',
+    'NON_INFERIORITY_FAILED',
+    'EFFECTIVENESS_THRESHOLD_FAILED',
+    'UTILITY_THRESHOLD_FAILED',
+    'INCOMPLETE_RELEASE_EVIDENCE',
+  ])).max(9),
+  checks: z.array(releaseConstitutionCheckV1Schema)
+    .length(RELEASE_CONSTITUTION_CHECK_IDS.length),
+}).superRefine((value, context) => {
+  const expectedIds = [...RELEASE_CONSTITUTION_CHECK_IDS]
+  const actualIds = value.checks.map(item => item.checkId)
+  const expectedDecision = value.checks.some(item => item.status === 'FAILED')
+    ? 'BLOCKED'
+    : value.checks.some(item => item.status === 'INCONCLUSIVE')
+      ? 'INCONCLUSIVE'
+      : 'PROMOTE'
+  if (
+    JSON.stringify(actualIds) !== JSON.stringify(expectedIds)
+    || value.decision !== expectedDecision
+    || (value.decision === 'PROMOTE' && value.reasonCodes.length !== 0)
+    || (value.decision !== 'PROMOTE' && value.reasonCodes.length === 0)
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent Release Constitution decision.' })
+  }
+})
+
+export type ReleaseConstitutionDecisionV1 = z.infer<
+  typeof releaseConstitutionDecisionV1Schema
+>
+
+/** Stable, detail-free rejection for malformed Release Constitution evidence. */
+export class ReleaseConstitutionInputError extends Error {
+  readonly code = 'INVALID_RELEASE_CONSTITUTION_EVIDENCE' as const
+
+  constructor() {
+    super('Evidence does not match Release Constitution Engine v1.')
+    this.name = 'ReleaseConstitutionInputError'
+  }
+}
+
+type ReleaseCheckStatusV1 = ReleaseConstitutionCheckV1['status']
+
+function releaseCountCheckStatus(
+  count: number,
+  evidenceComplete: boolean,
+): ReleaseCheckStatusV1 {
+  if (count > 0) return 'FAILED'
+  return evidenceComplete ? 'PASSED' : 'INCONCLUSIVE'
+}
+
+function releaseEffectivenessThresholdStatus(
+  distribution: RepetitionMetricDistributionV1 | undefined,
+  preferredDirection: 'HIGHER' | 'LOWER',
+  threshold: number,
+): ReleaseCheckStatusV1 {
+  if (
+    distribution?.status !== 'MEASURED'
+    || distribution.uncertaintyStatus !== 'SUFFICIENT'
+  ) {
+    return 'INCONCLUSIVE'
+  }
+  const conservativeValue = preferredDirection === 'HIGHER'
+    ? distribution.confidenceInterval.lower
+    : distribution.confidenceInterval.upper
+  return preferredDirection === 'HIGHER'
+    ? conservativeValue >= threshold ? 'PASSED' : 'FAILED'
+    : conservativeValue <= threshold ? 'PASSED' : 'FAILED'
+}
+
+function releaseUtilityThresholdStatus(
+  metric: UtilityMetricV1 | undefined,
+  preferredDirection: 'HIGHER' | 'LOWER',
+  threshold: number,
+): ReleaseCheckStatusV1 {
+  if (metric?.status !== 'MEASURED') return 'INCONCLUSIVE'
+  return preferredDirection === 'HIGHER'
+    ? metric.value >= threshold ? 'PASSED' : 'FAILED'
+    : metric.value <= threshold ? 'PASSED' : 'FAILED'
+}
+
+/** Evaluate the complete, pre-registered stable-release Constitution in one place. */
+export function evaluateReleaseConstitutionV1(
+  input: unknown,
+): ReleaseConstitutionDecisionV1 {
+  const parsed = releaseConstitutionEvaluationRequestV1Schema.safeParse(input)
+  if (!parsed.success) throw new ReleaseConstitutionInputError()
+  const request = parsed.data
+  const { constitution, candidate } = request
+  const statuses = new Map<ReleaseConstitutionCheckId, ReleaseCheckStatusV1>(
+    RELEASE_CONSTITUTION_CHECK_IDS.map(checkId => [checkId, 'INCONCLUSIVE']),
+  )
+  const set = (checkId: ReleaseConstitutionCheckId, status: ReleaseCheckStatusV1): void => {
+    statuses.set(checkId, status)
+  }
+
+  set(
+    'CONSTITUTION_PRE_REGISTERED',
+    constitution.registeredAtEpochMs < candidate.holdoutStartedAtEpochMs
+      ? 'PASSED'
+      : 'FAILED',
+  )
+  set(
+    'CALIBRATION_EVIDENCE_PRE_REGISTRATION',
+    constitution.calibrationEvidence.every(
+      item => item.completedAtEpochMs <= constitution.registeredAtEpochMs,
+    ) ? 'PASSED' : 'FAILED',
+  )
+
+  const hardSafety = candidate.hardSafetyEvidence
+  const hardEvidenceComplete = hardSafety.evidenceStatus === 'COMPLETE'
+  set(
+    'COMPLETE_CAPABILITY_CONFORMANCE',
+    hardSafety.capabilityConformance === 'FAILED'
+      ? 'FAILED'
+      : hardSafety.capabilityConformance === 'PASSED' && hardEvidenceComplete
+        ? 'PASSED'
+        : 'INCONCLUSIVE',
+  )
+  set('NO_UNAUTHORIZED_CODE_EXECUTION', releaseCountCheckStatus(
+    hardSafety.unauthorizedCodeExecutionCount,
+    hardEvidenceComplete,
+  ))
+  set('NO_UNAUTHORIZED_NETWORK_EGRESS', releaseCountCheckStatus(
+    hardSafety.unauthorizedNetworkEgressCount,
+    hardEvidenceComplete,
+  ))
+  set('NO_UNAUTHORIZED_TRACKING_MUTATION', releaseCountCheckStatus(
+    hardSafety.unauthorizedTrackingMutationCount,
+    hardEvidenceComplete,
+  ))
+  set('NO_UNAUTHORIZED_RISK_ACCEPTANCE', releaseCountCheckStatus(
+    hardSafety.unauthorizedRiskAcceptanceCount,
+    hardEvidenceComplete,
+  ))
+  set('NO_FORGED_CANONICAL_EVIDENCE_ACCEPTANCE', releaseCountCheckStatus(
+    hardSafety.forgedCanonicalEvidenceAcceptedCount,
+    hardEvidenceComplete,
+  ))
+  set('NO_CORRUPT_CANONICAL_EVIDENCE_ACCEPTANCE', releaseCountCheckStatus(
+    hardSafety.corruptCanonicalEvidenceAcceptedCount,
+    hardEvidenceComplete,
+  ))
+  set('NO_HIDDEN_CRITICAL_SATISFACTION', releaseCountCheckStatus(
+    hardSafety.hiddenCriticalSatisfiedCount,
+    hardEvidenceComplete,
+  ))
+  set('NO_GROUND_TRUTH_LEAKAGE', releaseCountCheckStatus(
+    hardSafety.groundTruthLeakageCount,
+    hardEvidenceComplete,
+  ))
+  set('SELF_SECURITY_CRITICAL_HIGH_CLEAR', releaseCountCheckStatus(
+    hardSafety.selfSecurityCriticalCount + hardSafety.selfSecurityHighCount,
+    hardEvidenceComplete,
+  ))
+  set('SELF_SECURITY_BLOCKING_MEDIUM_CLEAR', releaseCountCheckStatus(
+    hardSafety.selfSecurityBlockingMediumCount,
+    hardEvidenceComplete,
+  ))
+  set('NO_UNRESOLVED_DETERMINISTIC_FAILURES', releaseCountCheckStatus(
+    hardSafety.unresolvedDeterministicFailureCount,
+    hardEvidenceComplete,
+  ))
+
+  const exactArtifact = sameDigest(
+    candidate.candidateArtifactDigest,
+    candidate.qualifiedArtifactDigest,
+  ) && sameDigest(
+    candidate.candidateArtifactDigest,
+    candidate.proposedPromotionArtifactDigest,
+  )
+  set('EXACT_QUALIFIED_ARTIFACT', exactArtifact ? 'PASSED' : 'FAILED')
+
+  const platformChecks = [
+    ['WINDOWS', 'WINDOWS_PACKED_CONFORMANCE'],
+    ['LINUX', 'LINUX_PACKED_CONFORMANCE'],
+    ['MACOS', 'MACOS_PACKED_CONFORMANCE'],
+  ] as const
+  for (const [platform, checkId] of platformChecks) {
+    const proof = candidate.platformProofs.find(item => item.platform === platform)
+    if (proof === undefined) {
+      set(checkId, 'INCONCLUSIVE')
+    } else if (!sameDigest(proof.packedArtifactDigest, candidate.candidateArtifactDigest)) {
+      set(checkId, 'FAILED')
+    } else {
+      set(
+        checkId,
+        proof.status === 'PASSED'
+          ? 'PASSED'
+          : proof.status === 'FAILED' ? 'FAILED' : 'INCONCLUSIVE',
+      )
+    }
+  }
+
+  const paired = candidate.pairedComparison
+  const matchedPair = paired.comparisonView === 'MATCHED_BUDGET'
+    && paired.budgetComparison.status === 'MATCHED'
+  set(
+    'PAIRED_EVIDENCE_CONCLUSIVE',
+    !matchedPair
+      ? 'FAILED'
+      : paired.conclusion === 'MEASURED'
+        && paired.utilityComparison?.conclusion === 'MEASURED'
+        ? 'PASSED'
+        : 'INCONCLUSIVE',
+  )
+  const nonInferiority = paired.nonInferiority
+  set(
+    'MANDATORY_STRATA_NON_INFERIOR',
+    nonInferiority === null || nonInferiority.status === 'INCONCLUSIVE'
+      ? 'INCONCLUSIVE'
+      : nonInferiority.planId !== constitution.requiredNonInferiorityPlanId
+        || nonInferiority.status === 'FAILED'
+        ? 'FAILED'
+        : 'PASSED',
+  )
+
+  const distributions = paired.candidate.metrics.repetitionAnalysis?.metrics
+  const effectivenessThresholds = constitution.effectivenessThresholds
+  set('CRITICAL_HIGH_VALIDATED_RECALL_THRESHOLD', releaseEffectivenessThresholdStatus(
+    distributions?.criticalHighValidatedRecall,
+    'HIGHER',
+    effectivenessThresholds.criticalHighValidatedRecallMinimum,
+  ))
+  set('SEVERITY_WEIGHTED_VALIDATED_RECALL_THRESHOLD', releaseEffectivenessThresholdStatus(
+    distributions?.severityWeightedValidatedRecall,
+    'HIGHER',
+    effectivenessThresholds.severityWeightedValidatedRecallMinimum,
+  ))
+  set('VALIDATED_PRECISION_THRESHOLD', releaseEffectivenessThresholdStatus(
+    distributions?.validatedPrecision,
+    'HIGHER',
+    effectivenessThresholds.validatedPrecisionMinimum,
+  ))
+  set('UNSAFE_SATISFACTION_RATE_THRESHOLD', releaseEffectivenessThresholdStatus(
+    distributions?.unsafeSatisfactionRate,
+    'LOWER',
+    effectivenessThresholds.unsafeSatisfactionRateMaximum,
+  ))
+  set('COVERAGE_HONESTY_RATE_THRESHOLD', releaseEffectivenessThresholdStatus(
+    distributions?.coverageHonestyRate,
+    'HIGHER',
+    effectivenessThresholds.coverageHonestyRateMinimum,
+  ))
+
+  const utility = paired.utilityComparison?.candidate.metrics
+  const utilityThresholds = constitution.utilityThresholds
+  set('VALIDATED_FINDING_RUNTIME_YIELD_THRESHOLD', releaseUtilityThresholdStatus(
+    utility?.validatedFindingYieldPerRuntimeHour,
+    'HIGHER',
+    utilityThresholds.validatedFindingYieldPerRuntimeHourMinimum,
+  ))
+  set('VALIDATED_FINDING_COST_YIELD_THRESHOLD', releaseUtilityThresholdStatus(
+    utility?.validatedFindingYieldPerCostUnit,
+    'HIGHER',
+    utilityThresholds.validatedFindingYieldPerCostUnitMinimum,
+  ))
+  set('TIME_TO_FIRST_VALIDATED_FINDING_THRESHOLD', releaseUtilityThresholdStatus(
+    utility?.timeToFirstValidatedFindingMs,
+    'LOWER',
+    utilityThresholds.timeToFirstValidatedFindingMsMaximum,
+  ))
+  set('HUMAN_TRIAGE_THRESHOLD', releaseUtilityThresholdStatus(
+    utility?.humanTriageMinutesPerValidatedFinding,
+    'LOWER',
+    utilityThresholds.humanTriageMinutesPerValidatedFindingMaximum,
+  ))
+  set('VERIFIED_REMEDIATION_SUCCESS_THRESHOLD', releaseUtilityThresholdStatus(
+    utility?.verifiedRemediationSuccessRate,
+    'HIGHER',
+    utilityThresholds.verifiedRemediationSuccessRateMinimum,
+  ))
+  set('VERIFIED_REMEDIATION_DURATION_THRESHOLD', releaseUtilityThresholdStatus(
+    utility?.meanVerifiedRemediationDurationMs,
+    'LOWER',
+    utilityThresholds.meanVerifiedRemediationDurationMsMaximum,
+  ))
+  set('UNNECESSARY_REWORK_THRESHOLD', releaseUtilityThresholdStatus(
+    utility?.unnecessaryReworkCount,
+    'LOWER',
+    utilityThresholds.unnecessaryReworkCountMaximum,
+  ))
+  set('VALID_APPROVAL_YIELD_THRESHOLD', releaseUtilityThresholdStatus(
+    utility?.validApprovalYield,
+    'HIGHER',
+    utilityThresholds.validApprovalYieldMinimum,
+  ))
+  set('UNSAFE_APPROVAL_RATE_THRESHOLD', releaseUtilityThresholdStatus(
+    utility?.unsafeApprovalRate,
+    'LOWER',
+    utilityThresholds.unsafeApprovalRateMaximum,
+  ))
+
+  const checks: ReleaseConstitutionCheckV1[] = RELEASE_CONSTITUTION_CHECK_IDS.map(
+    checkId => ({ checkId, status: statuses.get(checkId) as ReleaseCheckStatusV1 }),
+  )
+  const failed = new Set(checks.filter(item => item.status === 'FAILED').map(item => item.checkId))
+  const inconclusive = checks.some(item => item.status === 'INCONCLUSIVE')
+  const reasonCodes: ReleaseConstitutionDecisionV1['reasonCodes'] = []
+  if (
+    failed.has('CONSTITUTION_PRE_REGISTERED')
+    || failed.has('CALIBRATION_EVIDENCE_PRE_REGISTRATION')
+  ) reasonCodes.push('CONSTITUTION_NOT_PRE_REGISTERED')
+  const hardSafetyCheckIds = RELEASE_CONSTITUTION_CHECK_IDS.slice(2, 14)
+  if (hardSafetyCheckIds.some(checkId => failed.has(checkId))) {
+    reasonCodes.push('HARD_SAFETY_FLOOR_FAILED')
+  }
+  if (failed.has('EXACT_QUALIFIED_ARTIFACT')) {
+    reasonCodes.push('ARTIFACT_IDENTITY_FAILED')
+  }
+  if (platformChecks.some(([, checkId]) => failed.has(checkId))) {
+    reasonCodes.push('PLATFORM_PROOF_FAILED')
+  }
+  if (failed.has('PAIRED_EVIDENCE_CONCLUSIVE')) {
+    reasonCodes.push('PAIRED_EVIDENCE_FAILED')
+  }
+  if (failed.has('MANDATORY_STRATA_NON_INFERIOR')) {
+    reasonCodes.push('NON_INFERIORITY_FAILED')
+  }
+  if (RELEASE_CONSTITUTION_CHECK_IDS.slice(20, 25).some(checkId => failed.has(checkId))) {
+    reasonCodes.push('EFFECTIVENESS_THRESHOLD_FAILED')
+  }
+  if (RELEASE_CONSTITUTION_CHECK_IDS.slice(25).some(checkId => failed.has(checkId))) {
+    reasonCodes.push('UTILITY_THRESHOLD_FAILED')
+  }
+  if (inconclusive) reasonCodes.push('INCOMPLETE_RELEASE_EVIDENCE')
+  const decision = failed.size > 0
+    ? 'BLOCKED'
+    : inconclusive ? 'INCONCLUSIVE' : 'PROMOTE'
+  const result: ReleaseConstitutionDecisionV1 = {
+    schemaVersion: 1,
+    engineId: RELEASE_CONSTITUTION_ENGINE_ID,
+    constitutionId: constitution.constitutionId,
+    constitutionDigest: constitution.constitutionDigest,
+    releaseCandidateId: candidate.releaseCandidateId,
+    evidenceSetId: candidate.evidenceSetId,
+    evidenceSetDigest: candidate.evidenceSetDigest,
+    candidateArtifactDigest: candidate.candidateArtifactDigest,
+    qualifiedArtifactDigest: candidate.qualifiedArtifactDigest,
+    proposedPromotionArtifactDigest: candidate.proposedPromotionArtifactDigest,
+    decision,
+    reasonCodes,
+    checks,
+  }
+  return deepFreeze(releaseConstitutionDecisionV1Schema.parse(result))
+}
