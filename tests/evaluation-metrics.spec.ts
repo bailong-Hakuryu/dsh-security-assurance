@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   calculateEffectivenessMetricsV1,
   calculatePairedArmComparisonV1,
+  calculateUtilityMetricsV1,
   EFFECTIVENESS_METRICS_ENGINE_ID,
   effectivenessMetricsRequestV1Schema,
   effectivenessMetricsV1Schema,
@@ -9,6 +10,9 @@ import {
   PAIRED_ARM_COMPARISON_ENGINE_ID,
   pairedArmComparisonV1Schema,
   PairedArmComparisonInputError,
+  UTILITY_METRICS_ENGINE_ID,
+  utilityMetricsV1Schema,
+  UtilityMetricsInputError,
 } from '../src/evaluation.ts'
 
 const severityWeights = {
@@ -824,6 +828,183 @@ describe('Effectiveness Metrics Engine v1', () => {
   })
 })
 
+describe('Utility Metrics Engine v1', () => {
+  const utilityBudget = {
+    limits: {
+      wallTimeMs: 3_600_000,
+      modelTokens: 10_000,
+      modelCalls: 4,
+      analyzerRuns: 2,
+      agentRuns: 2,
+      cpuTimeMs: 1_800_000,
+      peakMemoryBytes: 512_000_000,
+      diskBytes: 100_000_000,
+      networkRequests: 4,
+      outboundBytes: 1_000_000,
+      humanAdjudicationMs: 600_000,
+    },
+    usage: {
+      wallTimeMs: 1_800_000,
+      modelTokens: 5_000,
+      modelCalls: 2,
+      analyzerRuns: 1,
+      agentRuns: 1,
+      cpuTimeMs: 900_000,
+      peakMemoryBytes: 256_000_000,
+      diskBytes: 50_000_000,
+      networkRequests: 2,
+      outboundBytes: 500_000,
+      humanAdjudicationMs: 300_000,
+    },
+  }
+
+  function utilityEffectiveness(matched: boolean) {
+    return request([{
+      caseId: 'case-utility',
+      disposition: 'INCLUDED',
+      assessmentMode: 'CHANGE',
+      supportedEcosystem: 'node',
+      expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
+      groundTruthDefects: [{
+        defectId: 'defect-high',
+        severity: 'HIGH',
+        weaknessFamily: 'cwe-79',
+        policyBlocking: true,
+      }],
+      result: {
+        kind: 'COMPLETED',
+        verdict: matched ? 'FAILED' : 'SATISFIED',
+        coverageStatus: matched ? 'GAP' : 'COMPLETE',
+        findings: matched ? [{
+          findingId: 'finding-match',
+          adjudication: { status: 'MATCHED', defectId: 'defect-high' },
+        }] : [],
+      },
+    }])
+  }
+
+  it('calculates risk yield, human cost, remediation, rework, and approval Utility', () => {
+    const evidence = {
+      executionCostMicrounits: 500_000,
+      firstValidatedFindingMs: 120_000,
+      humanTriageMs: 300_000,
+      remediation: {
+        attempts: 2,
+        verifiedSuccesses: 1,
+        totalVerifiedSuccessDurationMs: 600_000,
+      },
+      unnecessaryReworkCount: 1,
+      controlPlane: {
+        applicability: 'APPLICABLE',
+        decisions: 4,
+        validApprovals: 3,
+        unsafeApprovals: 1,
+      },
+    }
+    const result = calculateUtilityMetricsV1({
+      schemaVersion: 1,
+      engineId: UTILITY_METRICS_ENGINE_ID,
+      effectivenessRequest: utilityEffectiveness(true),
+      budget: utilityBudget,
+      evidence,
+    })
+
+    expect(UTILITY_METRICS_ENGINE_ID).toBe('security/utility-metrics/v1')
+    expect(utilityMetricsV1Schema.parse(result)).toEqual(result)
+    expect(result).toMatchObject({
+      conclusion: 'MEASURED',
+      reasonCodes: [],
+      validatedFindings: 1,
+      evidence,
+      metrics: {
+        validatedFindingYieldPerRuntimeHour: { value: 2 },
+        validatedFindingYieldPerCostUnit: { value: 2 },
+        timeToFirstValidatedFindingMs: { value: 120_000 },
+        humanTriageMinutesPerValidatedFinding: { value: 5 },
+        verifiedRemediationSuccessRate: { value: 0.5 },
+        meanVerifiedRemediationDurationMs: { value: 600_000 },
+        unnecessaryReworkCount: { value: 1 },
+        validApprovalYield: { value: 0.75 },
+        unsafeApprovalRate: { value: 0.25 },
+      },
+    })
+    expect(result.metrics.validatedFindingYieldPerRuntimeHour).toMatchObject({
+      status: 'MEASURED',
+      unit: 'VALIDATED_FINDINGS_PER_RUNTIME_HOUR',
+      preferredDirection: 'HIGHER',
+      calculation: { numerator: 1, denominator: 1_800_000, normalizationFactor: 3_600_000 },
+    })
+    expect(Object.isFrozen(result)).toBe(true)
+    expect(Object.isFrozen(result.evidence.remediation)).toBe(true)
+    expect(Object.isFrozen(result.metrics)).toBe(true)
+  })
+
+  it('reports absent denominators as inconclusive and rejects contradictory evidence', () => {
+    const noOutcomes = {
+      executionCostMicrounits: 0,
+      firstValidatedFindingMs: null,
+      humanTriageMs: 0,
+      remediation: {
+        attempts: 0,
+        verifiedSuccesses: 0,
+        totalVerifiedSuccessDurationMs: 0,
+      },
+      unnecessaryReworkCount: 0,
+      controlPlane: { applicability: 'NOT_APPLICABLE' },
+    }
+    const result = calculateUtilityMetricsV1({
+      schemaVersion: 1,
+      engineId: UTILITY_METRICS_ENGINE_ID,
+      effectivenessRequest: utilityEffectiveness(false),
+      budget: {
+        ...utilityBudget,
+        usage: { ...utilityBudget.usage, wallTimeMs: 0 },
+      },
+      evidence: noOutcomes,
+    })
+    expect(result.conclusion).toBe('INCONCLUSIVE')
+    expect(result.reasonCodes).toEqual([
+      'NO_RECORDED_RUNTIME',
+      'NO_RECORDED_COST',
+      'NO_VALIDATED_FINDINGS',
+      'NO_REMEDIATION_ATTEMPTS',
+      'NO_VERIFIED_REMEDIATIONS',
+      'CONTROL_PLANE_NOT_APPLICABLE',
+    ])
+    expect(result.metrics.validApprovalYield).toMatchObject({
+      status: 'INCONCLUSIVE',
+      value: null,
+      reasonCodes: ['CONTROL_PLANE_NOT_APPLICABLE'],
+    })
+
+    expect(() => calculateUtilityMetricsV1({
+      schemaVersion: 1,
+      engineId: UTILITY_METRICS_ENGINE_ID,
+      effectivenessRequest: utilityEffectiveness(false),
+      budget: utilityBudget,
+      evidence: { ...noOutcomes, firstValidatedFindingMs: 1 },
+    })).toThrow(UtilityMetricsInputError)
+    expect(() => calculateUtilityMetricsV1({
+      schemaVersion: 1,
+      engineId: UTILITY_METRICS_ENGINE_ID,
+      effectivenessRequest: utilityEffectiveness(false),
+      budget: utilityBudget,
+      evidence: {
+        ...noOutcomes,
+        remediation: { attempts: 1, verifiedSuccesses: 2, totalVerifiedSuccessDurationMs: 1 },
+      },
+    })).toThrow(UtilityMetricsInputError)
+    expect(() => calculateUtilityMetricsV1({
+      schemaVersion: 1,
+      engineId: UTILITY_METRICS_ENGINE_ID,
+      effectivenessRequest: utilityEffectiveness(false),
+      budget: utilityBudget,
+      evidence: noOutcomes,
+      satisfactionSurveyScore: 5,
+    })).toThrow(UtilityMetricsInputError)
+  })
+})
+
 describe('Paired Arm Comparison Engine v1', () => {
   const resourceLimits = {
     wallTimeMs: 60_000,
@@ -950,6 +1131,26 @@ describe('Paired Arm Comparison Engine v1', () => {
     }
   }
 
+  function productUtilityEvidence(improved: boolean) {
+    return {
+      executionCostMicrounits: improved ? 500_000 : 1_000_000,
+      firstValidatedFindingMs: improved ? 10_000 : 20_000,
+      humanTriageMs: improved ? 300_000 : 600_000,
+      remediation: {
+        attempts: 2,
+        verifiedSuccesses: improved ? 2 : 1,
+        totalVerifiedSuccessDurationMs: 600_000,
+      },
+      unnecessaryReworkCount: improved ? 1 : 2,
+      controlPlane: {
+        applicability: 'APPLICABLE',
+        decisions: 4,
+        validApprovals: improved ? 3 : 2,
+        unsafeApprovals: improved ? 0 : 1,
+      },
+    }
+  }
+
   function comparisonRequest(comparisonView: 'MATCHED_BUDGET' | 'NATIVE_PROFILE') {
     return {
       schemaVersion: 1,
@@ -1051,6 +1252,61 @@ describe('Paired Arm Comparison Engine v1', () => {
     expect(Object.values(failing.nonInferiority?.metrics ?? {}).every(
       metric => metric.status === 'FAILED',
     )).toBe(true)
+  })
+
+  it('compares complete paired Utility evidence with direction-aware outcomes', () => {
+    const utilityRequest = comparisonRequest('MATCHED_BUDGET')
+    utilityRequest.baseline.metricsRequest = armMetrics(true)
+    utilityRequest.candidate.metricsRequest = armMetrics(true)
+    utilityRequest.candidate.budget = budget({ wallTimeMs: 15_000, modelTokens: 4_000 })
+    const result = calculatePairedArmComparisonV1({
+      ...utilityRequest,
+      baseline: {
+        ...utilityRequest.baseline,
+        utilityEvidence: productUtilityEvidence(false),
+      },
+      candidate: {
+        ...utilityRequest.candidate,
+        utilityEvidence: productUtilityEvidence(true),
+      },
+    })
+
+    expect(result.conclusion).toBe('MEASURED')
+    expect(result.utilityComparison).toMatchObject({
+      conclusion: 'MEASURED',
+      reasonCodes: [],
+      baseline: { validatedFindings: 1 },
+      candidate: { validatedFindings: 1 },
+    })
+    expect(Object.values(result.utilityComparison?.metrics ?? {}).every(metric => (
+      metric.status === 'MEASURED'
+      && metric.outcome === 'IMPROVED'
+      && metric.directionalDelta > 0
+    ))).toBe(true)
+    expect(result.utilityComparison?.metrics.validatedFindingYieldPerRuntimeHour)
+      .toMatchObject({
+        baselineValue: 120,
+        candidateValue: 240,
+        rawDelta: 120,
+        directionalDelta: 120,
+        preferredDirection: 'HIGHER',
+      })
+    expect(result.utilityComparison?.metrics.unsafeApprovalRate).toMatchObject({
+      baselineValue: 0.25,
+      candidateValue: 0,
+      rawDelta: -0.25,
+      directionalDelta: 0.25,
+      preferredDirection: 'LOWER',
+    })
+    expect(Object.isFrozen(result.utilityComparison)).toBe(true)
+
+    expect(() => calculatePairedArmComparisonV1({
+      ...comparisonRequest('MATCHED_BUDGET'),
+      baseline: {
+        ...comparisonRequest('MATCHED_BUDGET').baseline,
+        utilityEvidence: productUtilityEvidence(false),
+      },
+    })).toThrow(PairedArmComparisonInputError)
   })
 
   it('refuses post-hoc, partial, native-profile, and uncertainty-free non-inferiority claims', () => {

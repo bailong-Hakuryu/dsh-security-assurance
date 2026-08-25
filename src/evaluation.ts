@@ -423,10 +423,174 @@ export const evaluationArmBudgetV1Schema = z.strictObject({
 
 export type EvaluationArmBudgetV1 = z.infer<typeof evaluationArmBudgetV1Schema>
 
+export const UTILITY_METRICS_ENGINE_ID = 'security/utility-metrics/v1' as const
+
+const controlPlaneUtilityEvidenceV1Schema = z.discriminatedUnion('applicability', [
+  z.strictObject({ applicability: z.literal('NOT_APPLICABLE') }),
+  z.strictObject({
+    applicability: z.literal('APPLICABLE'),
+    decisions: resourceQuantitySchema,
+    validApprovals: resourceQuantitySchema,
+    unsafeApprovals: resourceQuantitySchema,
+  }).superRefine((value, context) => {
+    if (
+      value.validApprovals > value.decisions
+      || value.unsafeApprovals > value.decisions
+      || value.validApprovals + value.unsafeApprovals > value.decisions
+    ) {
+      context.addIssue({ code: 'custom', message: 'Inconsistent Control Plane utility counts.' })
+    }
+  }),
+])
+
+export const utilityEvidenceV1Schema = z.strictObject({
+  executionCostMicrounits: resourceQuantitySchema,
+  firstValidatedFindingMs: resourceQuantitySchema.nullable(),
+  humanTriageMs: resourceQuantitySchema,
+  remediation: z.strictObject({
+    attempts: resourceQuantitySchema,
+    verifiedSuccesses: resourceQuantitySchema,
+    totalVerifiedSuccessDurationMs: resourceQuantitySchema,
+  }),
+  unnecessaryReworkCount: resourceQuantitySchema,
+  controlPlane: controlPlaneUtilityEvidenceV1Schema,
+}).superRefine((value, context) => {
+  if (
+    value.remediation.verifiedSuccesses > value.remediation.attempts
+    || (value.remediation.verifiedSuccesses === 0
+      && value.remediation.totalVerifiedSuccessDurationMs !== 0)
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent verified remediation evidence.' })
+  }
+})
+
+export type UtilityEvidenceV1 = z.infer<typeof utilityEvidenceV1Schema>
+
+export const utilityMetricsRequestV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(UTILITY_METRICS_ENGINE_ID),
+  effectivenessRequest: effectivenessMetricsRequestV1Schema,
+  budget: evaluationArmBudgetV1Schema,
+  evidence: utilityEvidenceV1Schema,
+})
+
+export type UtilityMetricsRequestV1 = z.infer<typeof utilityMetricsRequestV1Schema>
+
+const utilityMetricUnitV1Schema = z.enum([
+  'VALIDATED_FINDINGS_PER_RUNTIME_HOUR',
+  'VALIDATED_FINDINGS_PER_COST_UNIT',
+  'MILLISECONDS',
+  'MINUTES_PER_VALIDATED_FINDING',
+  'RATIO',
+  'COUNT',
+])
+
+const utilityMetricReasonV1Schema = z.enum([
+  'INCOMPLETE_FINDING_ADJUDICATION',
+  'NO_VALIDATED_FINDINGS',
+  'NO_RECORDED_RUNTIME',
+  'NO_RECORDED_COST',
+  'NO_REMEDIATION_ATTEMPTS',
+  'NO_VERIFIED_REMEDIATIONS',
+  'CONTROL_PLANE_NOT_APPLICABLE',
+  'NO_CONTROL_PLANE_DECISIONS',
+])
+
+const utilityMetricCalculationV1Schema = z.strictObject({
+  numerator: resourceQuantitySchema,
+  denominator: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  normalizationFactor: z.number().positive().max(Number.MAX_SAFE_INTEGER),
+})
+
+export const utilityMetricV1Schema = z.discriminatedUnion('status', [
+  z.strictObject({
+    status: z.literal('MEASURED'),
+    value: z.number().nonnegative(),
+    unit: utilityMetricUnitV1Schema,
+    preferredDirection: z.enum(['HIGHER', 'LOWER']),
+    calculation: utilityMetricCalculationV1Schema,
+  }),
+  z.strictObject({
+    status: z.literal('INCONCLUSIVE'),
+    value: z.null(),
+    unit: utilityMetricUnitV1Schema,
+    preferredDirection: z.enum(['HIGHER', 'LOWER']),
+    calculation: z.strictObject({
+      numerator: resourceQuantitySchema,
+      denominator: z.literal(0),
+      normalizationFactor: z.number().positive().max(Number.MAX_SAFE_INTEGER),
+    }),
+    reasonCodes: z.array(utilityMetricReasonV1Schema).length(1),
+  }),
+]).superRefine((value, context) => {
+  if (value.status !== 'MEASURED') return
+  const expected = value.calculation.numerator
+    * value.calculation.normalizationFactor
+    / value.calculation.denominator
+  if (Math.abs(value.value - expected) > Number.EPSILON * Math.max(4, expected * 4)) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent Utility metric calculation.' })
+  }
+})
+
+export type UtilityMetricV1 = z.infer<typeof utilityMetricV1Schema>
+
+export const UTILITY_METRIC_DIRECTIONS = {
+  validatedFindingYieldPerRuntimeHour: 'HIGHER',
+  validatedFindingYieldPerCostUnit: 'HIGHER',
+  timeToFirstValidatedFindingMs: 'LOWER',
+  humanTriageMinutesPerValidatedFinding: 'LOWER',
+  verifiedRemediationSuccessRate: 'HIGHER',
+  meanVerifiedRemediationDurationMs: 'LOWER',
+  unnecessaryReworkCount: 'LOWER',
+  validApprovalYield: 'HIGHER',
+  unsafeApprovalRate: 'LOWER',
+} as const
+
+export const utilityMetricsV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(UTILITY_METRICS_ENGINE_ID),
+  conclusion: z.enum(['MEASURED', 'INCONCLUSIVE']),
+  reasonCodes: z.array(utilityMetricReasonV1Schema).max(8),
+  validatedFindings: resourceQuantitySchema,
+  evidence: utilityEvidenceV1Schema,
+  metrics: z.strictObject({
+    validatedFindingYieldPerRuntimeHour: utilityMetricV1Schema,
+    validatedFindingYieldPerCostUnit: utilityMetricV1Schema,
+    timeToFirstValidatedFindingMs: utilityMetricV1Schema,
+    humanTriageMinutesPerValidatedFinding: utilityMetricV1Schema,
+    verifiedRemediationSuccessRate: utilityMetricV1Schema,
+    meanVerifiedRemediationDurationMs: utilityMetricV1Schema,
+    unnecessaryReworkCount: utilityMetricV1Schema,
+    validApprovalYield: utilityMetricV1Schema,
+    unsafeApprovalRate: utilityMetricV1Schema,
+  }),
+}).superRefine((value, context) => {
+  const metricNames = Object.keys(UTILITY_METRIC_DIRECTIONS) as Array<
+    keyof typeof UTILITY_METRIC_DIRECTIONS
+  >
+  const metrics = metricNames.map(name => value.metrics[name])
+  const expectedReasons = [...new Set(metrics.flatMap(metric => (
+    metric.status === 'INCONCLUSIVE' ? metric.reasonCodes : []
+  )))]
+  if (
+    metricNames.some(name => (
+      value.metrics[name].preferredDirection !== UTILITY_METRIC_DIRECTIONS[name]
+    ))
+    || (value.conclusion === 'MEASURED' && metrics.some(metric => metric.status !== 'MEASURED'))
+    || (value.conclusion === 'INCONCLUSIVE' && metrics.every(metric => metric.status === 'MEASURED'))
+    || JSON.stringify(value.reasonCodes) !== JSON.stringify(expectedReasons)
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent Utility conclusion.' })
+  }
+})
+
+export type UtilityMetricsV1 = z.infer<typeof utilityMetricsV1Schema>
+
 export const pairedArmEvidenceV1Schema = z.strictObject({
   armId: boundedEvaluationIdSchema,
   metricsRequest: effectivenessMetricsRequestV1Schema,
   budget: evaluationArmBudgetV1Schema,
+  utilityEvidence: utilityEvidenceV1Schema.optional(),
 })
 
 export type PairedArmEvidenceV1 = z.infer<typeof pairedArmEvidenceV1Schema>
@@ -637,6 +801,86 @@ export type NonInferiorityComparisonV1 = z.infer<
   typeof nonInferiorityComparisonV1Schema
 >
 
+const pairedUtilityMetricReasonV1Schema = z.enum([
+  'INCOMPATIBLE_EVALUATION_DESIGN',
+  'UNMATCHED_BUDGETS',
+  'INCONCLUSIVE_ARM_UTILITY',
+])
+
+export const pairedUtilityMetricComparisonV1Schema = z.discriminatedUnion('status', [
+  z.strictObject({
+    status: z.literal('MEASURED'),
+    baselineValue: z.number().nonnegative(),
+    candidateValue: z.number().nonnegative(),
+    rawDelta: z.number(),
+    directionalDelta: z.number(),
+    preferredDirection: z.enum(['HIGHER', 'LOWER']),
+    outcome: z.enum(['IMPROVED', 'EQUIVALENT', 'REGRESSED']),
+  }),
+  z.strictObject({
+    status: z.literal('INCONCLUSIVE'),
+    baselineValue: z.number().nonnegative().nullable(),
+    candidateValue: z.number().nonnegative().nullable(),
+    rawDelta: z.null(),
+    directionalDelta: z.null(),
+    preferredDirection: z.enum(['HIGHER', 'LOWER']),
+    outcome: z.null(),
+    reasonCodes: z.array(pairedUtilityMetricReasonV1Schema).length(1),
+  }),
+]).superRefine((value, context) => {
+  if (value.status !== 'MEASURED') return
+  const rawDelta = value.candidateValue - value.baselineValue
+  const directionalDelta = value.preferredDirection === 'HIGHER' ? rawDelta : -rawDelta
+  const outcome = directionalDelta > 0
+    ? 'IMPROVED'
+    : directionalDelta < 0 ? 'REGRESSED' : 'EQUIVALENT'
+  if (
+    Math.abs(value.rawDelta - rawDelta) > Number.EPSILON * Math.max(4, Math.abs(rawDelta) * 4)
+    || Math.abs(value.directionalDelta - directionalDelta)
+      > Number.EPSILON * Math.max(4, Math.abs(directionalDelta) * 4)
+    || value.outcome !== outcome
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent paired Utility metric.' })
+  }
+})
+
+export type PairedUtilityMetricComparisonV1 = z.infer<
+  typeof pairedUtilityMetricComparisonV1Schema
+>
+
+export const pairedUtilityComparisonV1Schema = z.strictObject({
+  conclusion: z.enum(['MEASURED', 'INCONCLUSIVE']),
+  reasonCodes: z.array(pairedUtilityMetricReasonV1Schema).max(3),
+  baseline: utilityMetricsV1Schema,
+  candidate: utilityMetricsV1Schema,
+  metrics: z.strictObject({
+    validatedFindingYieldPerRuntimeHour: pairedUtilityMetricComparisonV1Schema,
+    validatedFindingYieldPerCostUnit: pairedUtilityMetricComparisonV1Schema,
+    timeToFirstValidatedFindingMs: pairedUtilityMetricComparisonV1Schema,
+    humanTriageMinutesPerValidatedFinding: pairedUtilityMetricComparisonV1Schema,
+    verifiedRemediationSuccessRate: pairedUtilityMetricComparisonV1Schema,
+    meanVerifiedRemediationDurationMs: pairedUtilityMetricComparisonV1Schema,
+    unnecessaryReworkCount: pairedUtilityMetricComparisonV1Schema,
+    validApprovalYield: pairedUtilityMetricComparisonV1Schema,
+    unsafeApprovalRate: pairedUtilityMetricComparisonV1Schema,
+  }),
+}).superRefine((value, context) => {
+  const metrics = Object.values(value.metrics)
+  if (
+    (value.conclusion === 'MEASURED' && value.reasonCodes.length !== 0)
+    || (value.conclusion === 'MEASURED' && (
+      value.baseline.conclusion !== 'MEASURED'
+      || value.candidate.conclusion !== 'MEASURED'
+      || metrics.some(metric => metric.status !== 'MEASURED')
+    ))
+    || (value.conclusion === 'INCONCLUSIVE' && value.reasonCodes.length === 0)
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent paired Utility conclusion.' })
+  }
+})
+
+export type PairedUtilityComparisonV1 = z.infer<typeof pairedUtilityComparisonV1Schema>
+
 export const pairedArmComparisonV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   engineId: z.literal(PAIRED_ARM_COMPARISON_ENGINE_ID),
@@ -646,7 +890,8 @@ export const pairedArmComparisonV1Schema = z.strictObject({
     'INCOMPATIBLE_EVALUATION_DESIGN',
     'UNMATCHED_BUDGETS',
     'INCONCLUSIVE_ARM_METRICS',
-  ])).max(3),
+    'INCONCLUSIVE_ARM_UTILITY',
+  ])).max(4),
   baseline: z.strictObject({
     armId: boundedEvaluationIdSchema,
     metrics: effectivenessMetricsV1Schema,
@@ -664,6 +909,7 @@ export const pairedArmComparisonV1Schema = z.strictObject({
     coverageHonestyRate: pairedMetricComparisonV1Schema,
   }),
   nonInferiority: nonInferiorityComparisonV1Schema.nullable(),
+  utilityComparison: pairedUtilityComparisonV1Schema.nullable(),
 }).superRefine((value, context) => {
   const metrics = Object.values(value.metrics)
   if (
@@ -673,6 +919,7 @@ export const pairedArmComparisonV1Schema = z.strictObject({
       || value.candidate.metrics.conclusion !== 'MEASURED'
       || value.budgetComparison.status === 'INCONCLUSIVE'
       || metrics.some(metric => metric.status !== 'MEASURED')
+      || value.utilityComparison?.conclusion === 'INCONCLUSIVE'
     ))
     || (value.conclusion === 'INCONCLUSIVE' && value.reasonCodes.length === 0)
   ) {
@@ -689,6 +936,16 @@ export class EvaluationMetricsInputError extends Error {
   constructor() {
     super('Evaluation evidence does not match Effectiveness Metrics Engine v1.')
     this.name = 'EvaluationMetricsInputError'
+  }
+}
+
+/** Stable, detail-free rejection for malformed or contradictory Utility evidence. */
+export class UtilityMetricsInputError extends Error {
+  readonly code = 'INVALID_UTILITY_EVIDENCE' as const
+
+  constructor() {
+    super('Utility evidence does not match Utility Metrics Engine v1.')
+    this.name = 'UtilityMetricsInputError'
   }
 }
 
@@ -1338,6 +1595,270 @@ export function calculateEffectivenessMetricsV1(input: unknown): EffectivenessMe
   return deepFreeze(effectivenessMetricsV1Schema.parse(result))
 }
 
+type UtilityMetricReasonV1 = z.infer<typeof utilityMetricReasonV1Schema>
+type UtilityMetricUnitV1 = z.infer<typeof utilityMetricUnitV1Schema>
+
+function measuredUtilityMetric(
+  numerator: number,
+  denominator: number,
+  normalizationFactor: number,
+  unit: UtilityMetricUnitV1,
+  preferredDirection: 'HIGHER' | 'LOWER',
+): UtilityMetricV1 {
+  if (denominator <= 0) throw new UtilityMetricsInputError()
+  return {
+    status: 'MEASURED',
+    value: numerator * normalizationFactor / denominator,
+    unit,
+    preferredDirection,
+    calculation: { numerator, denominator, normalizationFactor },
+  }
+}
+
+function inconclusiveUtilityMetric(
+  numerator: number,
+  normalizationFactor: number,
+  unit: UtilityMetricUnitV1,
+  preferredDirection: 'HIGHER' | 'LOWER',
+  reason: UtilityMetricReasonV1,
+): UtilityMetricV1 {
+  return {
+    status: 'INCONCLUSIVE',
+    value: null,
+    unit,
+    preferredDirection,
+    calculation: { numerator, denominator: 0, normalizationFactor },
+    reasonCodes: [reason],
+  }
+}
+
+function calculateUtilityMetricsFromEvidence(
+  effectiveness: EffectivenessMetricsV1,
+  budget: EvaluationArmBudgetV1,
+  evidence: UtilityEvidenceV1,
+): UtilityMetricsV1 {
+  const validatedFindings = effectiveness.metrics.validatedPrecision.numerator
+  if (
+    (validatedFindings === 0 && evidence.firstValidatedFindingMs !== null)
+    || (validatedFindings > 0 && evidence.firstValidatedFindingMs === null)
+    || (evidence.firstValidatedFindingMs !== null
+      && evidence.firstValidatedFindingMs > budget.usage.wallTimeMs)
+  ) {
+    throw new UtilityMetricsInputError()
+  }
+  const incompleteAdjudication = effectiveness.counts.unadjudicatedFindings > 0
+  const runtimeYield = incompleteAdjudication
+    ? inconclusiveUtilityMetric(
+        validatedFindings,
+        3_600_000,
+        'VALIDATED_FINDINGS_PER_RUNTIME_HOUR',
+        'HIGHER',
+        'INCOMPLETE_FINDING_ADJUDICATION',
+      )
+    : budget.usage.wallTimeMs === 0
+      ? inconclusiveUtilityMetric(
+          validatedFindings,
+          3_600_000,
+          'VALIDATED_FINDINGS_PER_RUNTIME_HOUR',
+          'HIGHER',
+          'NO_RECORDED_RUNTIME',
+        )
+      : measuredUtilityMetric(
+          validatedFindings,
+          budget.usage.wallTimeMs,
+          3_600_000,
+          'VALIDATED_FINDINGS_PER_RUNTIME_HOUR',
+          'HIGHER',
+        )
+  const costYield = incompleteAdjudication
+    ? inconclusiveUtilityMetric(
+        validatedFindings,
+        1_000_000,
+        'VALIDATED_FINDINGS_PER_COST_UNIT',
+        'HIGHER',
+        'INCOMPLETE_FINDING_ADJUDICATION',
+      )
+    : evidence.executionCostMicrounits === 0
+      ? inconclusiveUtilityMetric(
+          validatedFindings,
+          1_000_000,
+          'VALIDATED_FINDINGS_PER_COST_UNIT',
+          'HIGHER',
+          'NO_RECORDED_COST',
+        )
+      : measuredUtilityMetric(
+          validatedFindings,
+          evidence.executionCostMicrounits,
+          1_000_000,
+          'VALIDATED_FINDINGS_PER_COST_UNIT',
+          'HIGHER',
+        )
+  const timeToFirst = evidence.firstValidatedFindingMs === null
+    ? inconclusiveUtilityMetric(
+        validatedFindings,
+        1,
+        'MILLISECONDS',
+        'LOWER',
+        'NO_VALIDATED_FINDINGS',
+      )
+    : measuredUtilityMetric(
+        evidence.firstValidatedFindingMs,
+        1,
+        1,
+        'MILLISECONDS',
+        'LOWER',
+      )
+  const triage = incompleteAdjudication
+    ? inconclusiveUtilityMetric(
+        evidence.humanTriageMs,
+        1 / 60_000,
+        'MINUTES_PER_VALIDATED_FINDING',
+        'LOWER',
+        'INCOMPLETE_FINDING_ADJUDICATION',
+      )
+    : validatedFindings === 0
+      ? inconclusiveUtilityMetric(
+          evidence.humanTriageMs,
+          1 / 60_000,
+          'MINUTES_PER_VALIDATED_FINDING',
+          'LOWER',
+          'NO_VALIDATED_FINDINGS',
+        )
+      : measuredUtilityMetric(
+          evidence.humanTriageMs,
+          validatedFindings,
+          1 / 60_000,
+          'MINUTES_PER_VALIDATED_FINDING',
+          'LOWER',
+        )
+  const remediationSuccess = evidence.remediation.attempts === 0
+    ? inconclusiveUtilityMetric(
+        evidence.remediation.verifiedSuccesses,
+        1,
+        'RATIO',
+        'HIGHER',
+        'NO_REMEDIATION_ATTEMPTS',
+      )
+    : measuredUtilityMetric(
+        evidence.remediation.verifiedSuccesses,
+        evidence.remediation.attempts,
+        1,
+        'RATIO',
+        'HIGHER',
+      )
+  const remediationDuration = evidence.remediation.verifiedSuccesses === 0
+    ? inconclusiveUtilityMetric(
+        evidence.remediation.totalVerifiedSuccessDurationMs,
+        1,
+        'MILLISECONDS',
+        'LOWER',
+        'NO_VERIFIED_REMEDIATIONS',
+      )
+    : measuredUtilityMetric(
+        evidence.remediation.totalVerifiedSuccessDurationMs,
+        evidence.remediation.verifiedSuccesses,
+        1,
+        'MILLISECONDS',
+        'LOWER',
+      )
+  const rework = measuredUtilityMetric(
+    evidence.unnecessaryReworkCount,
+    1,
+    1,
+    'COUNT',
+    'LOWER',
+  )
+  const controlPlane = evidence.controlPlane
+  const validApprovalYield = controlPlane.applicability === 'NOT_APPLICABLE'
+    ? inconclusiveUtilityMetric(
+        0,
+        1,
+        'RATIO',
+        'HIGHER',
+        'CONTROL_PLANE_NOT_APPLICABLE',
+      )
+    : controlPlane.decisions === 0
+      ? inconclusiveUtilityMetric(
+          controlPlane.validApprovals,
+          1,
+          'RATIO',
+          'HIGHER',
+          'NO_CONTROL_PLANE_DECISIONS',
+        )
+      : measuredUtilityMetric(
+          controlPlane.validApprovals,
+          controlPlane.decisions,
+          1,
+          'RATIO',
+          'HIGHER',
+        )
+  const unsafeApprovalRate = controlPlane.applicability === 'NOT_APPLICABLE'
+    ? inconclusiveUtilityMetric(
+        0,
+        1,
+        'RATIO',
+        'LOWER',
+        'CONTROL_PLANE_NOT_APPLICABLE',
+      )
+    : controlPlane.decisions === 0
+      ? inconclusiveUtilityMetric(
+          controlPlane.unsafeApprovals,
+          1,
+          'RATIO',
+          'LOWER',
+          'NO_CONTROL_PLANE_DECISIONS',
+        )
+      : measuredUtilityMetric(
+          controlPlane.unsafeApprovals,
+          controlPlane.decisions,
+          1,
+          'RATIO',
+          'LOWER',
+        )
+  const metrics: UtilityMetricsV1['metrics'] = {
+    validatedFindingYieldPerRuntimeHour: runtimeYield,
+    validatedFindingYieldPerCostUnit: costYield,
+    timeToFirstValidatedFindingMs: timeToFirst,
+    humanTriageMinutesPerValidatedFinding: triage,
+    verifiedRemediationSuccessRate: remediationSuccess,
+    meanVerifiedRemediationDurationMs: remediationDuration,
+    unnecessaryReworkCount: rework,
+    validApprovalYield,
+    unsafeApprovalRate,
+  }
+  const reasonCodes = [...new Set(Object.values(metrics).flatMap(metric => (
+    metric.status === 'INCONCLUSIVE' ? metric.reasonCodes : []
+  )))]
+  const result: UtilityMetricsV1 = {
+    schemaVersion: 1,
+    engineId: UTILITY_METRICS_ENGINE_ID,
+    conclusion: reasonCodes.length === 0 ? 'MEASURED' : 'INCONCLUSIVE',
+    reasonCodes,
+    validatedFindings,
+    evidence,
+    metrics,
+  }
+  return deepFreeze(utilityMetricsV1Schema.parse(result))
+}
+
+/** Calculate auditable Product Utility from the same frozen Effectiveness evidence. */
+export function calculateUtilityMetricsV1(input: unknown): UtilityMetricsV1 {
+  const parsed = utilityMetricsRequestV1Schema.safeParse(input)
+  if (!parsed.success) throw new UtilityMetricsInputError()
+  let effectiveness: EffectivenessMetricsV1
+  try {
+    effectiveness = calculateEffectivenessMetricsV1(parsed.data.effectivenessRequest)
+  } catch (error) {
+    if (error instanceof EvaluationMetricsInputError) throw new UtilityMetricsInputError()
+    throw error
+  }
+  return calculateUtilityMetricsFromEvidence(
+    effectiveness,
+    parsed.data.budget,
+    parsed.data.evidence,
+  )
+}
+
 function invalidPairedArmEvidence(): never {
   throw new PairedArmComparisonInputError()
 }
@@ -1345,6 +1866,10 @@ function invalidPairedArmEvidence(): never {
 function parsePairedArmComparisonRequest(input: unknown): PairedArmComparisonRequestV1 {
   const parsed = pairedArmComparisonRequestV1Schema.safeParse(input)
   if (!parsed.success || parsed.data.baseline.armId === parsed.data.candidate.armId) {
+    return invalidPairedArmEvidence()
+  }
+  if ((parsed.data.baseline.utilityEvidence === undefined)
+    !== (parsed.data.candidate.utilityEvidence === undefined)) {
     return invalidPairedArmEvidence()
   }
   const plan = parsed.data.nonInferiorityPlan
@@ -1485,6 +2010,98 @@ function calculateNonInferiorityComparison(
   }
 }
 
+function comparePairedUtilityMetric(
+  baseline: UtilityMetricV1,
+  candidate: UtilityMetricV1,
+  preferredDirection: 'HIGHER' | 'LOWER',
+  blockedReason?: 'INCOMPATIBLE_EVALUATION_DESIGN' | 'UNMATCHED_BUDGETS',
+): PairedUtilityMetricComparisonV1 {
+  if (
+    blockedReason !== undefined
+    || baseline.status === 'INCONCLUSIVE'
+    || candidate.status === 'INCONCLUSIVE'
+  ) {
+    return {
+      status: 'INCONCLUSIVE',
+      baselineValue: baseline.value,
+      candidateValue: candidate.value,
+      rawDelta: null,
+      directionalDelta: null,
+      preferredDirection,
+      outcome: null,
+      reasonCodes: [blockedReason ?? 'INCONCLUSIVE_ARM_UTILITY'],
+    }
+  }
+  const raw = candidate.value - baseline.value
+  const directed = preferredDirection === 'HIGHER' ? raw : -raw
+  const rawDelta = raw === 0 ? 0 : raw
+  const directionalDelta = directed === 0 ? 0 : directed
+  return {
+    status: 'MEASURED',
+    baselineValue: baseline.value,
+    candidateValue: candidate.value,
+    rawDelta,
+    directionalDelta,
+    preferredDirection,
+    outcome: directionalDelta > 0
+      ? 'IMPROVED'
+      : directionalDelta < 0 ? 'REGRESSED' : 'EQUIVALENT',
+  }
+}
+
+function calculatePairedUtilityComparison(
+  request: PairedArmComparisonRequestV1,
+  baselineEffectiveness: EffectivenessMetricsV1,
+  candidateEffectiveness: EffectivenessMetricsV1,
+  compatibleDesign: boolean,
+  matchedBudgetBlocked: boolean,
+): PairedUtilityComparisonV1 | null {
+  const baselineEvidence = request.baseline.utilityEvidence
+  const candidateEvidence = request.candidate.utilityEvidence
+  if (baselineEvidence === undefined || candidateEvidence === undefined) return null
+  const baseline = calculateUtilityMetricsFromEvidence(
+    baselineEffectiveness,
+    request.baseline.budget,
+    baselineEvidence,
+  )
+  const candidate = calculateUtilityMetricsFromEvidence(
+    candidateEffectiveness,
+    request.candidate.budget,
+    candidateEvidence,
+  )
+  const blockedReason = !compatibleDesign
+    ? 'INCOMPATIBLE_EVALUATION_DESIGN' as const
+    : matchedBudgetBlocked ? 'UNMATCHED_BUDGETS' as const : undefined
+  const metricNames = Object.keys(UTILITY_METRIC_DIRECTIONS) as Array<
+    keyof typeof UTILITY_METRIC_DIRECTIONS
+  >
+  const metrics = {} as PairedUtilityComparisonV1['metrics']
+  for (const metricName of metricNames) {
+    metrics[metricName] = comparePairedUtilityMetric(
+      baseline.metrics[metricName],
+      candidate.metrics[metricName],
+      UTILITY_METRIC_DIRECTIONS[metricName],
+      blockedReason,
+    )
+  }
+  const reasonCodes: PairedUtilityComparisonV1['reasonCodes'] = []
+  if (blockedReason !== undefined) {
+    reasonCodes.push(blockedReason)
+  } else if (
+    baseline.conclusion === 'INCONCLUSIVE'
+    || candidate.conclusion === 'INCONCLUSIVE'
+  ) {
+    reasonCodes.push('INCONCLUSIVE_ARM_UTILITY')
+  }
+  return {
+    conclusion: reasonCodes.length === 0 ? 'MEASURED' : 'INCONCLUSIVE',
+    reasonCodes,
+    baseline,
+    candidate,
+    metrics,
+  }
+}
+
 function canonicalEvaluationDesign(request: EffectivenessMetricsRequestV1): string {
   const stratumDefinitions = [...request.stratumDefinitions]
     .sort((left, right) => compareIds(left.stratumId, right.stratumId))
@@ -1609,6 +2226,19 @@ export function calculatePairedArmComparisonV1(input: unknown): PairedArmCompari
       blockedReason,
     )
   }
+  let utilityComparison: PairedUtilityComparisonV1 | null
+  try {
+    utilityComparison = calculatePairedUtilityComparison(
+      request,
+      baselineMetrics,
+      candidateMetrics,
+      compatibleDesign,
+      matchedBudgetBlocked,
+    )
+  } catch (error) {
+    if (error instanceof UtilityMetricsInputError) return invalidPairedArmEvidence()
+    throw error
+  }
 
   const reasonCodes: PairedArmComparisonV1['reasonCodes'] = []
   if (!compatibleDesign) reasonCodes.push('INCOMPATIBLE_EVALUATION_DESIGN')
@@ -1618,6 +2248,13 @@ export function calculatePairedArmComparisonV1(input: unknown): PairedArmCompari
     || candidateMetrics.conclusion === 'INCONCLUSIVE'
   ) {
     reasonCodes.push('INCONCLUSIVE_ARM_METRICS')
+  }
+  if (
+    utilityComparison?.conclusion === 'INCONCLUSIVE'
+    && compatibleDesign
+    && !matchedBudgetBlocked
+  ) {
+    reasonCodes.push('INCONCLUSIVE_ARM_UTILITY')
   }
   const result: PairedArmComparisonV1 = {
     schemaVersion: 1,
@@ -1636,6 +2273,7 @@ export function calculatePairedArmComparisonV1(input: unknown): PairedArmCompari
       compatibleDesign,
       matchedBudgetBlocked,
     ),
+    utilityComparison,
   }
   return deepFreeze(pairedArmComparisonV1Schema.parse(result))
 }

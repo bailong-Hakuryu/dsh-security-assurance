@@ -312,9 +312,33 @@ const packedResourceLimits = {
   outboundBytes: 1_000_000,
   humanAdjudicationMs: 60_000,
 }
-const packedArmBudget = modelTokens => ({
+const packedArmBudget = (modelTokens, usageOverrides = {}) => ({
   limits: packedResourceLimits,
-  usage: { ...packedResourceLimits, modelTokens },
+  usage: { ...packedResourceLimits, modelTokens, ...usageOverrides },
+})
+const packedUtilityEvidence = improved => ({
+  executionCostMicrounits: improved ? 500_000 : 1_000_000,
+  firstValidatedFindingMs: improved ? 10_000 : 20_000,
+  humanTriageMs: improved ? 300_000 : 600_000,
+  remediation: {
+    attempts: 2,
+    verifiedSuccesses: improved ? 2 : 1,
+    totalVerifiedSuccessDurationMs: 600_000,
+  },
+  unnecessaryReworkCount: improved ? 1 : 2,
+  controlPlane: {
+    applicability: 'APPLICABLE',
+    decisions: 4,
+    validApprovals: improved ? 3 : 2,
+    unsafeApprovals: improved ? 0 : 1,
+  },
+})
+const packedUtilityMetrics = evaluation.calculateUtilityMetricsV1({
+  schemaVersion: 1,
+  engineId: 'security/utility-metrics/v1',
+  effectivenessRequest: packedArmMetricsRequest(true),
+  budget: packedArmBudget(8_000),
+  evidence: packedUtilityEvidence(true),
 })
 const packedPairedComparison = evaluation.calculatePairedArmComparisonV1({
   schemaVersion: 1,
@@ -349,6 +373,23 @@ const packedPairedComparison = evaluation.calculatePairedArmComparisonV1({
     })),
   },
 })
+const packedPairedUtilityComparison = evaluation.calculatePairedArmComparisonV1({
+  schemaVersion: 1,
+  engineId: 'security/paired-arm-comparison/v1',
+  comparisonView: 'MATCHED_BUDGET',
+  baseline: {
+    armId: 'utility-baseline-arm',
+    metricsRequest: packedArmMetricsRequest(true),
+    budget: packedArmBudget(9_000),
+    utilityEvidence: packedUtilityEvidence(false),
+  },
+  candidate: {
+    armId: 'utility-candidate-arm',
+    metricsRequest: packedArmMetricsRequest(true),
+    budget: packedArmBudget(8_000, { wallTimeMs: 30_000 }),
+    utilityEvidence: packedUtilityEvidence(true),
+  },
+})
 if (
   evaluation.EFFECTIVENESS_METRICS_ENGINE_ID !== 'security/effectiveness-metrics/v1'
   || typeof evaluation.benchmarkStratumDefinitionV1Schema?.parse !== 'function'
@@ -359,6 +400,10 @@ if (
   || typeof evaluation.pairedArmComparisonV1Schema?.parse !== 'function'
   || typeof evaluation.nonInferiorityPlanV1Schema?.parse !== 'function'
   || typeof evaluation.nonInferiorityComparisonV1Schema?.parse !== 'function'
+  || evaluation.UTILITY_METRICS_ENGINE_ID !== 'security/utility-metrics/v1'
+  || typeof evaluation.utilityMetricsV1Schema?.parse !== 'function'
+  || typeof evaluation.pairedUtilityComparisonV1Schema?.parse !== 'function'
+  || typeof evaluation.calculateUtilityMetricsV1 !== 'function'
   || typeof evaluation.calculatePairedArmComparisonV1 !== 'function'
   || typeof evaluation.effectivenessMetricsRequestV1Schema?.parse !== 'function'
   || typeof evaluation.effectivenessMetricsV1Schema?.parse !== 'function'
@@ -377,6 +422,13 @@ if (
   || packedPairedComparison.metrics.validatedPrecision.directionalDelta !== 1
   || packedPairedComparison.nonInferiority?.status !== 'PASSED'
   || packedPairedComparison.nonInferiority.strata.length !== 4
+  || packedUtilityMetrics.conclusion !== 'MEASURED'
+  || packedUtilityMetrics.metrics.validatedFindingYieldPerRuntimeHour.value !== 120
+  || packedUtilityMetrics.metrics.validatedFindingYieldPerCostUnit.value !== 4
+  || packedPairedUtilityComparison.conclusion !== 'MEASURED'
+  || packedPairedUtilityComparison.utilityComparison?.conclusion !== 'MEASURED'
+  || packedPairedUtilityComparison.utilityComparison.metrics
+    .validatedFindingYieldPerRuntimeHour.outcome !== 'IMPROVED'
 ) {
   throw new Error('packed Evaluation entry did not execute the versioned Metrics Engine')
 }

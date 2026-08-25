@@ -407,7 +407,19 @@ bounds. Missing repetition evidence, incompatible designs, unmatched budgets,
 or incomplete Stratum margins cannot become a passing result; aggregate gains
 also cannot hide a failed mandatory Stratum.
 
-These slices are not an Effectiveness or release claim. Utility, Ground Truth
+`calculateUtilityMetricsV1` derives Product Utility from the same frozen
+Effectiveness request, measured resource usage, and strict operational evidence.
+Every output retains its numerator, denominator, normalization factor, unit,
+and preferred direction for validated Finding yield per runtime hour and cost
+unit, time to first validated Finding, human triage minutes, verified remediation
+success and duration, unnecessary rework, Valid Approval Yield, and Unsafe
+Approval Rate. A paired Arm may attach Utility evidence to both Arms and receive
+direction-aware Utility comparisons; one-sided evidence, contradictory event
+timing, unavailable denominators, incomplete adjudication, and inapplicable
+Control Plane evidence fail closed instead of becoming zero-value claims.
+Satisfaction surveys are intentionally outside this proof contract.
+
+These slices are not an Effectiveness, Utility, or release claim. Ground Truth
 air-gap execution, Release Constitution thresholds, Scorecards, and the Release
 Evidence Manifest remain separate future proof slices.
 
