@@ -82,7 +82,7 @@ async function execute(
 
 async function executeTool(
   ctx: Context,
-  name: 'security_assessment_start' | 'security_assessment_status',
+  name: 'security_assessment_start' | 'security_assessment_status' | 'security_assessment_findings',
   args: unknown,
   agent?: Agent,
   initiator: Agent | null | undefined = agent,
@@ -133,13 +133,16 @@ async function harness() {
   }
 }
 
-async function repositoryFixture(): Promise<string> {
+async function repositoryFixture(packageJson?: unknown): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-security-tools-repository-'))
   temporaryRoots.push(root)
   await run('git', ['init', '-b', 'main'], { cwd: root })
   await run('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: root })
   await run('git', ['config', 'user.name', 'Fixture'], { cwd: root })
   await writeFile(join(root, 'README.md'), '# model tool status fixture\n', 'utf8')
+  if (packageJson !== undefined) {
+    await writeFile(join(root, 'package.json'), `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8')
+  }
   await run('git', ['add', '.'], { cwd: root })
   await run('git', ['commit', '-m', 'model tool status baseline'], { cwd: root })
   return root
@@ -178,8 +181,8 @@ function resultValue(result: ToolExecutionResult): Record<string, unknown> {
   return result.value as Record<string, unknown>
 }
 
-describe('security_assessment_status registration', () => {
-  it('registers exclusive start plus parallel status and withdraws both on disposal', async () => {
+describe('security assessment tool registration', () => {
+  it('registers exclusive start plus parallel reads and withdraws all tools on disposal', async () => {
     const fixture = await harness()
     try {
       expect(SecurityAssuranceTools).toMatchObject({
@@ -188,8 +191,10 @@ describe('security_assessment_status registration', () => {
       })
       const start = fixture.ctx.tools.get('security_assessment_start')
       const status = fixture.ctx.tools.get('security_assessment_status')
+      const findings = fixture.ctx.tools.get('security_assessment_findings')
       expect(start?.name).toBe('security_assessment_start')
       expect(status?.name).toBe('security_assessment_status')
+      expect(findings?.name).toBe('security_assessment_findings')
       expect(fixture.ctx.tools.executionMode({
         callId: CallId('security-start-mode'),
         name: 'security_assessment_start',
@@ -200,6 +205,15 @@ describe('security_assessment_status registration', () => {
         callId: CallId('security-status-mode'),
         name: 'security_assessment_status',
         arguments: { assessment_id: 'asm-00000000-0000-0000-0000-000000000000' },
+        signal: toolSignal,
+      })).toEqual({ kind: 'parallel' })
+      expect(fixture.ctx.tools.executionMode({
+        callId: CallId('security-findings-mode'),
+        name: 'security_assessment_findings',
+        arguments: {
+          assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+          limit: 20,
+        },
         signal: toolSignal,
       })).toEqual({ kind: 'parallel' })
       expect(start?.presentCall?.(startArgs(
@@ -218,14 +232,207 @@ describe('security_assessment_status registration', () => {
         kind: 'read',
         rawInput: 'asm-00000000-0000-0000-0000-000000000000',
       })
+      expect(findings?.presentCall?.({
+        assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+        limit: 20,
+      })).toEqual({
+        card: 'generic',
+        title: 'List security assessment findings',
+        kind: 'read',
+        rawInput: 'asm-00000000-0000-0000-0000-000000000000',
+      })
       expect(start?.presentCall?.({ forged: true })).toBeUndefined()
       expect(status?.presentCall?.({ forged: true })).toBeUndefined()
+      expect(findings?.presentCall?.({ forged: true })).toBeUndefined()
 
       await fixture.toolsFiber.dispose()
       expect(fixture.ctx.tools.get('security_assessment_start')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_status')).toBeUndefined()
+      expect(fixture.ctx.tools.get('security_assessment_findings')).toBeUndefined()
       expect(fixture.ctx.reflect.get('securityAssurance')).toBeDefined()
     } finally {
+      await fixture.dispose()
+    }
+  })
+})
+
+describe('security_assessment_findings disclosure', () => {
+  it('lists paginated redacted summaries through session authority and rejects cursor transfer', async () => {
+    const repository = await repositoryFixture({
+      name: 'security-tool-findings-fixture',
+      version: '1.0.0',
+      scripts: {
+        preinstall: 'node preinstall.js',
+        postinstall: 'node postinstall.js',
+      },
+    })
+    const fixture = await harness()
+    const root = stubAgent(`security-tool-findings-${Math.random()}`)
+    const other = stubAgent(`security-tool-findings-other-${Math.random()}`)
+    const disposeRoot = fixture.ctx.agents.register(root.agent)
+    const disposeOther = fixture.ctx.agents.register(other.agent)
+    try {
+      const platform = process.platform
+      if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+        throw new Error(`unsupported test platform: ${platform}`)
+      }
+      const invocation = referenceHostInvocation(fixture.ctx.securityAssurance)
+      const registered = await fixture.ctx.securityAssurance.registerRepository(invocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'security-tool-findings-repository-v1',
+        root: repository,
+        displayName: 'Model findings tool fixture',
+        bindings: {
+          policyId: 'security/node-package-lifecycle',
+          assessmentProfileId: 'security/standard',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform,
+          deliveryDestinationIds: [],
+        },
+      })
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+      const started = await fixture.ctx.securityAssurance.startAssessment(invocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'security-tool-findings-assessment-v1',
+        repositoryId: registered.value.repositoryId,
+        subject: { kind: 'workspace_snapshot' },
+        assessmentMode: 'REPOSITORY',
+        assessmentProfileId: 'security/standard',
+        target: { kind: 'repository' },
+        requestedStrongerControlIds: [],
+      })
+      if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
+      await waitUntilSealed(fixture.ctx.securityAssurance, invocation, started.value.assessmentId)
+
+      const baseArgs = {
+        assessment_id: started.value.assessmentId,
+        limit: 1,
+        validation_states: ['VALIDATED'],
+      }
+      const agentless = await executeTool(
+        fixture.ctx,
+        'security_assessment_findings',
+        baseArgs,
+      )
+      expect(agentless.error?.info?.code).toBe('SECURITY_TOOL_AGENT_REQUIRED')
+
+      openTurn(root)
+      const driverless = await executeTool(
+        fixture.ctx,
+        'security_assessment_findings',
+        baseArgs,
+        root.agent,
+        null,
+      )
+      expect(driverless.error?.info?.code).toBe('SECURITY_TOOL_DRIVER_REQUIRED')
+
+      const first = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_findings',
+        {
+          ...baseArgs,
+          principal_id: 'forged-findings-operator',
+          permissions: ['evidence:disclose:validation-review'],
+        },
+        root.agent,
+      ))
+      expect(first).toEqual({
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+        assessmentRevision: expect.any(Number),
+        findings: [{
+          schemaVersion: 1,
+          assessmentId: started.value.assessmentId,
+          assessmentRevision: expect.any(Number),
+          recordKind: 'FINDING',
+          recordId: expect.stringMatching(/^finding-[0-9a-f]{64}$/u),
+          candidateId: expect.stringMatching(/^candidate-[0-9a-f]{64}$/u),
+          recordRevision: 1,
+          validationState: 'VALIDATED',
+          validationContractId: 'dsh-node-package-install-lifecycle-validation-v1',
+          weaknessClassification: {
+            primary: 'DSH-NODE-POLICY-001',
+            secondary: [],
+          },
+          technicalSeverity: 'MEDIUM',
+          evidenceConfidence: 'HIGH',
+          policySignificance: 'BLOCKING',
+          hasProtectedDetail: true,
+        }],
+        nextCursor: expect.stringMatching(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u),
+      })
+      const serialized = JSON.stringify(first)
+      for (const forbidden of [
+        repository,
+        registered.value.repositoryId,
+        'node preinstall.js',
+        'node postinstall.js',
+        'sourceAnchor',
+        'evidenceLinks',
+        'attackPath',
+        'digest',
+        'riskDecision',
+        'principalId',
+        'forged-findings-operator',
+        String(root.agent.id),
+      ]) expect(serialized).not.toContain(forbidden)
+
+      const second = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_findings',
+        {
+          ...baseArgs,
+          cursor: first['nextCursor'],
+        },
+        root.agent,
+      ))
+      expect(second).toMatchObject({
+        assessmentId: started.value.assessmentId,
+        assessmentRevision: first['assessmentRevision'],
+        findings: [{
+          recordKind: 'FINDING',
+          validationState: 'VALIDATED',
+        }],
+        nextCursor: null,
+      })
+      const firstFinding = (first['findings'] as Array<Record<string, unknown>>)[0]
+      const secondFinding = (second['findings'] as Array<Record<string, unknown>>)[0]
+      expect(secondFinding?.['recordId']).not.toBe(firstFinding?.['recordId'])
+
+      const invalid = await executeTool(
+        fixture.ctx,
+        'security_assessment_findings',
+        { ...baseArgs, limit: 101 },
+        root.agent,
+      )
+      expect(invalid.error?.info?.code).toBe('SECURITY_INVALID_REQUEST')
+
+      const missing = await executeTool(
+        fixture.ctx,
+        'security_assessment_findings',
+        {
+          assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+          limit: 10,
+        },
+        root.agent,
+      )
+      expect(missing.error?.info?.code).toBe('SECURITY_NOT_FOUND')
+
+      openTurn(other)
+      const transferredCursor = await executeTool(
+        fixture.ctx,
+        'security_assessment_findings',
+        {
+          ...baseArgs,
+          cursor: first['nextCursor'],
+        },
+        other.agent,
+      )
+      expect(transferredCursor.error?.info?.code).toBe('SECURITY_INVALID_REQUEST')
+    } finally {
+      disposeOther()
+      disposeRoot()
       await fixture.dispose()
     }
   })

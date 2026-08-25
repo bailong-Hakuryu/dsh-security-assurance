@@ -4,11 +4,14 @@ import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { defineTool, type GenericCallView, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import {
   getAssessmentRequestSchema,
+  listFindingsRequestSchema,
   startAssessmentRequestSchema,
   type AssessmentId,
   type AssessmentReceiptV1,
   type AssessmentSnapshotV1,
   type AssessmentState,
+  type FindingListPageV1,
+  type FindingSummaryV1,
   type SecurityInvocation,
   type SecurityVerdict,
 } from './contracts.ts'
@@ -42,6 +45,35 @@ export interface SecurityAssessmentStatusV1 {
   }
   /** Present only as a non-null value after the Service has sealed the Assessment. */
   readonly verdict: SecurityVerdict | null
+}
+
+/** Model-safe page of Service-redacted Finding Summaries. */
+export interface SecurityAssessmentFindingSummaryV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly recordKind: FindingSummaryV1['recordKind']
+  readonly recordId: string
+  readonly candidateId: string
+  readonly recordRevision: number
+  readonly validationState: FindingSummaryV1['validationState']
+  readonly validationContractId: string | null
+  readonly weaknessClassification: {
+    readonly primary: string
+    readonly secondary: string[]
+  }
+  readonly technicalSeverity: FindingSummaryV1['technicalSeverity']
+  readonly evidenceConfidence: FindingSummaryV1['evidenceConfidence']
+  readonly policySignificance: FindingSummaryV1['policySignificance']
+  readonly hasProtectedDetail: boolean
+}
+
+export interface SecurityAssessmentFindingsV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly findings: SecurityAssessmentFindingSummaryV1[]
+  readonly nextCursor: string | null
 }
 
 const START_OUTPUT = {
@@ -101,6 +133,94 @@ const STATUS_OUTPUT = {
     },
   },
   render: (_args: unknown, value: SecurityAssessmentStatusV1) => ([{
+    type: 'text' as const,
+    text: JSON.stringify(value),
+  }]),
+} as const
+
+const FINDINGS_OUTPUT = {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      schemaVersion: { type: 'integer', const: 1, required: true },
+      assessmentId: { type: 'string', required: true },
+      assessmentRevision: { type: 'integer', required: true },
+      findings: {
+        type: 'array',
+        required: true,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            schemaVersion: { type: 'integer', const: 1, required: true },
+            assessmentId: { type: 'string', required: true },
+            assessmentRevision: { type: 'integer', required: true },
+            recordKind: {
+              type: 'string',
+              enum: ['FINDING', 'REJECTED_CANDIDATE', 'UNRESOLVED_CANDIDATE'],
+              required: true,
+            },
+            recordId: { type: 'string', required: true },
+            candidateId: { type: 'string', required: true },
+            recordRevision: { type: 'integer', required: true },
+            validationState: {
+              type: 'string',
+              enum: ['VALIDATED', 'REJECTED', 'UNRESOLVED'],
+              required: true,
+            },
+            validationContractId: {
+              oneOf: [{ type: 'string' }, { type: 'null' }],
+              required: true,
+            },
+            weaknessClassification: {
+              type: 'object',
+              additionalProperties: false,
+              required: true,
+              properties: {
+                primary: { type: 'string', required: true },
+                secondary: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  required: true,
+                },
+              },
+            },
+            technicalSeverity: {
+              oneOf: [
+                {
+                  type: 'string',
+                  enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFORMATIONAL'],
+                },
+                { type: 'null' },
+              ],
+              required: true,
+            },
+            evidenceConfidence: {
+              oneOf: [
+                { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW'] },
+                { type: 'null' },
+              ],
+              required: true,
+            },
+            policySignificance: {
+              oneOf: [
+                { type: 'string', enum: ['BLOCKING', 'NON_BLOCKING', 'ADVISORY'] },
+                { type: 'null' },
+              ],
+              required: true,
+            },
+            hasProtectedDetail: { type: 'boolean', required: true },
+          },
+        },
+      },
+      nextCursor: {
+        oneOf: [{ type: 'string' }, { type: 'null' }],
+        required: true,
+      },
+    },
+  },
+  render: (_args: unknown, value: SecurityAssessmentFindingsV1) => ([{
     type: 'text' as const,
     text: JSON.stringify(value),
   }]),
@@ -176,6 +296,38 @@ function statusValue(snapshot: AssessmentSnapshotV1): SecurityAssessmentStatusV1
   }
 }
 
+function findingSummaryValue(summary: FindingSummaryV1): SecurityAssessmentFindingSummaryV1 {
+  return {
+    schemaVersion: 1,
+    assessmentId: summary.assessmentId,
+    assessmentRevision: summary.assessmentRevision,
+    recordKind: summary.recordKind,
+    recordId: summary.recordId,
+    candidateId: summary.candidateId,
+    recordRevision: summary.recordRevision,
+    validationState: summary.validationState,
+    validationContractId: summary.validationContractId,
+    weaknessClassification: {
+      primary: summary.weaknessClassification.primary,
+      secondary: [...summary.weaknessClassification.secondary],
+    },
+    technicalSeverity: summary.technicalSeverity,
+    evidenceConfidence: summary.evidenceConfidence,
+    policySignificance: summary.policySignificance,
+    hasProtectedDetail: summary.hasProtectedDetail,
+  }
+}
+
+function findingsValue(page: FindingListPageV1): SecurityAssessmentFindingsV1 {
+  return {
+    schemaVersion: 1,
+    assessmentId: page.assessmentId,
+    assessmentRevision: page.assessmentRevision,
+    findings: page.findings.map(findingSummaryValue),
+    nextCursor: page.nextCursor,
+  }
+}
+
 function presentStatus(args: { readonly assessment_id: string }): GenericCallView {
   return {
     card: 'generic',
@@ -191,6 +343,15 @@ function presentStart(args: { readonly repository_id: string }): GenericCallView
     title: 'Start security assessment',
     kind: 'other',
     rawInput: args.repository_id,
+  }
+}
+
+function presentFindings(args: { readonly assessment_id: string }): GenericCallView {
+  return {
+    card: 'generic',
+    title: 'List security assessment findings',
+    kind: 'read',
+    rawInput: args.assessment_id,
   }
 }
 
@@ -409,6 +570,65 @@ const SecurityAssuranceTools = {
       },
       isConcurrencySafe: () => true,
       presentCall: presentStatus,
+    }))
+
+    ctx.tools.register(defineTool({
+      name: 'security_assessment_findings',
+      description: 'List one bounded page of Service-redacted Finding Summaries for a Security Assessment. '
+        + 'Use nextCursor only with the exact same Assessment, Validation-state filter, page limit, and live '
+        + 'Harness session that received it. This tool never returns Finding Detail, source anchors, Evidence '
+        + 'content or links, attack paths, Risk Decisions, repository bindings, credentials, or authority metadata.',
+      parameters: {
+        assessment_id: {
+          type: 'string',
+          required: true,
+          description: 'Exact Assessment id returned by a Security Assessment receipt.',
+        },
+        limit: {
+          type: 'integer',
+          required: true,
+          description: 'Page size from 1 through 100; the Security Service enforces the bound.',
+        },
+        cursor: {
+          type: 'string',
+          description: 'Opaque nextCursor from the preceding page for this exact query and live session.',
+        },
+        validation_states: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['VALIDATED', 'REJECTED', 'UNRESOLVED'],
+          },
+          description: 'Optional unique non-empty subset of Finding validation states.',
+        },
+      },
+      output: FINDINGS_OUTPUT,
+      async execute(args, exec) {
+        const parsed = listFindingsRequestSchema.safeParse({
+          schemaVersion: 1,
+          assessmentId: args.assessment_id,
+          limit: args.limit,
+          ...args.cursor === undefined ? {} : { cursor: args.cursor },
+          ...args.validation_states === undefined
+            ? {}
+            : { validationStates: args.validation_states },
+        })
+        if (!parsed.success) {
+          return reject(
+            'security_assessment_findings arguments do not match the Finding list contract',
+            'SECURITY_INVALID_REQUEST',
+          )
+        }
+        const result = await ctx.securityAssurance.listFindings(
+          harnessSessionInvocation(ctx, exec, 'assessment:read'),
+          parsed.data,
+          { signal: exec.signal },
+        )
+        if (!result.ok) return reject(result.error.message, `SECURITY_${result.error.code}`)
+        return findingsValue(result.value)
+      },
+      isConcurrencySafe: () => true,
+      presentCall: presentFindings,
     }))
   },
 }

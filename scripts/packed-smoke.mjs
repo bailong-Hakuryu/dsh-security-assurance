@@ -316,12 +316,21 @@ if (
   throw new Error('packed Workbench Client entry is incomplete')
 }
 const { Context } = await import('@deepseek-ai/cordis')
+const AgentRegistry = (await import('@deepseek-ai/dsh-agent')).default
+const SystemPrompt = (await import('@deepseek-ai/dsh-system-prompt')).default
+const ToolRuntime = (await import('@deepseek-ai/dsh-tools')).default
 const TypertRegistry = (await import('@deepseek-ai/dsh-typert-registry')).default
 const TypertGatewayService = (await import('@deepseek-ai/dsh-api-gateway')).default
 const ctx = new Context()
 if (ctx.reflect.get('securityAssurance') !== undefined) {
   throw new Error('package import activated the Service')
 }
+const systemPromptFiber = ctx.plugin(SystemPrompt)
+await systemPromptFiber
+const agentFiber = ctx.plugin(AgentRegistry)
+await agentFiber
+const toolRuntimeFiber = ctx.plugin(ToolRuntime)
+await toolRuntimeFiber
 const typertFiber = ctx.plugin(TypertRegistry)
 await typertFiber
 const fiber = ctx.plugin(root.default, { dshHome: ${JSON.stringify(securityHome)} })
@@ -340,6 +349,62 @@ if (
   || typeof ctx.securityAssurance.getExport !== 'function'
 ) {
   throw new Error('Cordis activation did not expose Finding/Evidence/Risk Decision or local Analyzer composition')
+}
+const modelToolsFiber = ctx.plugin(modelTools.default)
+await modelToolsFiber
+const packedStartTool = ctx.tools.get('security_assessment_start')
+const packedStatusTool = ctx.tools.get('security_assessment_status')
+const packedFindingsTool = ctx.tools.get('security_assessment_findings')
+const packedStartMode = ctx.tools.executionMode({
+  callId: 'packed-security-start-mode',
+  name: 'security_assessment_start',
+  arguments: {
+    idempotency_key: 'packed-security-start-mode-v1',
+    repository_id: 'repo-00000000-0000-0000-0000-000000000000',
+    subject: { kind: 'workspace_snapshot' },
+    assessment_mode: 'REPOSITORY',
+    assessment_profile_id: 'security/standard',
+    target: { kind: 'repository' },
+    requested_stronger_control_ids: [],
+  },
+  signal: new AbortController().signal,
+})
+const packedStatusMode = ctx.tools.executionMode({
+  callId: 'packed-security-status-mode',
+  name: 'security_assessment_status',
+  arguments: { assessment_id: 'asm-00000000-0000-0000-0000-000000000000' },
+  signal: new AbortController().signal,
+})
+const packedFindingsMode = ctx.tools.executionMode({
+  callId: 'packed-security-findings-mode',
+  name: 'security_assessment_findings',
+  arguments: {
+    assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+    limit: 20,
+  },
+  signal: new AbortController().signal,
+})
+if (
+  packedStartTool?.name !== 'security_assessment_start'
+  || packedStatusTool?.name !== 'security_assessment_status'
+  || packedFindingsTool?.name !== 'security_assessment_findings'
+  || packedStartMode.kind !== 'exclusive'
+  || packedStatusMode.kind !== 'parallel'
+  || packedFindingsMode.kind !== 'parallel'
+) {
+  throw new Error('packed model Tool entry did not register start, status, and findings modes')
+}
+const packedAgentlessFindings = await ctx.tools.execute({
+  callId: 'packed-security-findings-agentless',
+  name: 'security_assessment_findings',
+  arguments: {
+    assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+    limit: 20,
+  },
+  signal: new AbortController().signal,
+})
+if (packedAgentlessFindings.error?.info?.code !== 'SECURITY_TOOL_AGENT_REQUIRED') {
+  throw new Error('packed Finding tool did not enforce live Harness session authority')
 }
 const disposeTypertContribution = ctx.typert.register(typertContribution.TYPERT)
 const workbenchFiber = ctx.plugin(workbenchRemote.default, {
@@ -712,8 +777,19 @@ if (restartedIndeterminateBinding?.repositoryId !== indeterminateBinding.reposit
   throw new Error('Host Repository Provider restart did not preserve the indeterminate Repository')
 }
 await restartedHostFiber.dispose()
+await modelToolsFiber.dispose()
+if (
+  ctx.tools.get('security_assessment_start') !== undefined
+  || ctx.tools.get('security_assessment_status') !== undefined
+  || ctx.tools.get('security_assessment_findings') !== undefined
+) {
+  throw new Error('packed model Tool entry did not withdraw its registered tools')
+}
 await fiber.dispose()
 await typertFiber.dispose()
+await toolRuntimeFiber.dispose()
+await agentFiber.dispose()
+await systemPromptFiber.dispose()
 if (ctx.reflect.get('securityAssurance') !== undefined) {
   throw new Error('Fiber disposal did not remove securityAssurance')
 }
