@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   calculateEffectivenessMetricsV1,
+  calculatePairedArmComparisonV1,
   EFFECTIVENESS_METRICS_ENGINE_ID,
   effectivenessMetricsRequestV1Schema,
   effectivenessMetricsV1Schema,
   EvaluationMetricsInputError,
+  PAIRED_ARM_COMPARISON_ENGINE_ID,
+  pairedArmComparisonV1Schema,
+  PairedArmComparisonInputError,
 } from '../src/evaluation.ts'
 
 const severityWeights = {
@@ -817,5 +821,170 @@ describe('Effectiveness Metrics Engine v1', () => {
     ]) {
       expect(effectivenessMetricsRequestV1Schema.safeParse({ ...candidate, ...extra }).success).toBe(false)
     }
+  })
+})
+
+describe('Paired Arm Comparison Engine v1', () => {
+  const resourceLimits = {
+    wallTimeMs: 60_000,
+    modelTokens: 10_000,
+    modelCalls: 4,
+    analyzerRuns: 2,
+    agentRuns: 2,
+    cpuTimeMs: 30_000,
+    peakMemoryBytes: 512_000_000,
+    diskBytes: 100_000_000,
+    networkRequests: 4,
+    outboundBytes: 1_000_000,
+    humanAdjudicationMs: 60_000,
+  }
+
+  function budget(usageOverrides: Record<string, number> = {}, limitOverrides = {}) {
+    return {
+      limits: { ...resourceLimits, ...limitOverrides },
+      usage: {
+        wallTimeMs: 30_000,
+        modelTokens: 5_000,
+        modelCalls: 2,
+        analyzerRuns: 1,
+        agentRuns: 1,
+        cpuTimeMs: 15_000,
+        peakMemoryBytes: 256_000_000,
+        diskBytes: 50_000_000,
+        networkRequests: 2,
+        outboundBytes: 500_000,
+        humanAdjudicationMs: 30_000,
+        ...usageOverrides,
+      },
+    }
+  }
+
+  function armMetrics(successful: boolean) {
+    return request([{
+      caseId: 'case-shared',
+      disposition: 'INCLUDED',
+      assessmentMode: 'CHANGE',
+      supportedEcosystem: 'node',
+      expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
+      groundTruthDefects: [{
+        defectId: 'defect-high',
+        severity: 'HIGH',
+        weaknessFamily: 'cwe-79',
+        policyBlocking: true,
+      }],
+      result: {
+        kind: 'COMPLETED',
+        verdict: successful ? 'FAILED' : 'SATISFIED',
+        coverageStatus: successful ? 'GAP' : 'COMPLETE',
+        findings: [{
+          findingId: successful ? 'finding-match' : 'finding-false-positive',
+          adjudication: successful
+            ? { status: 'MATCHED', defectId: 'defect-high' }
+            : { status: 'NOT_MATCHED' },
+        }],
+      },
+    }])
+  }
+
+  function comparisonRequest(comparisonView: 'MATCHED_BUDGET' | 'NATIVE_PROFILE') {
+    return {
+      schemaVersion: 1,
+      engineId: PAIRED_ARM_COMPARISON_ENGINE_ID,
+      comparisonView,
+      baseline: {
+        armId: 'baseline-arm',
+        metricsRequest: armMetrics(false),
+        budget: budget(),
+      },
+      candidate: {
+        armId: 'candidate-arm',
+        metricsRequest: armMetrics(true),
+        budget: budget({ modelTokens: 4_000 }),
+      },
+    }
+  }
+
+  it('compares paired Arms under exact matched budgets with direction-aware deltas', () => {
+    const result = calculatePairedArmComparisonV1(comparisonRequest('MATCHED_BUDGET'))
+
+    expect(PAIRED_ARM_COMPARISON_ENGINE_ID).toBe('security/paired-arm-comparison/v1')
+    expect(pairedArmComparisonV1Schema.parse(result)).toEqual(result)
+    expect(result.conclusion).toBe('MEASURED')
+    expect(result.reasonCodes).toEqual([])
+    expect(result.budgetComparison).toMatchObject({
+      view: 'MATCHED_BUDGET',
+      status: 'MATCHED',
+      mismatchedDimensions: [],
+    })
+    expect(result.metrics).toEqual({
+      criticalHighValidatedRecall: {
+        status: 'MEASURED', baselineValue: 0, candidateValue: 1,
+        rawDelta: 1, directionalDelta: 1, preferredDirection: 'HIGHER', outcome: 'IMPROVED',
+      },
+      severityWeightedValidatedRecall: {
+        status: 'MEASURED', baselineValue: 0, candidateValue: 1,
+        rawDelta: 1, directionalDelta: 1, preferredDirection: 'HIGHER', outcome: 'IMPROVED',
+      },
+      validatedPrecision: {
+        status: 'MEASURED', baselineValue: 0, candidateValue: 1,
+        rawDelta: 1, directionalDelta: 1, preferredDirection: 'HIGHER', outcome: 'IMPROVED',
+      },
+      unsafeSatisfactionRate: {
+        status: 'MEASURED', baselineValue: 1, candidateValue: 0,
+        rawDelta: -1, directionalDelta: 1, preferredDirection: 'LOWER', outcome: 'IMPROVED',
+      },
+      coverageHonestyRate: {
+        status: 'MEASURED', baselineValue: 0, candidateValue: 1,
+        rawDelta: 1, directionalDelta: 1, preferredDirection: 'HIGHER', outcome: 'IMPROVED',
+      },
+    })
+    expect(Object.isFrozen(result)).toBe(true)
+    expect(Object.isFrozen(result.budgetComparison.baseline)).toBe(true)
+    const forged = structuredClone(result)
+    forged.metrics.validatedPrecision.rawDelta = 0
+    expect(pairedArmComparisonV1Schema.safeParse(forged).success).toBe(false)
+  })
+
+  it('distinguishes unmatched matched-budget evidence from an explicit native-profile view', () => {
+    const unmatchedRequest = comparisonRequest('MATCHED_BUDGET')
+    unmatchedRequest.candidate.budget.limits.modelTokens = 20_000
+    const unmatched = calculatePairedArmComparisonV1(unmatchedRequest)
+    expect(unmatched.conclusion).toBe('INCONCLUSIVE')
+    expect(unmatched.reasonCodes).toEqual(['UNMATCHED_BUDGETS'])
+    expect(unmatched.budgetComparison).toMatchObject({
+      status: 'INCONCLUSIVE',
+      mismatchedDimensions: ['modelTokens'],
+    })
+
+    const nativeRequest = comparisonRequest('NATIVE_PROFILE')
+    nativeRequest.candidate.budget.limits.modelTokens = 20_000
+    const native = calculatePairedArmComparisonV1(nativeRequest)
+    expect(native.conclusion).toBe('MEASURED')
+    expect(native.reasonCodes).toEqual([])
+    expect(native.budgetComparison).toMatchObject({
+      status: 'NATIVE_PROFILE',
+      mismatchedDimensions: ['modelTokens'],
+    })
+  })
+
+  it('fails closed for incompatible pairing and invalid resource evidence', () => {
+    const incompatibleRequest = comparisonRequest('MATCHED_BUDGET')
+    const incompatibleCase = incompatibleRequest.candidate.metricsRequest.cases[0] as {
+      supportedEcosystem: string
+    }
+    incompatibleCase.supportedEcosystem = 'python'
+    const incompatible = calculatePairedArmComparisonV1(incompatibleRequest)
+    expect(incompatible.conclusion).toBe('INCONCLUSIVE')
+    expect(incompatible.reasonCodes).toContain('INCOMPATIBLE_EVALUATION_DESIGN')
+
+    const invalidUsage = comparisonRequest('MATCHED_BUDGET')
+    invalidUsage.candidate.budget.usage.modelTokens = 20_000
+    expect(() => calculatePairedArmComparisonV1(invalidUsage)).toThrow(
+      PairedArmComparisonInputError,
+    )
+    expect(() => calculatePairedArmComparisonV1({
+      ...comparisonRequest('MATCHED_BUDGET'),
+      principalId: 'self-declared-evaluator',
+    })).toThrow(PairedArmComparisonInputError)
   })
 })

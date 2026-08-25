@@ -261,12 +261,77 @@ const packedRepeatedMetrics = evaluation.calculateEffectivenessMetricsV1({
     },
   })),
 })
+const packedArmMetricsRequest = successful => ({
+  schemaVersion: 1,
+  engineId: 'security/effectiveness-metrics/v1',
+  severityWeights: { CRITICAL: 8, HIGH: 5, MEDIUM: 3, LOW: 2, INFORMATIONAL: 1 },
+  stratumDefinitions: packedStratumDefinitions,
+  cases: [{
+    caseId: 'case-paired',
+    disposition: 'INCLUDED',
+    assessmentMode: 'CHANGE',
+    supportedEcosystem: 'node',
+    expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
+    groundTruthDefects: [{
+      defectId: 'defect-high',
+      severity: 'HIGH',
+      weaknessFamily: 'cwe-79',
+      policyBlocking: true,
+    }],
+    result: {
+      kind: 'COMPLETED',
+      verdict: successful ? 'FAILED' : 'SATISFIED',
+      coverageStatus: successful ? 'GAP' : 'COMPLETE',
+      findings: [{
+        findingId: successful ? 'finding-match' : 'finding-false-positive',
+        adjudication: successful
+          ? { status: 'MATCHED', defectId: 'defect-high' }
+          : { status: 'NOT_MATCHED' },
+      }],
+    },
+  }],
+})
+const packedResourceLimits = {
+  wallTimeMs: 60_000,
+  modelTokens: 10_000,
+  modelCalls: 4,
+  analyzerRuns: 2,
+  agentRuns: 2,
+  cpuTimeMs: 30_000,
+  peakMemoryBytes: 512_000_000,
+  diskBytes: 100_000_000,
+  networkRequests: 4,
+  outboundBytes: 1_000_000,
+  humanAdjudicationMs: 60_000,
+}
+const packedArmBudget = modelTokens => ({
+  limits: packedResourceLimits,
+  usage: { ...packedResourceLimits, modelTokens },
+})
+const packedPairedComparison = evaluation.calculatePairedArmComparisonV1({
+  schemaVersion: 1,
+  engineId: 'security/paired-arm-comparison/v1',
+  comparisonView: 'MATCHED_BUDGET',
+  baseline: {
+    armId: 'baseline-arm',
+    metricsRequest: packedArmMetricsRequest(false),
+    budget: packedArmBudget(9_000),
+  },
+  candidate: {
+    armId: 'candidate-arm',
+    metricsRequest: packedArmMetricsRequest(true),
+    budget: packedArmBudget(8_000),
+  },
+})
 if (
   evaluation.EFFECTIVENESS_METRICS_ENGINE_ID !== 'security/effectiveness-metrics/v1'
   || typeof evaluation.benchmarkStratumDefinitionV1Schema?.parse !== 'function'
   || typeof evaluation.benchmarkStratumResultV1Schema?.parse !== 'function'
   || typeof evaluation.benchmarkRepetitionPlanV1Schema?.parse !== 'function'
   || typeof evaluation.repetitionAnalysisV1Schema?.parse !== 'function'
+  || evaluation.PAIRED_ARM_COMPARISON_ENGINE_ID !== 'security/paired-arm-comparison/v1'
+  || typeof evaluation.pairedArmComparisonV1Schema?.parse !== 'function'
+  || typeof evaluation.calculatePairedArmComparisonV1 !== 'function'
   || typeof evaluation.effectivenessMetricsRequestV1Schema?.parse !== 'function'
   || typeof evaluation.effectivenessMetricsV1Schema?.parse !== 'function'
   || packedEmptyMetrics.conclusion !== 'INCONCLUSIVE'
@@ -279,6 +344,9 @@ if (
   || packedRepeatedMetrics.repetitionAnalysis.metrics.unsafeSatisfactionRate.worst !== 1
   || packedRepeatedMetrics.strata.some(item => item.observedSamples !== 1)
   || packedRepeatedMetrics.strata.some(item => item.uncertainty?.status !== 'SUFFICIENT')
+  || packedPairedComparison.conclusion !== 'MEASURED'
+  || packedPairedComparison.budgetComparison.status !== 'MATCHED'
+  || packedPairedComparison.metrics.validatedPrecision.directionalDelta !== 1
 ) {
   throw new Error('packed Evaluation entry did not execute the versioned Metrics Engine')
 }

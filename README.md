@@ -390,10 +390,19 @@ the engine reports unweighted and severity-weighted recall distributions for
 that exact Stratum and makes the Stratum inconclusive when either bound is
 unavailable or too wide.
 
-These slices are not an Effectiveness or release claim. Paired Arms,
-matched-budget comparison, Utility, non-inferiority, Ground Truth air-gap
-execution, Release Constitution thresholds, Scorecards, and the Release
-Evidence Manifest remain separate future proof slices.
+`calculatePairedArmComparisonV1` accepts complete baseline and candidate Arm
+evidence, verifies that their frozen Evaluation design is identical, calculates
+direction-aware deltas for all five primary metrics, and retains both Arm
+results. Its Evaluation Budget contract covers wall time, model tokens and
+calls, Analyzer and Agent runs, CPU, memory, disk, network requests and outbound
+bytes, and human adjudication time. `MATCHED_BUDGET` requires every frozen
+resource ceiling to match exactly; `NATIVE_PROFILE` preserves and discloses
+different ceilings without presenting them as equivalent.
+
+These slices are not an Effectiveness or release claim. Utility,
+pre-registered non-inferiority margins, Ground Truth air-gap execution, Release
+Constitution thresholds, Scorecards, and the Release Evidence Manifest remain
+separate future proof slices.
 
 ## Model-facing Assessment operations
 

@@ -374,6 +374,189 @@ export const effectivenessMetricsV1Schema = z.strictObject({
 
 export type EffectivenessMetricsV1 = z.infer<typeof effectivenessMetricsV1Schema>
 
+export const PAIRED_ARM_COMPARISON_ENGINE_ID = 'security/paired-arm-comparison/v1' as const
+
+export const EVALUATION_RESOURCE_DIMENSIONS = [
+  'wallTimeMs',
+  'modelTokens',
+  'modelCalls',
+  'analyzerRuns',
+  'agentRuns',
+  'cpuTimeMs',
+  'peakMemoryBytes',
+  'diskBytes',
+  'networkRequests',
+  'outboundBytes',
+  'humanAdjudicationMs',
+] as const
+
+export type EvaluationResourceDimension = typeof EVALUATION_RESOURCE_DIMENSIONS[number]
+
+const resourceQuantitySchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+
+export const evaluationResourceBudgetV1Schema = z.strictObject({
+  wallTimeMs: resourceQuantitySchema,
+  modelTokens: resourceQuantitySchema,
+  modelCalls: resourceQuantitySchema,
+  analyzerRuns: resourceQuantitySchema,
+  agentRuns: resourceQuantitySchema,
+  cpuTimeMs: resourceQuantitySchema,
+  peakMemoryBytes: resourceQuantitySchema,
+  diskBytes: resourceQuantitySchema,
+  networkRequests: resourceQuantitySchema,
+  outboundBytes: resourceQuantitySchema,
+  humanAdjudicationMs: resourceQuantitySchema,
+})
+
+export type EvaluationResourceBudgetV1 = z.infer<typeof evaluationResourceBudgetV1Schema>
+
+export const evaluationArmBudgetV1Schema = z.strictObject({
+  limits: evaluationResourceBudgetV1Schema,
+  usage: evaluationResourceBudgetV1Schema,
+}).superRefine((value, context) => {
+  if (EVALUATION_RESOURCE_DIMENSIONS.some(
+    dimension => value.usage[dimension] > value.limits[dimension],
+  )) {
+    context.addIssue({ code: 'custom', message: 'Resource usage exceeds its frozen limit.' })
+  }
+})
+
+export type EvaluationArmBudgetV1 = z.infer<typeof evaluationArmBudgetV1Schema>
+
+export const pairedArmEvidenceV1Schema = z.strictObject({
+  armId: boundedEvaluationIdSchema,
+  metricsRequest: effectivenessMetricsRequestV1Schema,
+  budget: evaluationArmBudgetV1Schema,
+})
+
+export type PairedArmEvidenceV1 = z.infer<typeof pairedArmEvidenceV1Schema>
+
+export const pairedArmComparisonRequestV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(PAIRED_ARM_COMPARISON_ENGINE_ID),
+  comparisonView: z.enum(['MATCHED_BUDGET', 'NATIVE_PROFILE']),
+  baseline: pairedArmEvidenceV1Schema,
+  candidate: pairedArmEvidenceV1Schema,
+})
+
+export type PairedArmComparisonRequestV1 = z.infer<
+  typeof pairedArmComparisonRequestV1Schema
+>
+
+const pairedMetricInconclusiveReasonV1Schema = z.enum([
+  'INCOMPATIBLE_EVALUATION_DESIGN',
+  'UNMATCHED_BUDGETS',
+  'INCONCLUSIVE_ARM_METRIC',
+])
+
+export const pairedMetricComparisonV1Schema = z.discriminatedUnion('status', [
+  z.strictObject({
+    status: z.literal('MEASURED'),
+    baselineValue: z.number().min(0).max(1),
+    candidateValue: z.number().min(0).max(1),
+    rawDelta: z.number().min(-1).max(1),
+    directionalDelta: z.number().min(-1).max(1),
+    preferredDirection: z.enum(['HIGHER', 'LOWER']),
+    outcome: z.enum(['IMPROVED', 'EQUIVALENT', 'REGRESSED']),
+  }),
+  z.strictObject({
+    status: z.literal('INCONCLUSIVE'),
+    baselineValue: z.number().min(0).max(1).nullable(),
+    candidateValue: z.number().min(0).max(1).nullable(),
+    rawDelta: z.null(),
+    directionalDelta: z.null(),
+    preferredDirection: z.enum(['HIGHER', 'LOWER']),
+    outcome: z.null(),
+    reasonCodes: z.array(pairedMetricInconclusiveReasonV1Schema).min(1).max(1),
+  }),
+]).superRefine((value, context) => {
+  if (value.status !== 'MEASURED') return
+  const rawDelta = value.candidateValue - value.baselineValue
+  const directionalDelta = value.preferredDirection === 'HIGHER' ? rawDelta : -rawDelta
+  const outcome = directionalDelta > 0
+    ? 'IMPROVED'
+    : directionalDelta < 0 ? 'REGRESSED' : 'EQUIVALENT'
+  if (
+    Math.abs(value.rawDelta - rawDelta) > Number.EPSILON * 4
+    || Math.abs(value.directionalDelta - directionalDelta) > Number.EPSILON * 4
+    || value.outcome !== outcome
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent paired metric comparison.' })
+  }
+})
+
+export type PairedMetricComparisonV1 = z.infer<typeof pairedMetricComparisonV1Schema>
+
+export const pairedBudgetComparisonV1Schema = z.strictObject({
+  view: z.enum(['MATCHED_BUDGET', 'NATIVE_PROFILE']),
+  status: z.enum(['MATCHED', 'NATIVE_PROFILE', 'INCONCLUSIVE']),
+  mismatchedDimensions: z.array(z.enum(EVALUATION_RESOURCE_DIMENSIONS)).max(
+    EVALUATION_RESOURCE_DIMENSIONS.length,
+  ),
+  baseline: evaluationArmBudgetV1Schema,
+  candidate: evaluationArmBudgetV1Schema,
+}).superRefine((value, context) => {
+  const expectedMismatches = EVALUATION_RESOURCE_DIMENSIONS.filter(dimension => (
+    value.baseline.limits[dimension] !== value.candidate.limits[dimension]
+  ))
+  if (
+    JSON.stringify(value.mismatchedDimensions) !== JSON.stringify(expectedMismatches)
+    || (value.view === 'MATCHED_BUDGET' && value.mismatchedDimensions.length === 0
+      && value.status !== 'MATCHED')
+    || (value.view === 'MATCHED_BUDGET' && value.mismatchedDimensions.length > 0
+      && value.status !== 'INCONCLUSIVE')
+    || (value.view === 'NATIVE_PROFILE' && value.status !== 'NATIVE_PROFILE')
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent budget comparison.' })
+  }
+})
+
+export type PairedBudgetComparisonV1 = z.infer<typeof pairedBudgetComparisonV1Schema>
+
+export const pairedArmComparisonV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(PAIRED_ARM_COMPARISON_ENGINE_ID),
+  comparisonView: z.enum(['MATCHED_BUDGET', 'NATIVE_PROFILE']),
+  conclusion: z.enum(['MEASURED', 'INCONCLUSIVE']),
+  reasonCodes: z.array(z.enum([
+    'INCOMPATIBLE_EVALUATION_DESIGN',
+    'UNMATCHED_BUDGETS',
+    'INCONCLUSIVE_ARM_METRICS',
+  ])).max(3),
+  baseline: z.strictObject({
+    armId: boundedEvaluationIdSchema,
+    metrics: effectivenessMetricsV1Schema,
+  }),
+  candidate: z.strictObject({
+    armId: boundedEvaluationIdSchema,
+    metrics: effectivenessMetricsV1Schema,
+  }),
+  budgetComparison: pairedBudgetComparisonV1Schema,
+  metrics: z.strictObject({
+    criticalHighValidatedRecall: pairedMetricComparisonV1Schema,
+    severityWeightedValidatedRecall: pairedMetricComparisonV1Schema,
+    validatedPrecision: pairedMetricComparisonV1Schema,
+    unsafeSatisfactionRate: pairedMetricComparisonV1Schema,
+    coverageHonestyRate: pairedMetricComparisonV1Schema,
+  }),
+}).superRefine((value, context) => {
+  const metrics = Object.values(value.metrics)
+  if (
+    (value.conclusion === 'MEASURED' && value.reasonCodes.length !== 0)
+    || (value.conclusion === 'MEASURED' && (
+      value.baseline.metrics.conclusion !== 'MEASURED'
+      || value.candidate.metrics.conclusion !== 'MEASURED'
+      || value.budgetComparison.status === 'INCONCLUSIVE'
+      || metrics.some(metric => metric.status !== 'MEASURED')
+    ))
+    || (value.conclusion === 'INCONCLUSIVE' && value.reasonCodes.length === 0)
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent paired Arm conclusion.' })
+  }
+})
+
+export type PairedArmComparisonV1 = z.infer<typeof pairedArmComparisonV1Schema>
+
 /** Stable, detail-free rejection for malformed or internally inconsistent evaluation evidence. */
 export class EvaluationMetricsInputError extends Error {
   readonly code = 'INVALID_EVALUATION_EVIDENCE' as const
@@ -381,6 +564,16 @@ export class EvaluationMetricsInputError extends Error {
   constructor() {
     super('Evaluation evidence does not match Effectiveness Metrics Engine v1.')
     this.name = 'EvaluationMetricsInputError'
+  }
+}
+
+/** Stable, detail-free rejection for malformed paired Arm or resource evidence. */
+export class PairedArmComparisonInputError extends Error {
+  readonly code = 'INVALID_PAIRED_ARM_EVIDENCE' as const
+
+  constructor() {
+    super('Paired Arm evidence does not match Comparison Engine v1.')
+    this.name = 'PairedArmComparisonInputError'
   }
 }
 
@@ -635,6 +828,14 @@ function compareIds(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
 }
 
+const effectivenessMetricDirections = {
+  criticalHighValidatedRecall: 'MINIMUM',
+  severityWeightedValidatedRecall: 'MINIMUM',
+  validatedPrecision: 'MINIMUM',
+  unsafeSatisfactionRate: 'MAXIMUM',
+  coverageHonestyRate: 'MINIMUM',
+} as const
+
 function inconclusiveDistribution(
   worstDirection: RepetitionMetricDistributionV1['worstDirection'],
   reason: 'INCOMPLETE_REPETITION_CASE_MATRIX' | 'INCOMPLETE_REPETITION_METRICS',
@@ -706,20 +907,15 @@ function calculateRepetitionAnalysis(
       && cases.every(item => expectedCaseIds.has(item.caseId))
   })
   const matrixComplete = completeRepetitionIds.length === plan.repetitionIds.length
-  const directions = {
-    criticalHighValidatedRecall: 'MINIMUM',
-    severityWeightedValidatedRecall: 'MINIMUM',
-    validatedPrecision: 'MINIMUM',
-    unsafeSatisfactionRate: 'MAXIMUM',
-    coverageHonestyRate: 'MINIMUM',
-  } as const
-  const metricNames = Object.keys(directions) as Array<keyof typeof directions>
+  const metricNames = Object.keys(effectivenessMetricDirections) as Array<
+    keyof typeof effectivenessMetricDirections
+  >
   const distributions = {} as RepetitionAnalysisV1['metrics']
 
   if (!matrixComplete) {
     for (const metricName of metricNames) {
       distributions[metricName] = inconclusiveDistribution(
-        directions[metricName],
+        effectivenessMetricDirections[metricName],
         'INCOMPLETE_REPETITION_CASE_MATRIX',
       )
     }
@@ -734,13 +930,13 @@ function calculateRepetitionAnalysis(
       const ratios = summaries.map(summary => summary.metrics[metricName])
       if (ratios.some(metric => metric.status === 'INCONCLUSIVE')) {
         distributions[metricName] = inconclusiveDistribution(
-          directions[metricName],
+          effectivenessMetricDirections[metricName],
           'INCOMPLETE_REPETITION_METRICS',
         )
       } else {
         distributions[metricName] = calculateDistribution(
           ratios.map(metric => metric.value as number),
-          directions[metricName],
+          effectivenessMetricDirections[metricName],
           plan,
         )
       }
@@ -1015,4 +1211,171 @@ export function calculateEffectivenessMetricsV1(input: unknown): EffectivenessMe
     repetitionAnalysis,
   }
   return deepFreeze(effectivenessMetricsV1Schema.parse(result))
+}
+
+function invalidPairedArmEvidence(): never {
+  throw new PairedArmComparisonInputError()
+}
+
+function parsePairedArmComparisonRequest(input: unknown): PairedArmComparisonRequestV1 {
+  const parsed = pairedArmComparisonRequestV1Schema.safeParse(input)
+  if (!parsed.success || parsed.data.baseline.armId === parsed.data.candidate.armId) {
+    return invalidPairedArmEvidence()
+  }
+  for (const arm of [parsed.data.baseline, parsed.data.candidate]) {
+    for (const dimension of EVALUATION_RESOURCE_DIMENSIONS) {
+      if (arm.budget.usage[dimension] > arm.budget.limits[dimension]) {
+        return invalidPairedArmEvidence()
+      }
+    }
+  }
+  return parsed.data
+}
+
+function canonicalEvaluationDesign(request: EffectivenessMetricsRequestV1): string {
+  const stratumDefinitions = [...request.stratumDefinitions]
+    .sort((left, right) => compareIds(left.stratumId, right.stratumId))
+  const repetitionPlan = request.repetitionPlan === undefined
+    ? null
+    : {
+        ...request.repetitionPlan,
+        repetitionIds: [...request.repetitionPlan.repetitionIds].sort(compareIds),
+        benchmarkCaseIds: [...request.repetitionPlan.benchmarkCaseIds].sort(compareIds),
+      }
+  const cases = request.cases
+    .map(item => ({
+      caseId: item.caseId,
+      repetitionId: item.repetitionId ?? null,
+      disposition: item.disposition,
+      assessmentMode: item.assessmentMode,
+      supportedEcosystem: item.supportedEcosystem,
+      expectedCoverage: item.expectedCoverage,
+      groundTruthDefects: [...item.groundTruthDefects]
+        .sort((left, right) => compareIds(left.defectId, right.defectId)),
+    }))
+    .sort((left, right) => compareIds(
+      `${left.repetitionId ?? ''}\0${left.caseId}`,
+      `${right.repetitionId ?? ''}\0${right.caseId}`,
+    ))
+  return JSON.stringify({
+    schemaVersion: request.schemaVersion,
+    engineId: request.engineId,
+    severityWeights: request.severityWeights,
+    stratumDefinitions,
+    repetitionPlan,
+    cases,
+  })
+}
+
+function comparePairedMetric(
+  baseline: EffectivenessRatioMetricV1,
+  candidate: EffectivenessRatioMetricV1,
+  worstDirection: 'MINIMUM' | 'MAXIMUM',
+  blockedReason?: 'INCOMPATIBLE_EVALUATION_DESIGN' | 'UNMATCHED_BUDGETS',
+): PairedMetricComparisonV1 {
+  const preferredDirection = worstDirection === 'MINIMUM' ? 'HIGHER' : 'LOWER'
+  if (
+    blockedReason !== undefined
+    || baseline.status === 'INCONCLUSIVE'
+    || candidate.status === 'INCONCLUSIVE'
+  ) {
+    return {
+      status: 'INCONCLUSIVE',
+      baselineValue: baseline.value,
+      candidateValue: candidate.value,
+      rawDelta: null,
+      directionalDelta: null,
+      preferredDirection,
+      outcome: null,
+      reasonCodes: [blockedReason ?? 'INCONCLUSIVE_ARM_METRIC'],
+    }
+  }
+  const rawDelta = candidate.value - baseline.value
+  const directed = preferredDirection === 'HIGHER' ? rawDelta : -rawDelta
+  const directionalDelta = directed === 0 ? 0 : directed
+  return {
+    status: 'MEASURED',
+    baselineValue: baseline.value,
+    candidateValue: candidate.value,
+    rawDelta: rawDelta === 0 ? 0 : rawDelta,
+    directionalDelta,
+    preferredDirection,
+    outcome: directionalDelta > 0
+      ? 'IMPROVED'
+      : directionalDelta < 0 ? 'REGRESSED' : 'EQUIVALENT',
+  }
+}
+
+/**
+ * Compare two complete Evaluation Arms against one frozen design. Matched-budget
+ * comparisons require exact equality across every declared resource ceiling;
+ * native-profile comparisons retain and disclose differences without treating
+ * them as equivalent budgets.
+ */
+export function calculatePairedArmComparisonV1(input: unknown): PairedArmComparisonV1 {
+  const request = parsePairedArmComparisonRequest(input)
+  let baselineMetrics: EffectivenessMetricsV1
+  let candidateMetrics: EffectivenessMetricsV1
+  try {
+    baselineMetrics = calculateEffectivenessMetricsV1(request.baseline.metricsRequest)
+    candidateMetrics = calculateEffectivenessMetricsV1(request.candidate.metricsRequest)
+  } catch (error) {
+    if (error instanceof EvaluationMetricsInputError) return invalidPairedArmEvidence()
+    throw error
+  }
+
+  const compatibleDesign = canonicalEvaluationDesign(request.baseline.metricsRequest)
+    === canonicalEvaluationDesign(request.candidate.metricsRequest)
+  const mismatchedDimensions = EVALUATION_RESOURCE_DIMENSIONS.filter(dimension => (
+    request.baseline.budget.limits[dimension]
+    !== request.candidate.budget.limits[dimension]
+  ))
+  const matchedBudgetBlocked = request.comparisonView === 'MATCHED_BUDGET'
+    && mismatchedDimensions.length > 0
+  const budgetComparison: PairedBudgetComparisonV1 = {
+    view: request.comparisonView,
+    status: request.comparisonView === 'NATIVE_PROFILE'
+      ? 'NATIVE_PROFILE'
+      : matchedBudgetBlocked ? 'INCONCLUSIVE' : 'MATCHED',
+    mismatchedDimensions,
+    baseline: request.baseline.budget,
+    candidate: request.candidate.budget,
+  }
+  const blockedReason = !compatibleDesign
+    ? 'INCOMPATIBLE_EVALUATION_DESIGN' as const
+    : matchedBudgetBlocked ? 'UNMATCHED_BUDGETS' as const : undefined
+  const metricNames = Object.keys(effectivenessMetricDirections) as Array<
+    keyof typeof effectivenessMetricDirections
+  >
+  const metricComparisons = {} as PairedArmComparisonV1['metrics']
+  for (const metricName of metricNames) {
+    metricComparisons[metricName] = comparePairedMetric(
+      baselineMetrics.metrics[metricName],
+      candidateMetrics.metrics[metricName],
+      effectivenessMetricDirections[metricName],
+      blockedReason,
+    )
+  }
+
+  const reasonCodes: PairedArmComparisonV1['reasonCodes'] = []
+  if (!compatibleDesign) reasonCodes.push('INCOMPATIBLE_EVALUATION_DESIGN')
+  if (matchedBudgetBlocked) reasonCodes.push('UNMATCHED_BUDGETS')
+  if (
+    baselineMetrics.conclusion === 'INCONCLUSIVE'
+    || candidateMetrics.conclusion === 'INCONCLUSIVE'
+  ) {
+    reasonCodes.push('INCONCLUSIVE_ARM_METRICS')
+  }
+  const result: PairedArmComparisonV1 = {
+    schemaVersion: 1,
+    engineId: PAIRED_ARM_COMPARISON_ENGINE_ID,
+    comparisonView: request.comparisonView,
+    conclusion: reasonCodes.length === 0 ? 'MEASURED' : 'INCONCLUSIVE',
+    reasonCodes,
+    baseline: { armId: request.baseline.armId, metrics: baselineMetrics },
+    candidate: { armId: request.candidate.armId, metrics: candidateMetrics },
+    budgetComparison,
+    metrics: metricComparisons,
+  }
+  return deepFreeze(pairedArmComparisonV1Schema.parse(result))
 }
