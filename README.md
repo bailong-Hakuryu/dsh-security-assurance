@@ -25,6 +25,11 @@ This repository is under active vertical-slice development, not at the
   delegate all Assessment validation, pagination, redaction, recovery,
   cancellation, delivery, and state transitions to the root Service;
 - versioned Zod-validated public contracts;
+- a side-effect-free `dsh-security-assurance/evaluation` entry containing the
+  first pure versioned Metrics Engine slice. It calculates Critical/High and
+  severity-weighted Validated Recall, Validated Precision, Unsafe Satisfaction
+  Rate, and Coverage Honesty Rate from strict independently adjudicated
+  Evaluation evidence;
 - one `SecurityResult<T>` success/failure envelope;
 - redacted authorization, validation, cancellation, deadline, and internal
   failures;
@@ -350,6 +355,29 @@ reason. `cancelAssessment` first returns the durable cancellation-request
 Receipt after the Service has quiesced local work and finalized the Assessment;
 that Receipt identifies the request revision and does not misrepresent it as
 the later terminal revision.
+
+## Effectiveness evaluation
+
+The `dsh-security-assurance/evaluation` entry is independent of the runtime
+Security Service and has no authority, Store, Subject, network, model, browser,
+or filesystem access. `calculateEffectivenessMetricsV1` accepts only strict
+Evaluation case identities, frozen severity weights, Ground Truth defect
+metadata, preclassified benchmark disposition or product failure, completed
+Assessment outcomes, and independently adjudicated Finding matches.
+
+The engine enforces unique Case, defect, and Finding identities plus one-to-one
+matches. Benchmark-invalid Cases are excluded uniformly; product timeout,
+budget exhaustion, crash, and incorrect outcome remain included measured
+results. Missing denominators and unadjudicated Findings produce explicit
+`INCONCLUSIVE` reasons rather than a fabricated zero or passing conclusion.
+Every result is strict, recursively immutable, and calculated by the same pure
+implementation consumed by packed release tooling.
+
+This first slice is not an Effectiveness or release claim. Stratum sufficiency,
+independent repetitions, uncertainty, paired Arms, matched-budget comparison,
+Utility, non-inferiority, Ground Truth air-gap execution, Release Constitution
+thresholds, Scorecards, and the Release Evidence Manifest remain separate
+future proof slices.
 
 ## Model-facing Assessment operations
 

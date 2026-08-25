@@ -189,6 +189,22 @@ if (
 ) {
   throw new Error('packed Analyzer Contract Entry is incomplete')
 }
+const evaluation = await import('dsh-security-assurance/evaluation')
+const packedEmptyMetrics = evaluation.calculateEffectivenessMetricsV1({
+  schemaVersion: 1,
+  engineId: 'security/effectiveness-metrics/v1',
+  severityWeights: { CRITICAL: 8, HIGH: 5, MEDIUM: 3, LOW: 2, INFORMATIONAL: 1 },
+  cases: [],
+})
+if (
+  evaluation.EFFECTIVENESS_METRICS_ENGINE_ID !== 'security/effectiveness-metrics/v1'
+  || typeof evaluation.effectivenessMetricsRequestV1Schema?.parse !== 'function'
+  || typeof evaluation.effectivenessMetricsV1Schema?.parse !== 'function'
+  || packedEmptyMetrics.conclusion !== 'INCONCLUSIVE'
+  || packedEmptyMetrics.reasonCodes.length !== 5
+) {
+  throw new Error('packed Evaluation entry did not execute the versioned Metrics Engine')
+}
 const root = await import('dsh-security-assurance')
 if ('SecurityPersistence' in root || 'freezeSubject' in root || 'SecurityAuthorityResolver' in root) {
   throw new Error('root export leaked a package-private implementation boundary')
@@ -1031,6 +1047,7 @@ if (ctx.reflect.get('securityAssurance') !== undefined) {
 process.stdout.write(JSON.stringify({
   packedImport: 'PASS',
   analyzerContract: 'PASS',
+  evaluationMetrics: 'PASS',
   modelTools: 'PASS',
   modelToolLiveSession: 'PASS',
   lifecycle: 'PASS',
@@ -1051,6 +1068,7 @@ process.stdout.write(JSON.stringify({
   if (
     result.packedImport !== 'PASS'
     || result.analyzerContract !== 'PASS'
+    || result.evaluationMetrics !== 'PASS'
     || result.modelTools !== 'PASS'
     || result.modelToolLiveSession !== 'PASS'
     || result.lifecycle !== 'PASS'
@@ -1849,6 +1867,7 @@ process.stdout.write(JSON.stringify({
     packageVersion: installedManifest.version,
     packedImport: result.packedImport,
     analyzerContract: result.analyzerContract,
+    evaluationMetrics: result.evaluationMetrics,
     modelTools: result.modelTools,
     modelToolLiveSession: result.modelToolLiveSession,
     lifecycle: result.lifecycle,

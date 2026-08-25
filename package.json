@@ -21,6 +21,10 @@
       "types": "./lib/types/analyzer.d.ts",
       "default": "./lib/analyzer.js"
     },
+    "./evaluation": {
+      "types": "./lib/types/evaluation.d.ts",
+      "default": "./lib/evaluation.js"
+    },
     "./tools": {
       "types": "./lib/types/tools.d.ts",
       "default": "./lib/tools.js"
@@ -56,6 +60,7 @@
     "lib/index.js",
     "lib/contracts.js",
     "lib/analyzer.js",
+    "lib/evaluation.js",
     "lib/tools.js",
     "lib/control-plane-provider.js",
     "lib/host-repository-provider.js",
@@ -74,6 +79,8 @@
     "lib/types/contracts.d.ts.map",
     "lib/types/analyzer.d.ts",
     "lib/types/analyzer.d.ts.map",
+    "lib/types/evaluation.d.ts",
+    "lib/types/evaluation.d.ts.map",
     "lib/types/tools.d.ts",
     "lib/types/tools.d.ts.map",
     "lib/types/control-plane-provider.d.ts",
