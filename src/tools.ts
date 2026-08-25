@@ -3,11 +3,13 @@ import type {} from '@deepseek-ai/dsh-agent'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { defineTool, type GenericCallView, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import {
+  cancelAssessmentRequestSchema,
   getAssessmentRequestSchema,
   listFindingsRequestSchema,
   resumeAssessmentRequestSchema,
   startAssessmentRequestSchema,
   type AssessmentId,
+  type AssessmentCancellationReceiptV1,
   type AssessmentReceiptV1,
   type AssessmentResumeReceiptV1,
   type AssessmentSnapshotV1,
@@ -40,6 +42,16 @@ export interface SecurityAssessmentResumeReceiptV1 {
   readonly assessmentId: AssessmentId
   readonly assessmentRevision: number
   readonly state: 'CREATED'
+  readonly idempotencyKey: string
+}
+
+/** Model-safe projection of one durable Assessment cancellation request. */
+export interface SecurityAssessmentCancellationReceiptV1 {
+  readonly schemaVersion: 1
+  readonly operation: 'cancel_assessment'
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly acceptedState: 'CREATED' | 'RUNNING' | 'BLOCKED'
   readonly idempotencyKey: string
 }
 
@@ -121,6 +133,29 @@ const RESUME_OUTPUT = {
     },
   },
   render: (_args: unknown, value: SecurityAssessmentResumeReceiptV1) => ([{
+    type: 'text' as const,
+    text: JSON.stringify(value),
+  }]),
+} as const
+
+const CANCEL_OUTPUT = {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      schemaVersion: { type: 'integer', const: 1, required: true },
+      operation: { type: 'string', const: 'cancel_assessment', required: true },
+      assessmentId: { type: 'string', required: true },
+      assessmentRevision: { type: 'integer', required: true },
+      acceptedState: {
+        type: 'string',
+        enum: ['CREATED', 'RUNNING', 'BLOCKED'],
+        required: true,
+      },
+      idempotencyKey: { type: 'string', required: true },
+    },
+  },
+  render: (_args: unknown, value: SecurityAssessmentCancellationReceiptV1) => ([{
     type: 'text' as const,
     text: JSON.stringify(value),
   }]),
@@ -324,6 +359,19 @@ function resumeReceiptValue(
   }
 }
 
+function cancellationReceiptValue(
+  receipt: AssessmentCancellationReceiptV1,
+): SecurityAssessmentCancellationReceiptV1 {
+  return {
+    schemaVersion: 1,
+    operation: receipt.operation,
+    assessmentId: receipt.assessmentId,
+    assessmentRevision: receipt.assessmentRevision,
+    acceptedState: receipt.acceptedState,
+    idempotencyKey: receipt.idempotencyKey,
+  }
+}
+
 function statusValue(snapshot: AssessmentSnapshotV1): SecurityAssessmentStatusV1 {
   return {
     schemaVersion: 1,
@@ -403,6 +451,15 @@ function presentResume(args: { readonly assessment_id: string }): GenericCallVie
   return {
     card: 'generic',
     title: 'Resume security assessment',
+    kind: 'other',
+    rawInput: args.assessment_id,
+  }
+}
+
+function presentCancel(args: { readonly assessment_id: string }): GenericCallView {
+  return {
+    card: 'generic',
+    title: 'Cancel security assessment',
     kind: 'other',
     rawInput: args.assessment_id,
   }
@@ -748,6 +805,73 @@ const SecurityAssuranceTools = {
         return resumeReceiptValue(result.value)
       },
       presentCall: presentResume,
+    }))
+
+    ctx.tools.register(defineTool({
+      name: 'security_assessment_cancel',
+      description: 'Request cancellation of one exact nonterminal Security Assessment revision. Supply a fresh '
+        + 'idempotency_key and a bounded operator reason. The returned Receipt records accepted cancellation '
+        + 'intent and never claims terminal CANCELED state; query status for committed truth. This tool never '
+        + 'accepts force-complete, skip-cleanup, Evidence deletion, Verdict, state override, Principal, '
+        + 'permissions, repository path, or arbitrary cancellation policy.',
+      parameters: {
+        assessment_id: {
+          type: 'string',
+          required: true,
+          description: 'Exact nonterminal Assessment id from a current Security status result.',
+        },
+        expected_assessment_revision: {
+          type: 'integer',
+          required: true,
+          description: 'Exact current revision projected for the Assessment to cancel.',
+        },
+        idempotency_key: {
+          type: 'string',
+          required: true,
+          description: 'Stable key for replaying this exact cancellation request.',
+        },
+        reason: {
+          type: 'object',
+          additionalProperties: false,
+          required: true,
+          properties: {
+            code: {
+              type: 'string',
+              required: true,
+              description: 'Uppercase operator reason code from the controlling workflow.',
+            },
+            summary: {
+              type: 'string',
+              required: true,
+              description: 'Bounded non-empty operator explanation, at most 512 characters.',
+            },
+          },
+        },
+      },
+      output: CANCEL_OUTPUT,
+      async execute(args, exec) {
+        const parsed = cancelAssessmentRequestSchema.safeParse({
+          schemaVersion: 1,
+          assessmentId: args.assessment_id,
+          expectedAssessmentRevision: args.expected_assessment_revision,
+          idempotencyKey: args.idempotency_key,
+          reason: args.reason,
+        })
+        if (!parsed.success) {
+          return reject(
+            'security_assessment_cancel arguments do not match the Assessment cancellation contract',
+            'SECURITY_INVALID_REQUEST',
+          )
+        }
+        const result = await ctx.securityAssurance.cancelAssessment(
+          harnessSessionInvocation(ctx, exec, 'assessment:cancel'),
+          parsed.data,
+          { signal: exec.signal },
+        )
+        if (!result.ok) return reject(result.error.message, `SECURITY_${result.error.code}`)
+        return cancellationReceiptValue(result.value)
+      },
+      presentCall: presentCancel,
     }))
   },
 }

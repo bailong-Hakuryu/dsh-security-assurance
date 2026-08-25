@@ -356,6 +356,7 @@ const packedStartTool = ctx.tools.get('security_assessment_start')
 const packedStatusTool = ctx.tools.get('security_assessment_status')
 const packedFindingsTool = ctx.tools.get('security_assessment_findings')
 const packedResumeTool = ctx.tools.get('security_assessment_resume')
+const packedCancelTool = ctx.tools.get('security_assessment_cancel')
 const packedStartMode = ctx.tools.executionMode({
   callId: 'packed-security-start-mode',
   name: 'security_assessment_start',
@@ -396,17 +397,30 @@ const packedResumeMode = ctx.tools.executionMode({
   },
   signal: new AbortController().signal,
 })
+const packedCancelMode = ctx.tools.executionMode({
+  callId: 'packed-security-cancel-mode',
+  name: 'security_assessment_cancel',
+  arguments: {
+    assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+    expected_assessment_revision: 3,
+    idempotency_key: 'packed-security-cancel-mode-v1',
+    reason: { code: 'OPERATOR_REQUEST', summary: 'Cancel the current assessment.' },
+  },
+  signal: new AbortController().signal,
+})
 if (
   packedStartTool?.name !== 'security_assessment_start'
   || packedStatusTool?.name !== 'security_assessment_status'
   || packedFindingsTool?.name !== 'security_assessment_findings'
   || packedResumeTool?.name !== 'security_assessment_resume'
+  || packedCancelTool?.name !== 'security_assessment_cancel'
   || packedStartMode.kind !== 'exclusive'
   || packedStatusMode.kind !== 'parallel'
   || packedFindingsMode.kind !== 'parallel'
   || packedResumeMode.kind !== 'exclusive'
+  || packedCancelMode.kind !== 'exclusive'
 ) {
-  throw new Error('packed model Tool entry did not register start, status, findings, and resume modes')
+  throw new Error('packed model Tool entry did not register start, status, findings, resume, and cancel modes')
 }
 const packedAgentlessFindings = await ctx.tools.execute({
   callId: 'packed-security-findings-agentless',
@@ -797,6 +811,7 @@ if (
   || ctx.tools.get('security_assessment_status') !== undefined
   || ctx.tools.get('security_assessment_findings') !== undefined
   || ctx.tools.get('security_assessment_resume') !== undefined
+  || ctx.tools.get('security_assessment_cancel') !== undefined
 ) {
   throw new Error('packed model Tool entry did not withdraw its registered tools')
 }

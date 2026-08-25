@@ -85,7 +85,8 @@ async function executeTool(
   name: 'security_assessment_start'
     | 'security_assessment_status'
     | 'security_assessment_findings'
-    | 'security_assessment_resume',
+    | 'security_assessment_resume'
+    | 'security_assessment_cancel',
   args: unknown,
   agent?: Agent,
   initiator: Agent | null | undefined = agent,
@@ -203,14 +204,27 @@ describe('security assessment tool registration', () => {
       const status = fixture.ctx.tools.get('security_assessment_status')
       const findings = fixture.ctx.tools.get('security_assessment_findings')
       const resume = fixture.ctx.tools.get('security_assessment_resume')
+      const cancel = fixture.ctx.tools.get('security_assessment_cancel')
       expect(start?.name).toBe('security_assessment_start')
       expect(status?.name).toBe('security_assessment_status')
       expect(findings?.name).toBe('security_assessment_findings')
       expect(resume?.name).toBe('security_assessment_resume')
+      expect(cancel?.name).toBe('security_assessment_cancel')
       expect(fixture.ctx.tools.executionMode({
         callId: CallId('security-start-mode'),
         name: 'security_assessment_start',
         arguments: startArgs('repo-00000000-0000-0000-0000-000000000000'),
+        signal: toolSignal,
+      })).toEqual({ kind: 'exclusive' })
+      expect(fixture.ctx.tools.executionMode({
+        callId: CallId('security-cancel-mode'),
+        name: 'security_assessment_cancel',
+        arguments: {
+          assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+          expected_assessment_revision: 3,
+          idempotency_key: 'security-cancel-mode-v1',
+          reason: { code: 'OPERATOR_REQUEST', summary: 'Cancel the current assessment.' },
+        },
         signal: toolSignal,
       })).toEqual({ kind: 'exclusive' })
       expect(fixture.ctx.tools.executionMode({
@@ -275,18 +289,224 @@ describe('security assessment tool registration', () => {
         kind: 'other',
         rawInput: 'asm-00000000-0000-0000-0000-000000000000',
       })
+      expect(cancel?.presentCall?.({
+        assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+        expected_assessment_revision: 3,
+        idempotency_key: 'security-cancel-present-v1',
+        reason: { code: 'OPERATOR_REQUEST', summary: 'Cancel the current assessment.' },
+      })).toEqual({
+        card: 'generic',
+        title: 'Cancel security assessment',
+        kind: 'other',
+        rawInput: 'asm-00000000-0000-0000-0000-000000000000',
+      })
       expect(start?.presentCall?.({ forged: true })).toBeUndefined()
       expect(status?.presentCall?.({ forged: true })).toBeUndefined()
       expect(findings?.presentCall?.({ forged: true })).toBeUndefined()
       expect(resume?.presentCall?.({ forged: true })).toBeUndefined()
+      expect(cancel?.presentCall?.({ forged: true })).toBeUndefined()
 
       await fixture.toolsFiber.dispose()
       expect(fixture.ctx.tools.get('security_assessment_start')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_status')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_findings')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_resume')).toBeUndefined()
+      expect(fixture.ctx.tools.get('security_assessment_cancel')).toBeUndefined()
       expect(fixture.ctx.reflect.get('securityAssurance')).toBeDefined()
     } finally {
+      await fixture.dispose()
+    }
+  })
+})
+
+describe('security_assessment_cancel integration', () => {
+  it('cancels only an exact nonterminal revision without claiming terminal state in the receipt', async () => {
+    const repository = await repositoryFixture()
+    const fixture = await harness()
+    const root = stubAgent(`security-tool-cancel-${Math.random()}`)
+    const other = stubAgent(`security-tool-cancel-other-${Math.random()}`)
+    const disposeRoot = fixture.ctx.agents.register(root.agent)
+    const disposeOther = fixture.ctx.agents.register(other.agent)
+    try {
+      const platform = process.platform
+      if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+        throw new Error(`unsupported test platform: ${platform}`)
+      }
+      const firstInvocation = referenceHostInvocation(fixture.ctx.securityAssurance)
+      const registered = await fixture.ctx.securityAssurance.registerRepository(firstInvocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'security-tool-cancel-repository-v1',
+        root: repository,
+        displayName: 'Model cancel tool fixture',
+        bindings: {
+          policyId: 'security/default',
+          assessmentProfileId: 'security/standard',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform,
+          deliveryDestinationIds: [],
+        },
+      })
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+      const started = await fixture.ctx.securityAssurance.startAssessment(firstInvocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'security-tool-cancel-assessment-v1',
+        repositoryId: registered.value.repositoryId,
+        subject: { kind: 'workspace_snapshot' },
+        assessmentMode: 'REPOSITORY',
+        assessmentProfileId: 'security/standard',
+        target: { kind: 'repository' },
+        requestedStrongerControlIds: [],
+      })
+      if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
+
+      await fixture.restartService()
+      const invocation = referenceHostInvocation(fixture.ctx.securityAssurance)
+      const blocked = await fixture.ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })
+      if (!blocked.ok) throw new Error(`blocked query failed: ${blocked.error.code}`)
+      expect(blocked.value).toMatchObject({ state: 'BLOCKED' })
+
+      const args = {
+        assessment_id: started.value.assessmentId,
+        expected_assessment_revision: blocked.value.assessmentRevision,
+        idempotency_key: 'security-tool-cancel-command-v1',
+        reason: {
+          code: 'OPERATOR_REQUEST',
+          summary: 'Cancel the interrupted assessment through the model tool.',
+        },
+      }
+      const agentless = await executeTool(
+        fixture.ctx,
+        'security_assessment_cancel',
+        args,
+      )
+      expect(agentless.error?.info?.code).toBe('SECURITY_TOOL_AGENT_REQUIRED')
+
+      openTurn(root)
+      const driverless = await executeTool(
+        fixture.ctx,
+        'security_assessment_cancel',
+        args,
+        root.agent,
+        null,
+      )
+      expect(driverless.error?.info?.code).toBe('SECURITY_TOOL_DRIVER_REQUIRED')
+
+      const canceled = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_cancel',
+        args,
+        root.agent,
+      ))
+      expect(canceled).toEqual({
+        schemaVersion: 1,
+        operation: 'cancel_assessment',
+        assessmentId: started.value.assessmentId,
+        assessmentRevision: blocked.value.assessmentRevision + 1,
+        acceptedState: 'BLOCKED',
+        idempotencyKey: args.idempotency_key,
+      })
+      const serialized = JSON.stringify(canceled)
+      for (const forbidden of [
+        repository,
+        registered.value.repositoryId,
+        args.reason.code,
+        args.reason.summary,
+        'reason',
+        'acceptedAt',
+        'correlationId',
+        'CANCELED',
+        'verdict',
+        'evidence',
+        'principalId',
+        String(root.agent.id),
+      ]) expect(serialized).not.toContain(forbidden)
+
+      const terminal = await fixture.ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })
+      expect(terminal).toMatchObject({
+        ok: true,
+        value: {
+          state: 'CANCELED',
+          assessmentRevision: blocked.value.assessmentRevision + 2,
+          verdict: null,
+        },
+      })
+
+      const forgedReplay = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_cancel',
+        {
+          ...args,
+          principal_id: 'forged-cancel-operator',
+          permissions: ['assessment:resume', 'risk:break-glass'],
+        },
+        root.agent,
+      ))
+      expect(forgedReplay).toEqual(canceled)
+
+      const idempotencyConflict = await executeTool(
+        fixture.ctx,
+        'security_assessment_cancel',
+        {
+          ...args,
+          reason: { ...args.reason, summary: 'Attempt a conflicting cancel replay.' },
+        },
+        root.agent,
+      )
+      expect(idempotencyConflict.error?.info?.code).toBe('SECURITY_IDEMPOTENCY_CONFLICT')
+
+      const invalid = await executeTool(
+        fixture.ctx,
+        'security_assessment_cancel',
+        {
+          ...args,
+          idempotency_key: 'security-tool-cancel-invalid-v1',
+          reason: { code: 'invalid-code', summary: 'Invalid reason code.' },
+        },
+        root.agent,
+      )
+      expect(invalid.error?.info?.code).toBe('SECURITY_INVALID_REQUEST')
+
+      const staleRevision = await executeTool(
+        fixture.ctx,
+        'security_assessment_cancel',
+        {
+          ...args,
+          idempotency_key: 'security-tool-cancel-stale-v1',
+        },
+        root.agent,
+      )
+      expect(staleRevision.error?.info?.code).toBe('SECURITY_CONFLICT')
+
+      const missing = await executeTool(
+        fixture.ctx,
+        'security_assessment_cancel',
+        {
+          ...args,
+          assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+          idempotency_key: 'security-tool-cancel-missing-v1',
+        },
+        root.agent,
+      )
+      expect(missing.error?.info?.code).toBe('SECURITY_NOT_FOUND')
+
+      openTurn(other)
+      const otherSession = await executeTool(
+        fixture.ctx,
+        'security_assessment_cancel',
+        args,
+        other.agent,
+      )
+      expect(otherSession.error?.info?.code).toBe('SECURITY_CONFLICT')
+    } finally {
+      disposeOther()
+      disposeRoot()
       await fixture.dispose()
     }
   })
