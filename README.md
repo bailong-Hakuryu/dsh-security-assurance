@@ -729,6 +729,11 @@ pnpm pack:smoke
 pnpm pack:browser-e2e
 ```
 
+`pack:smoke` installs the packed artifact into a fresh temporary consumer and
+opens a real Harness Agent turn over the installed entry. It proves the bounded
+Start -> Status -> Findings -> Export lifecycle, including SEALED polling,
+canonical rendering, Export idempotency replay, and disclosure exclusions.
+
 `pack:browser-e2e` packs the current Security artifact, installs the exact
 registry Harness release into a fresh temporary profile, adds a temporary
 test-only Reference Host authority layer, and drives a locally installed Chrome

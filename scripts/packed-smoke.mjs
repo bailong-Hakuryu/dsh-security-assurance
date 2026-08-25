@@ -316,7 +316,11 @@ if (
   throw new Error('packed Workbench Client entry is incomplete')
 }
 const { Context } = await import('@deepseek-ai/cordis')
-const AgentRegistry = (await import('@deepseek-ai/dsh-agent')).default
+const agentRuntime = await import('@deepseek-ai/dsh-agent')
+const AgentRegistry = agentRuntime.default
+const { Inbox } = agentRuntime
+const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
+const { Session, SessionId } = await import('@deepseek-ai/dsh-session')
 const SystemPrompt = (await import('@deepseek-ai/dsh-system-prompt')).default
 const ToolRuntime = (await import('@deepseek-ai/dsh-tools')).default
 const TypertRegistry = (await import('@deepseek-ai/dsh-typert-registry')).default
@@ -748,7 +752,7 @@ const repositoryConfig = {
       evidenceProtectionId: 'evidence/local-protected',
       dataEgressPolicyId: 'egress/deny-by-default',
       platform: ${JSON.stringify(process.platform)},
-      deliveryDestinationIds: [],
+      deliveryDestinationIds: ['delivery/local-audit'],
     },
   }, {
     schemaVersion: 1,
@@ -799,6 +803,191 @@ if (!/^repo-[0-9a-f-]{36}$/.test(failedBinding?.repositoryId ?? '')) {
 if (!/^repo-[0-9a-f-]{36}$/.test(indeterminateBinding?.repositoryId ?? '')) {
   throw new Error('Host Repository Provider did not expose the indeterminate Repository binding')
 }
+const modelSession = Session.create(SessionId('packed-security-model-session'))
+const packedModelAgent = {
+  id: modelSession.id,
+  options: {},
+  session: modelSession,
+  inbox: new Inbox(modelSession, { inserted() {}, discarded() {}, claimed() {} }),
+  get status() { return 'running' },
+  ctx: new Context(),
+  send() {},
+  followup() {},
+  steer: () => ({ outcome: Promise.resolve({ status: 'rejected' }) }),
+  inject(input) { this.inbox.append('next-step', input) },
+  cancel() {},
+  runMaintenance: task => task(new AbortController().signal),
+  whenIdle: () => Promise.resolve(),
+}
+const disposePackedModelAgent = ctx.agents.register(packedModelAgent)
+let packedModelTurnOpen = false
+let packedModelCallSequence = 0
+const packedToolValue = (name, result) => {
+  if (result.isError || typeof result.value !== 'object' || result.value === null) {
+    throw new Error(name + ' failed: ' + (result.error?.info?.code ?? result.error?.message ?? 'invalid result'))
+  }
+  const rendered = result.content[0]
+  if (rendered?.type !== 'text' || JSON.stringify(JSON.parse(rendered.text)) !== JSON.stringify(result.value)) {
+    throw new Error(name + ' did not render its canonical structured value')
+  }
+  return result.value
+}
+const executePackedModelTool = (name, args) => ctx.agents.withInitiator(
+  packedModelAgent,
+  () => ctx.tools.execute({
+    callId: 'packed-security-live-' + String(++packedModelCallSequence),
+    name,
+    arguments: args,
+    signal: new AbortController().signal,
+    agent: packedModelAgent,
+  }),
+)
+try {
+  packedModelAgent.inbox.append('next-turn', createUserMessage({
+    content: [{ type: 'text', text: 'Run the packed Security Assessment lifecycle.' }],
+    source: { kind: 'user' },
+  }))
+  const admitted = packedModelAgent.inbox.claim('next-turn', 1)
+  modelSession.append('turn/start', { turn: 1 })
+  packedModelTurnOpen = true
+  for (const message of admitted) modelSession.append('user/message', message, { surfaceOp: 'append' })
+
+  const packedStart = packedToolValue('security_assessment_start', await executePackedModelTool(
+    'security_assessment_start',
+    {
+      idempotency_key: 'packed-security-live-start-v1',
+      repository_id: firstBinding.repositoryId,
+      subject: { kind: 'workspace_snapshot' },
+      assessment_mode: 'REPOSITORY',
+      assessment_profile_id: 'security/standard',
+      target: { kind: 'repository' },
+      requested_stronger_control_ids: [],
+    },
+  ))
+  if (
+    packedStart.operation !== 'start_assessment'
+    || packedStart.state !== 'CREATED'
+    || packedStart.assessmentRevision !== 1
+    || !/^asm-[0-9a-f-]{36}$/.test(packedStart.assessmentId ?? '')
+    || JSON.stringify(Object.keys(packedStart).sort()) !== JSON.stringify([
+      'assessmentId',
+      'assessmentRevision',
+      'idempotencyKey',
+      'operation',
+      'schemaVersion',
+      'state',
+    ])
+  ) {
+    throw new Error('packed start tool did not return its bounded canonical receipt')
+  }
+
+  let packedStatus
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    packedStatus = packedToolValue('security_assessment_status', await executePackedModelTool(
+      'security_assessment_status',
+      { assessment_id: packedStart.assessmentId },
+    ))
+    if (packedStatus.state === 'SEALED') break
+    if (packedStatus.state === 'BLOCKED' || packedStatus.state === 'CANCELED') {
+      throw new Error('packed assessment reached unexpected state ' + packedStatus.state)
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  if (
+    packedStatus?.state !== 'SEALED'
+    || packedStatus.verdict !== 'SATISFIED'
+    || JSON.stringify(Object.keys(packedStatus).sort()) !== JSON.stringify([
+      'assessmentId',
+      'assessmentRevision',
+      'coverage',
+      'schemaVersion',
+      'state',
+      'verdict',
+    ])
+  ) {
+    throw new Error('packed status tool did not reach a bounded SEALED result')
+  }
+
+  const packedFindings = packedToolValue('security_assessment_findings', await executePackedModelTool(
+    'security_assessment_findings',
+    { assessment_id: packedStart.assessmentId, limit: 20 },
+  ))
+  if (
+    !Array.isArray(packedFindings.findings)
+    || packedFindings.findings.length !== 0
+    || packedFindings.nextCursor !== null
+    || JSON.stringify(Object.keys(packedFindings).sort()) !== JSON.stringify([
+      'assessmentId',
+      'assessmentRevision',
+      'findings',
+      'nextCursor',
+      'schemaVersion',
+    ])
+  ) {
+    throw new Error('packed findings tool did not return its bounded empty page')
+  }
+
+  const packedExportArgs = {
+    assessment_id: packedStart.assessmentId,
+    expected_assessment_revision: packedStatus.assessmentRevision,
+    idempotency_key: 'packed-security-live-export-v1',
+    export_profile_id: 'security/export/internal-json-v1',
+    delivery_destination_id: 'delivery/local-audit',
+  }
+  const packedExport = packedToolValue('security_assessment_export', await executePackedModelTool(
+    'security_assessment_export',
+    packedExportArgs,
+  ))
+  const packedExportReplay = packedToolValue('security_assessment_export replay', await executePackedModelTool(
+    'security_assessment_export',
+    packedExportArgs,
+  ))
+  if (
+    packedExport.operation !== 'request_export'
+    || packedExport.acceptedState !== 'PENDING'
+    || packedExport.assessmentId !== packedStart.assessmentId
+    || packedExport.assessmentRevision !== packedStatus.assessmentRevision
+    || !/^export-[0-9a-f]{64}$/.test(packedExport.exportId ?? '')
+    || JSON.stringify(Object.keys(packedExport).sort()) !== JSON.stringify([
+      'acceptedState',
+      'assessmentId',
+      'assessmentRevision',
+      'exportId',
+      'idempotencyKey',
+      'operation',
+      'schemaVersion',
+    ])
+    || JSON.stringify(packedExportReplay) !== JSON.stringify(packedExport)
+  ) {
+    throw new Error('packed export tool did not return and replay its bounded PENDING receipt')
+  }
+  const packedModelDisclosure = JSON.stringify({
+    start: packedStart,
+    status: packedStatus,
+    findings: packedFindings,
+    export: packedExport,
+  })
+  for (const forbidden of [
+    ${JSON.stringify(repositoryRoot)},
+    firstBinding.repositoryId,
+    'delivery/local-audit',
+    'security/export/internal-json-v1',
+    'principalId',
+    'permissions',
+    'artifact',
+    'digest',
+    'download',
+  ]) {
+    if (packedModelDisclosure.includes(forbidden)) {
+      throw new Error('packed model tool lifecycle disclosed ' + forbidden)
+    }
+  }
+} finally {
+  if (packedModelTurnOpen) {
+    modelSession.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+  }
+  disposePackedModelAgent()
+}
 await hostFiber.dispose()
 if (ctx.reflect.get('securityAssuranceHostRepositories') !== undefined) {
   throw new Error('Host Repository Provider disposal did not remove its Service')
@@ -843,6 +1032,7 @@ process.stdout.write(JSON.stringify({
   packedImport: 'PASS',
   analyzerContract: 'PASS',
   modelTools: 'PASS',
+  modelToolLiveSession: 'PASS',
   lifecycle: 'PASS',
   hostRepositoryProvider: 'PASS',
   workbenchRemote: 'PASS',
@@ -862,6 +1052,7 @@ process.stdout.write(JSON.stringify({
     result.packedImport !== 'PASS'
     || result.analyzerContract !== 'PASS'
     || result.modelTools !== 'PASS'
+    || result.modelToolLiveSession !== 'PASS'
     || result.lifecycle !== 'PASS'
     || result.workbenchRemote !== 'PASS'
     || result.workbenchClient !== 'PASS'
@@ -1659,6 +1850,7 @@ process.stdout.write(JSON.stringify({
     packedImport: result.packedImport,
     analyzerContract: result.analyzerContract,
     modelTools: result.modelTools,
+    modelToolLiveSession: result.modelToolLiveSession,
     lifecycle: result.lifecycle,
     hostRepositoryProvider: result.hostRepositoryProvider,
     workbenchRemote: result.workbenchRemote,
