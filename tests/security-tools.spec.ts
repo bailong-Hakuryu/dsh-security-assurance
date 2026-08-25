@@ -11,7 +11,7 @@ import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import SecurityAssuranceService from '../src/index.ts'
 import SecurityAssuranceTools from '../src/tools.ts'
 import type { AssessmentId, SecurityInvocation } from '../src/contracts.ts'
@@ -343,6 +343,240 @@ describe('security assessment tool registration', () => {
       expect(fixture.ctx.tools.get('security_assessment_export')).toBeUndefined()
       expect(fixture.ctx.reflect.get('securityAssurance')).toBeDefined()
     } finally {
+      await fixture.dispose()
+    }
+  })
+})
+
+describe('security assessment tool transport conformance', () => {
+  it('keeps all six model-visible input and output surfaces closed and explicitly bounded', async () => {
+    const fixture = await harness()
+    try {
+      const contracts = {
+        security_assessment_start: {
+          input: [
+            'assessment_mode',
+            'assessment_profile_id',
+            'idempotency_key',
+            'repository_id',
+            'requested_stronger_control_ids',
+            'start_preflight_digest',
+            'subject',
+            'target',
+          ],
+          required: [
+            'assessment_mode',
+            'assessment_profile_id',
+            'idempotency_key',
+            'repository_id',
+            'requested_stronger_control_ids',
+            'subject',
+            'target',
+          ],
+          output: [
+            'assessmentId',
+            'assessmentRevision',
+            'idempotencyKey',
+            'operation',
+            'schemaVersion',
+            'state',
+          ],
+        },
+        security_assessment_status: {
+          input: ['assessment_id'],
+          required: ['assessment_id'],
+          output: ['assessmentId', 'assessmentRevision', 'coverage', 'schemaVersion', 'state', 'verdict'],
+        },
+        security_assessment_findings: {
+          input: ['assessment_id', 'cursor', 'limit', 'validation_states'],
+          required: ['assessment_id', 'limit'],
+          output: ['assessmentId', 'assessmentRevision', 'findings', 'nextCursor', 'schemaVersion'],
+        },
+        security_assessment_resume: {
+          input: ['assessment_id', 'expected_assessment_revision', 'idempotency_key', 'reason'],
+          required: ['assessment_id', 'expected_assessment_revision', 'idempotency_key', 'reason'],
+          output: [
+            'assessmentId',
+            'assessmentRevision',
+            'idempotencyKey',
+            'operation',
+            'schemaVersion',
+            'state',
+          ],
+        },
+        security_assessment_cancel: {
+          input: ['assessment_id', 'expected_assessment_revision', 'idempotency_key', 'reason'],
+          required: ['assessment_id', 'expected_assessment_revision', 'idempotency_key', 'reason'],
+          output: [
+            'acceptedState',
+            'assessmentId',
+            'assessmentRevision',
+            'idempotencyKey',
+            'operation',
+            'schemaVersion',
+          ],
+        },
+        security_assessment_export: {
+          input: [
+            'assessment_id',
+            'delivery_destination_id',
+            'expected_assessment_revision',
+            'export_profile_id',
+            'idempotency_key',
+          ],
+          required: [
+            'assessment_id',
+            'delivery_destination_id',
+            'expected_assessment_revision',
+            'export_profile_id',
+            'idempotency_key',
+          ],
+          output: [
+            'acceptedState',
+            'assessmentId',
+            'assessmentRevision',
+            'exportId',
+            'idempotencyKey',
+            'operation',
+            'schemaVersion',
+          ],
+        },
+      } as const
+
+      for (const [name, contract] of Object.entries(contracts)) {
+        const definition = fixture.ctx.tools.get(name)
+        expect(definition, `${name} must remain registered`).toBeDefined()
+        const parameters = definition?.parameters as {
+          readonly properties?: Readonly<Record<string, unknown>>
+          readonly required?: readonly string[]
+          readonly type?: string
+        }
+        expect(parameters.type).toBe('object')
+        expect(Object.keys(parameters.properties ?? {}).sort()).toEqual([...contract.input].sort())
+        expect([...(parameters.required ?? [])].sort()).toEqual([...contract.required].sort())
+        const output = definition?.output.schema as {
+          readonly additionalProperties?: boolean
+          readonly properties?: Readonly<Record<string, unknown>>
+        }
+        expect(output.additionalProperties, `${name} output must fail closed`).toBe(false)
+        expect(Object.keys(output.properties ?? {}).sort()).toEqual([...contract.output].sort())
+      }
+    } finally {
+      await fixture.dispose()
+    }
+  })
+
+  it('mints only the operation authority and forwards each live execution signal exactly once', async () => {
+    const fixture = await harness()
+    const root = stubAgent(`security-tool-conformance-${Math.random()}`)
+    const disposeRoot = fixture.ctx.agents.register(root.agent)
+    try {
+      openTurn(root)
+      const missingRepositoryId = 'repo-00000000-0000-0000-0000-000000000000'
+      const missingAssessmentId = 'asm-00000000-0000-0000-0000-000000000000'
+      const startSpy = vi.spyOn(fixture.ctx.securityAssurance, 'startAssessment')
+      const statusSpy = vi.spyOn(fixture.ctx.securityAssurance, 'getAssessment')
+      const findingsSpy = vi.spyOn(fixture.ctx.securityAssurance, 'listFindings')
+      const resumeSpy = vi.spyOn(fixture.ctx.securityAssurance, 'resumeAssessment')
+      const cancelSpy = vi.spyOn(fixture.ctx.securityAssurance, 'cancelAssessment')
+      const exportSpy = vi.spyOn(fixture.ctx.securityAssurance, 'requestExport')
+
+      const startController = new AbortController()
+      const start = await executeTool(
+        fixture.ctx,
+        'security_assessment_start',
+        startArgs(missingRepositoryId, 'security-conformance-start-v1'),
+        root.agent,
+        root.agent,
+        startController.signal,
+      )
+      expect(start.error?.info?.code).toBe('SECURITY_NOT_FOUND')
+      expect(startSpy).toHaveBeenCalledOnce()
+      expect(startSpy.mock.calls[0]?.[2]?.signal).toBe(startController.signal)
+
+      const statusController = new AbortController()
+      const status = await executeTool(
+        fixture.ctx,
+        'security_assessment_status',
+        { assessment_id: missingAssessmentId },
+        root.agent,
+        root.agent,
+        statusController.signal,
+      )
+      expect(status.error?.info?.code).toBe('SECURITY_NOT_FOUND')
+      expect(statusSpy).toHaveBeenCalledOnce()
+      expect(statusSpy.mock.calls[0]?.[2]?.signal).toBe(statusController.signal)
+
+      const findingsController = new AbortController()
+      const findings = await executeTool(
+        fixture.ctx,
+        'security_assessment_findings',
+        { assessment_id: missingAssessmentId, limit: 20 },
+        root.agent,
+        root.agent,
+        findingsController.signal,
+      )
+      expect(findings.error?.info?.code).toBe('SECURITY_NOT_FOUND')
+      expect(findingsSpy).toHaveBeenCalledOnce()
+      expect(findingsSpy.mock.calls[0]?.[2]?.signal).toBe(findingsController.signal)
+
+      const resumeController = new AbortController()
+      const resume = await executeTool(
+        fixture.ctx,
+        'security_assessment_resume',
+        {
+          assessment_id: missingAssessmentId,
+          expected_assessment_revision: 3,
+          idempotency_key: 'security-conformance-resume-v1',
+          reason: { code: 'OPERATOR_RETRY', summary: 'Retry the interrupted assessment.' },
+        },
+        root.agent,
+        root.agent,
+        resumeController.signal,
+      )
+      expect(resume.error?.info?.code).toBe('SECURITY_NOT_FOUND')
+      expect(resumeSpy).toHaveBeenCalledOnce()
+      expect(resumeSpy.mock.calls[0]?.[2]?.signal).toBe(resumeController.signal)
+
+      const cancelController = new AbortController()
+      const cancel = await executeTool(
+        fixture.ctx,
+        'security_assessment_cancel',
+        {
+          assessment_id: missingAssessmentId,
+          expected_assessment_revision: 3,
+          idempotency_key: 'security-conformance-cancel-v1',
+          reason: { code: 'OPERATOR_REQUEST', summary: 'Cancel the current assessment.' },
+        },
+        root.agent,
+        root.agent,
+        cancelController.signal,
+      )
+      expect(cancel.error?.info?.code).toBe('SECURITY_NOT_FOUND')
+      expect(cancelSpy).toHaveBeenCalledOnce()
+      expect(cancelSpy.mock.calls[0]?.[2]?.signal).toBe(cancelController.signal)
+
+      const exportController = new AbortController()
+      const exportAssessment = await executeTool(
+        fixture.ctx,
+        'security_assessment_export',
+        {
+          assessment_id: missingAssessmentId,
+          expected_assessment_revision: 3,
+          idempotency_key: 'security-conformance-export-v1',
+          export_profile_id: 'security/export/internal-json-v1',
+          delivery_destination_id: 'delivery/local-audit',
+        },
+        root.agent,
+        root.agent,
+        exportController.signal,
+      )
+      expect(exportAssessment.error?.info?.code).toBe('SECURITY_NOT_FOUND')
+      expect(exportSpy).toHaveBeenCalledOnce()
+      expect(exportSpy.mock.calls[0]?.[2]?.signal).toBe(exportController.signal)
+    } finally {
+      vi.restoreAllMocks()
+      disposeRoot()
       await fixture.dispose()
     }
   })

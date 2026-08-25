@@ -421,6 +421,11 @@ download capabilities, timestamps, and correlation. It does not grant
 removes all six tools
 without stopping the root Security Service.
 
+The transport conformance suite locks each tool's exact model-visible input and
+top-level output fields, required-argument set, closed canonical output, single
+operation-specific Service dispatch, and unmodified live execution signal. This
+keeps future tool additions from silently widening authority or disclosure.
+
 ## Host Repository composition
 
 The optional `dsh-security-assurance/host-repository-provider` entry is a

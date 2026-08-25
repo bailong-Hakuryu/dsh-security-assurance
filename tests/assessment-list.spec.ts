@@ -103,7 +103,11 @@ describe('SecurityAssuranceService Assessment list', () => {
     expect(observed).not.toContain(laterId)
 
     const cursor = first.value.nextCursor
-    const tamperedCursor = `${cursor.slice(0, -1)}${cursor.endsWith('A') ? 'B' : 'A'}`
+    const signatureSeparator = cursor.lastIndexOf('.')
+    if (signatureSeparator < 0) throw new Error('cursor did not contain a signature')
+    const signature = cursor.slice(signatureSeparator + 1)
+    const tamperedSignature = `${signature.startsWith('A') ? 'B' : 'A'}${signature.slice(1)}`
+    const tamperedCursor = `${cursor.slice(0, signatureSeparator + 1)}${tamperedSignature}`
     await expect(ctx.securityAssurance.listAssessments(invocation, {
       schemaVersion: 1,
       limit: 2,
