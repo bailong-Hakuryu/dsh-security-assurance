@@ -3248,3 +3248,401 @@ export function evaluateReleaseConstitutionV1(
   }
   return deepFreeze(releaseConstitutionDecisionV1Schema.parse(result))
 }
+
+export const PUBLIC_SECURITY_SCORECARD_ENGINE_ID = 'security/public-scorecard/v1' as const
+
+const publicSemanticVersionSchema = z.string()
+  .regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/)
+  .max(128)
+
+const publicVersionTokenSchema = z.string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/)
+
+const publicModelDisclosureV1Schema = z.discriminatedUnion('applicability', [
+  z.strictObject({
+    applicability: z.literal('NOT_APPLICABLE'),
+    reason: z.literal('NO_MODEL_ASSISTED_EVALUATION'),
+  }),
+  z.strictObject({
+    applicability: z.literal('APPLICABLE'),
+    providerId: publicVersionTokenSchema,
+    providerVersion: publicVersionTokenSchema,
+    modelId: publicVersionTokenSchema,
+    modelVersion: publicVersionTokenSchema,
+  }),
+])
+
+export const publicSecurityScorecardRequestV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(PUBLIC_SECURITY_SCORECARD_ENGINE_ID),
+  publication: z.strictObject({
+    publishedAtEpochMs: evaluationEpochMsSchema,
+    releaseVersion: publicSemanticVersionSchema,
+    harnessTargetVersion: publicSemanticVersionSchema,
+    supportMatrixVersion: publicVersionTokenSchema,
+    policyVersion: publicVersionTokenSchema,
+    benchmarkVersion: publicVersionTokenSchema,
+    corpusVersion: publicVersionTokenSchema,
+    supportedEcosystems: z.array(publicVersionTokenSchema).min(1).max(64),
+    assessmentModes: z.array(evaluationAssessmentModeSchema).min(1).max(3),
+    profiles: z.array(publicVersionTokenSchema).min(1).max(16),
+    model: publicModelDisclosureV1Schema,
+  }),
+  releaseEvaluation: releaseConstitutionEvaluationRequestV1Schema,
+}).superRefine((value, context) => {
+  const publication = value.publication
+  if (
+    publication.publishedAtEpochMs < value.releaseEvaluation.candidate.holdoutCompletedAtEpochMs
+    || new Set(publication.supportedEcosystems).size !== publication.supportedEcosystems.length
+    || new Set(publication.assessmentModes).size !== publication.assessmentModes.length
+    || new Set(publication.profiles).size !== publication.profiles.length
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent public Scorecard publication.' })
+  }
+})
+
+export type PublicSecurityScorecardRequestV1 = z.infer<
+  typeof publicSecurityScorecardRequestV1Schema
+>
+
+export const PUBLIC_SECURITY_SCORECARD_LIMITATION_CODES = [
+  'NO_SECURITY_GUARANTEE',
+  'NO_COMPLETE_VULNERABILITY_DISCOVERY_CLAIM',
+  'OUTSIDE_DECLARED_SCOPE_UNSUPPORTED',
+  'ACTIVE_HOLDOUT_DETAILS_WITHHELD',
+  'SENSITIVE_EVIDENCE_WITHHELD',
+  'PRIVATE_VULNERABILITIES_WITHHELD',
+  'INCONCLUSIVE_BENCHMARK_STRATA',
+  'INCONCLUSIVE_EFFECTIVENESS',
+  'INCONCLUSIVE_PAIRED_COMPARISON',
+  'INCONCLUSIVE_UTILITY',
+  'NON_INFERIORITY_NOT_PROVEN',
+  'NOT_A_STABLE_RELEASE_CLAIM',
+] as const
+
+export type PublicSecurityScorecardLimitationCode =
+  typeof PUBLIC_SECURITY_SCORECARD_LIMITATION_CODES[number]
+
+const publicSecurityScorecardLimitationCodeSchema = z.enum(
+  PUBLIC_SECURITY_SCORECARD_LIMITATION_CODES,
+)
+
+const publicReleaseDecisionV1Schema = z.strictObject({
+  releaseVersion: publicSemanticVersionSchema,
+  candidateArtifactDigest: digestEnvelopeV1Schema,
+  decision: releaseConstitutionDecisionV1Schema.shape.decision,
+  reasonCodes: releaseConstitutionDecisionV1Schema.shape.reasonCodes,
+  checks: releaseConstitutionDecisionV1Schema.shape.checks,
+}).superRefine((value, context) => {
+  const expectedIds = [...RELEASE_CONSTITUTION_CHECK_IDS]
+  const actualIds = value.checks.map(item => item.checkId)
+  const expectedDecision = value.checks.some(item => item.status === 'FAILED')
+    ? 'BLOCKED'
+    : value.checks.some(item => item.status === 'INCONCLUSIVE')
+      ? 'INCONCLUSIVE'
+      : 'PROMOTE'
+  if (
+    JSON.stringify(actualIds) !== JSON.stringify(expectedIds)
+    || value.decision !== expectedDecision
+    || (value.decision === 'PROMOTE' && value.reasonCodes.length !== 0)
+    || (value.decision !== 'PROMOTE' && value.reasonCodes.length === 0)
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent public Release decision.' })
+  }
+})
+
+const publicEffectivenessMetricsV1Schema = z.strictObject({
+  conclusion: effectivenessMetricsV1Schema.shape.conclusion,
+  reasonCodes: effectivenessMetricsV1Schema.shape.reasonCodes,
+  counts: effectivenessMetricsV1Schema.shape.counts,
+  metrics: effectivenessMetricsV1Schema.shape.metrics,
+  repetitionAnalysis: effectivenessMetricsV1Schema.shape.repetitionAnalysis,
+})
+
+const publicUtilityMetricsV1Schema = z.strictObject({
+  conclusion: utilityMetricsV1Schema.shape.conclusion,
+  reasonCodes: utilityMetricsV1Schema.shape.reasonCodes,
+  validatedFindings: utilityMetricsV1Schema.shape.validatedFindings,
+  executionCostMicrounits: resourceQuantitySchema,
+  metrics: utilityMetricsV1Schema.shape.metrics,
+})
+
+const publicNonInferiorityV1Schema = z.strictObject({
+  method: nonInferiorityComparisonV1Schema.shape.method,
+  status: nonInferiorityComparisonV1Schema.shape.status,
+  reasonCodes: nonInferiorityComparisonV1Schema.shape.reasonCodes,
+  metrics: nonInferiorityComparisonV1Schema.shape.metrics,
+  mandatoryStrata: z.strictObject({
+    total: resourceQuantitySchema,
+    passed: resourceQuantitySchema,
+    failed: resourceQuantitySchema,
+    inconclusive: resourceQuantitySchema,
+  }),
+}).superRefine((value, context) => {
+  if (
+    value.mandatoryStrata.total !== value.mandatoryStrata.passed
+      + value.mandatoryStrata.failed
+      + value.mandatoryStrata.inconclusive
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent public Stratum summary.' })
+  }
+})
+
+const publicScorecardFailuresV1Schema = z.strictObject({
+  productFailureCount: resourceQuantitySchema,
+  releaseReasonCodes: releaseConstitutionDecisionV1Schema.shape.reasonCodes,
+  failedReleaseChecks: z.array(z.enum(RELEASE_CONSTITUTION_CHECK_IDS))
+    .max(RELEASE_CONSTITUTION_CHECK_IDS.length),
+  inconclusiveReleaseChecks: z.array(z.enum(RELEASE_CONSTITUTION_CHECK_IDS))
+    .max(RELEASE_CONSTITUTION_CHECK_IDS.length),
+  effectivenessReasonCodes: effectivenessMetricsV1Schema.shape.reasonCodes,
+  comparisonReasonCodes: pairedArmComparisonV1Schema.shape.reasonCodes,
+  utilityReasonCodes: utilityMetricsV1Schema.shape.reasonCodes,
+  nonInferiorityReasonCodes: nonInferiorityComparisonV1Schema.shape.reasonCodes,
+})
+
+export const publicSecurityScorecardV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(PUBLIC_SECURITY_SCORECARD_ENGINE_ID),
+  publishedAtEpochMs: evaluationEpochMsSchema,
+  release: publicReleaseDecisionV1Schema,
+  scope: z.strictObject({
+    harnessTargetVersion: publicSemanticVersionSchema,
+    supportMatrixVersion: publicVersionTokenSchema,
+    policyVersion: publicVersionTokenSchema,
+    benchmarkVersion: publicVersionTokenSchema,
+    corpusVersion: publicVersionTokenSchema,
+    supportedEcosystems: z.array(publicVersionTokenSchema).min(1).max(64),
+    assessmentModes: z.array(evaluationAssessmentModeSchema).min(1).max(3),
+    profiles: z.array(publicVersionTokenSchema).min(1).max(16),
+    model: publicModelDisclosureV1Schema,
+  }),
+  method: z.strictObject({
+    releaseConstitutionEngineId: z.literal(RELEASE_CONSTITUTION_ENGINE_ID),
+    comparisonEngineId: z.literal(PAIRED_ARM_COMPARISON_ENGINE_ID),
+    effectivenessEngineId: z.literal(EFFECTIVENESS_METRICS_ENGINE_ID),
+    utilityEngineId: z.literal(UTILITY_METRICS_ENGINE_ID),
+    uncertaintyMethod: z.literal('HOEFFDING_TWO_SIDED_V1').nullable(),
+    nonInferiorityMethod: z.literal('CONSERVATIVE_HOEFFDING_BOUNDS_V1').nullable(),
+  }),
+  corpus: effectivenessMetricsV1Schema.shape.counts,
+  budget: pairedBudgetComparisonV1Schema,
+  effectiveness: publicEffectivenessMetricsV1Schema,
+  utility: publicUtilityMetricsV1Schema.nullable(),
+  comparison: z.strictObject({
+    view: pairedArmComparisonV1Schema.shape.comparisonView,
+    conclusion: pairedArmComparisonV1Schema.shape.conclusion,
+    reasonCodes: pairedArmComparisonV1Schema.shape.reasonCodes,
+    effectiveness: pairedArmComparisonV1Schema.shape.metrics,
+    utility: pairedUtilityComparisonV1Schema.shape.metrics.nullable(),
+  }),
+  nonInferiority: publicNonInferiorityV1Schema.nullable(),
+  limitations: z.array(publicSecurityScorecardLimitationCodeSchema)
+    .min(6)
+    .max(PUBLIC_SECURITY_SCORECARD_LIMITATION_CODES.length),
+  failures: publicScorecardFailuresV1Schema,
+}).superRefine((value, context) => {
+  const failedChecks = value.release.checks
+    .filter(item => item.status === 'FAILED')
+    .map(item => item.checkId)
+  const inconclusiveChecks = value.release.checks
+    .filter(item => item.status === 'INCONCLUSIVE')
+    .map(item => item.checkId)
+  const expectedLimitations = publicScorecardLimitations({
+    decision: value.release.decision,
+    effectivenessConclusion: value.effectiveness.conclusion,
+    comparisonConclusion: value.comparison.conclusion,
+    utilityConclusion: value.utility?.conclusion ?? null,
+    nonInferiorityStatus: value.nonInferiority?.status ?? null,
+    inconclusiveStrata: value.corpus.inconclusiveStrata,
+  })
+  const expectedEcosystems = [...new Set(value.scope.supportedEcosystems)].sort()
+  const expectedModes = [...new Set(value.scope.assessmentModes)].sort()
+  const expectedProfiles = [...new Set(value.scope.profiles)].sort()
+  if (
+    JSON.stringify(value.scope.supportedEcosystems) !== JSON.stringify(expectedEcosystems)
+    || JSON.stringify(value.scope.assessmentModes) !== JSON.stringify(expectedModes)
+    || JSON.stringify(value.scope.profiles) !== JSON.stringify(expectedProfiles)
+    || JSON.stringify(value.limitations) !== JSON.stringify(expectedLimitations)
+    || value.failures.productFailureCount !== value.corpus.productFailures
+    || JSON.stringify(value.failures.releaseReasonCodes)
+      !== JSON.stringify(value.release.reasonCodes)
+    || JSON.stringify(value.failures.failedReleaseChecks) !== JSON.stringify(failedChecks)
+    || JSON.stringify(value.failures.inconclusiveReleaseChecks)
+      !== JSON.stringify(inconclusiveChecks)
+    || JSON.stringify(value.failures.effectivenessReasonCodes)
+      !== JSON.stringify(value.effectiveness.reasonCodes)
+    || JSON.stringify(value.failures.comparisonReasonCodes)
+      !== JSON.stringify(value.comparison.reasonCodes)
+    || JSON.stringify(value.failures.utilityReasonCodes)
+      !== JSON.stringify(value.utility?.reasonCodes ?? [])
+    || JSON.stringify(value.failures.nonInferiorityReasonCodes)
+      !== JSON.stringify(value.nonInferiority?.reasonCodes ?? [])
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent public Scorecard disclosure.' })
+  }
+})
+
+export type PublicSecurityScorecardV1 = z.infer<typeof publicSecurityScorecardV1Schema>
+
+/** Stable, detail-free rejection for malformed Scorecard publication input. */
+export class PublicSecurityScorecardInputError extends Error {
+  readonly code = 'INVALID_PUBLIC_SECURITY_SCORECARD_INPUT' as const
+
+  constructor() {
+    super('Publication input does not match Public Security Scorecard v1.')
+    this.name = 'PublicSecurityScorecardInputError'
+  }
+}
+
+interface PublicScorecardLimitationInput {
+  readonly decision: ReleaseConstitutionDecisionV1['decision']
+  readonly effectivenessConclusion: EffectivenessMetricsV1['conclusion']
+  readonly comparisonConclusion: PairedArmComparisonV1['conclusion']
+  readonly utilityConclusion: UtilityMetricsV1['conclusion'] | null
+  readonly nonInferiorityStatus: NonInferiorityComparisonV1['status'] | null
+  readonly inconclusiveStrata: number
+}
+
+function publicScorecardLimitations(
+  input: PublicScorecardLimitationInput,
+): PublicSecurityScorecardLimitationCode[] {
+  const limitations: PublicSecurityScorecardLimitationCode[] = [
+    'NO_SECURITY_GUARANTEE',
+    'NO_COMPLETE_VULNERABILITY_DISCOVERY_CLAIM',
+    'OUTSIDE_DECLARED_SCOPE_UNSUPPORTED',
+    'ACTIVE_HOLDOUT_DETAILS_WITHHELD',
+    'SENSITIVE_EVIDENCE_WITHHELD',
+    'PRIVATE_VULNERABILITIES_WITHHELD',
+  ]
+  if (input.inconclusiveStrata > 0) limitations.push('INCONCLUSIVE_BENCHMARK_STRATA')
+  if (input.effectivenessConclusion === 'INCONCLUSIVE') {
+    limitations.push('INCONCLUSIVE_EFFECTIVENESS')
+  }
+  if (input.comparisonConclusion === 'INCONCLUSIVE') {
+    limitations.push('INCONCLUSIVE_PAIRED_COMPARISON')
+  }
+  if (input.utilityConclusion !== 'MEASURED') limitations.push('INCONCLUSIVE_UTILITY')
+  if (input.nonInferiorityStatus !== 'PASSED') {
+    limitations.push('NON_INFERIORITY_NOT_PROVEN')
+  }
+  if (input.decision !== 'PROMOTE') limitations.push('NOT_A_STABLE_RELEASE_CLAIM')
+  return limitations
+}
+
+/** Render one deterministic, whitelist-only public View from private release Evidence. */
+export function renderPublicSecurityScorecardV1(
+  input: unknown,
+): PublicSecurityScorecardV1 {
+  const parsed = publicSecurityScorecardRequestV1Schema.safeParse(input)
+  if (!parsed.success) throw new PublicSecurityScorecardInputError()
+  const { publication, releaseEvaluation } = parsed.data
+  const releaseDecision = evaluateReleaseConstitutionV1(releaseEvaluation)
+  const paired = releaseEvaluation.candidate.pairedComparison
+  const effectiveness = paired.candidate.metrics
+  const utility = paired.utilityComparison?.candidate ?? null
+  const nonInferiority = paired.nonInferiority
+  const limitations = publicScorecardLimitations({
+    decision: releaseDecision.decision,
+    effectivenessConclusion: effectiveness.conclusion,
+    comparisonConclusion: paired.conclusion,
+    utilityConclusion: utility?.conclusion ?? null,
+    nonInferiorityStatus: nonInferiority?.status ?? null,
+    inconclusiveStrata: effectiveness.counts.inconclusiveStrata,
+  })
+  const failedReleaseChecks = releaseDecision.checks
+    .filter(item => item.status === 'FAILED')
+    .map(item => item.checkId)
+  const inconclusiveReleaseChecks = releaseDecision.checks
+    .filter(item => item.status === 'INCONCLUSIVE')
+    .map(item => item.checkId)
+  const mandatoryStrata = nonInferiority === null
+    ? null
+    : {
+        total: nonInferiority.strata.length,
+        passed: nonInferiority.strata.filter(item => item.validatedRecall.status === 'PASSED')
+          .length,
+        failed: nonInferiority.strata.filter(item => item.validatedRecall.status === 'FAILED')
+          .length,
+        inconclusive: nonInferiority.strata.filter(
+          item => item.validatedRecall.status === 'INCONCLUSIVE',
+        ).length,
+      }
+  const result: PublicSecurityScorecardV1 = {
+    schemaVersion: 1,
+    engineId: PUBLIC_SECURITY_SCORECARD_ENGINE_ID,
+    publishedAtEpochMs: publication.publishedAtEpochMs,
+    release: {
+      releaseVersion: publication.releaseVersion,
+      candidateArtifactDigest: releaseDecision.candidateArtifactDigest,
+      decision: releaseDecision.decision,
+      reasonCodes: releaseDecision.reasonCodes,
+      checks: releaseDecision.checks,
+    },
+    scope: {
+      harnessTargetVersion: publication.harnessTargetVersion,
+      supportMatrixVersion: publication.supportMatrixVersion,
+      policyVersion: publication.policyVersion,
+      benchmarkVersion: publication.benchmarkVersion,
+      corpusVersion: publication.corpusVersion,
+      supportedEcosystems: [...publication.supportedEcosystems].sort(),
+      assessmentModes: [...publication.assessmentModes].sort(),
+      profiles: [...publication.profiles].sort(),
+      model: publication.model,
+    },
+    method: {
+      releaseConstitutionEngineId: RELEASE_CONSTITUTION_ENGINE_ID,
+      comparisonEngineId: PAIRED_ARM_COMPARISON_ENGINE_ID,
+      effectivenessEngineId: EFFECTIVENESS_METRICS_ENGINE_ID,
+      utilityEngineId: UTILITY_METRICS_ENGINE_ID,
+      uncertaintyMethod: effectiveness.repetitionAnalysis?.method ?? null,
+      nonInferiorityMethod: nonInferiority?.method ?? null,
+    },
+    corpus: effectiveness.counts,
+    budget: paired.budgetComparison,
+    effectiveness: {
+      conclusion: effectiveness.conclusion,
+      reasonCodes: effectiveness.reasonCodes,
+      counts: effectiveness.counts,
+      metrics: effectiveness.metrics,
+      repetitionAnalysis: effectiveness.repetitionAnalysis,
+    },
+    utility: utility === null
+      ? null
+      : {
+          conclusion: utility.conclusion,
+          reasonCodes: utility.reasonCodes,
+          validatedFindings: utility.validatedFindings,
+          executionCostMicrounits: utility.evidence.executionCostMicrounits,
+          metrics: utility.metrics,
+        },
+    comparison: {
+      view: paired.comparisonView,
+      conclusion: paired.conclusion,
+      reasonCodes: paired.reasonCodes,
+      effectiveness: paired.metrics,
+      utility: paired.utilityComparison?.metrics ?? null,
+    },
+    nonInferiority: nonInferiority === null || mandatoryStrata === null
+      ? null
+      : {
+          method: nonInferiority.method,
+          status: nonInferiority.status,
+          reasonCodes: nonInferiority.reasonCodes,
+          metrics: nonInferiority.metrics,
+          mandatoryStrata,
+        },
+    limitations,
+    failures: {
+      productFailureCount: effectiveness.counts.productFailures,
+      releaseReasonCodes: releaseDecision.reasonCodes,
+      failedReleaseChecks,
+      inconclusiveReleaseChecks,
+      effectivenessReasonCodes: effectiveness.reasonCodes,
+      comparisonReasonCodes: paired.reasonCodes,
+      utilityReasonCodes: utility?.reasonCodes ?? [],
+      nonInferiorityReasonCodes: nonInferiority?.reasonCodes ?? [],
+    },
+  }
+  return deepFreeze(publicSecurityScorecardV1Schema.parse(result))
+}

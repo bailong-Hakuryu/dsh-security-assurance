@@ -442,8 +442,21 @@ thresholds. Any known failure returns `BLOCKED`; absent proof returns
 promotion artifacts, incomplete platform proof, and caller-authored overrides
 cannot produce `PROMOTE`.
 
-These slices are not an Effectiveness, Utility, or release claim. Scorecards and
-the Release Evidence Manifest remain separate future proof slices.
+`renderPublicSecurityScorecardV1` is the sole pure public-Scorecard interface.
+It accepts declared public version and Support Matrix metadata plus the complete
+private Release Constitution input, independently recomputes the promotion
+decision, and emits only a fixed public whitelist: exact candidate-artifact
+digest, release and method versions, supported scope, model and Provider,
+aggregate Corpus statistics, Effectiveness distributions and uncertainty,
+Utility metrics and cost, resource budgets, paired comparisons, aggregate
+non-inferiority status, known limitations, and failures. Evidence, Holdout,
+Candidate Arm, and Stratum identities; active Holdout answers; Sensitive
+Evidence; and private vulnerabilities have no output fields. Public tokens are
+path-free and bounded, stable limitation and failure codes are derived rather
+than caller-authored, and invalid or extended publication input fails closed.
+
+These slices are not an Effectiveness, Utility, or release claim. The Release
+Evidence Manifest remains a separate future proof slice.
 
 ## Model-facing Assessment operations
 

@@ -584,6 +584,39 @@ packedBlockedReleaseRequest.candidate.hardSafetyEvidence.hiddenCriticalSatisfied
 const packedReleaseBlocked = evaluation.evaluateReleaseConstitutionV1(
   packedBlockedReleaseRequest,
 )
+const packedScorecardRequest = releaseEvaluation => ({
+  schemaVersion: 1,
+  engineId: 'security/public-scorecard/v1',
+  publication: {
+    publishedAtEpochMs: 400,
+    releaseVersion: '0.1.0-rc.1',
+    harnessTargetVersion: '0.1.1-rc.2',
+    supportMatrixVersion: 'packed-support-v1',
+    policyVersion: 'packed-policy-v1',
+    benchmarkVersion: 'packed-benchmark-v1',
+    corpusVersion: 'packed-corpus-v1',
+    supportedEcosystems: ['typescript', 'node'],
+    assessmentModes: ['TARGETED', 'CHANGE', 'REPOSITORY'],
+    profiles: ['standard', 'deep'],
+    model: {
+      applicability: 'APPLICABLE',
+      providerId: 'packed-provider',
+      providerVersion: '2026.08',
+      modelId: 'packed-model',
+      modelVersion: 'v1',
+    },
+  },
+  releaseEvaluation,
+})
+const packedPublicScorecard = evaluation.renderPublicSecurityScorecardV1(
+  packedScorecardRequest(packedReleaseRequest()),
+)
+const packedBlockedScorecardRelease = packedReleaseRequest()
+packedBlockedScorecardRelease.candidate.hardSafetyEvidence.unauthorizedNetworkEgressCount = 1
+const packedBlockedScorecard = evaluation.renderPublicSecurityScorecardV1(
+  packedScorecardRequest(packedBlockedScorecardRelease),
+)
+const packedScorecardJson = JSON.stringify(packedPublicScorecard)
 if (
   evaluation.EFFECTIVENESS_METRICS_ENGINE_ID !== 'security/effectiveness-metrics/v1'
   || typeof evaluation.benchmarkStratumDefinitionV1Schema?.parse !== 'function'
@@ -605,6 +638,9 @@ if (
   || evaluation.RELEASE_CONSTITUTION_ENGINE_ID !== 'security/release-constitution/v1'
   || typeof evaluation.releaseConstitutionDecisionV1Schema?.parse !== 'function'
   || typeof evaluation.evaluateReleaseConstitutionV1 !== 'function'
+  || evaluation.PUBLIC_SECURITY_SCORECARD_ENGINE_ID !== 'security/public-scorecard/v1'
+  || typeof evaluation.publicSecurityScorecardV1Schema?.parse !== 'function'
+  || typeof evaluation.renderPublicSecurityScorecardV1 !== 'function'
   || typeof evaluation.calculatePairedArmComparisonV1 !== 'function'
   || typeof evaluation.effectivenessMetricsRequestV1Schema?.parse !== 'function'
   || typeof evaluation.effectivenessMetricsV1Schema?.parse !== 'function'
@@ -639,6 +675,16 @@ if (
   || packedReleasePromote.checks.some(check => check.status !== 'PASSED')
   || packedReleaseBlocked.decision !== 'BLOCKED'
   || !packedReleaseBlocked.reasonCodes.includes('HARD_SAFETY_FLOOR_FAILED')
+  || packedPublicScorecard.release.decision !== 'PROMOTE'
+  || packedPublicScorecard.scope.supportedEcosystems.join(',') !== 'node,typescript'
+  || packedPublicScorecard.limitations.includes('NOT_A_STABLE_RELEASE_CLAIM')
+  || packedScorecardJson.includes('packed-hard-safety-evidence')
+  || packedScorecardJson.includes('utility-candidate-arm')
+  || packedScorecardJson.includes('packed-utility-ni-plan')
+  || packedBlockedScorecard.release.decision !== 'BLOCKED'
+  || !packedBlockedScorecard.failures.failedReleaseChecks.includes(
+    'NO_UNAUTHORIZED_NETWORK_EGRESS',
+  )
 ) {
   throw new Error('packed Evaluation entry did not execute the versioned Metrics Engine')
 }

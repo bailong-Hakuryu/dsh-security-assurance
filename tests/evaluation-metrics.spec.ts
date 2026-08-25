@@ -18,11 +18,16 @@ import {
   PAIRED_ARM_COMPARISON_ENGINE_ID,
   pairedArmComparisonV1Schema,
   PairedArmComparisonInputError,
+  PUBLIC_SECURITY_SCORECARD_ENGINE_ID,
+  type PublicSecurityScorecardRequestV1,
+  publicSecurityScorecardV1Schema,
+  PublicSecurityScorecardInputError,
   RELEASE_CONSTITUTION_CHECK_IDS,
   RELEASE_CONSTITUTION_ENGINE_ID,
   type ReleaseConstitutionEvaluationRequestV1,
   releaseConstitutionDecisionV1Schema,
   ReleaseConstitutionInputError,
+  renderPublicSecurityScorecardV1,
   UTILITY_METRICS_ENGINE_ID,
   utilityMetricsV1Schema,
   UtilityMetricsInputError,
@@ -1910,6 +1915,155 @@ describe('Paired Arm Comparison Engine v1', () => {
         ...baseReleaseRequest(),
         manualOverride: 'PROMOTE',
       })).toThrow(ReleaseConstitutionInputError)
+    })
+
+    function baseScorecardRequest(): PublicSecurityScorecardRequestV1 {
+      return {
+        schemaVersion: 1,
+        engineId: PUBLIC_SECURITY_SCORECARD_ENGINE_ID,
+        publication: {
+          publishedAtEpochMs: 400,
+          releaseVersion: '0.1.0-rc.1',
+          harnessTargetVersion: '0.1.1-rc.2',
+          supportMatrixVersion: 'support-matrix-v1',
+          policyVersion: 'security-policy-v1',
+          benchmarkVersion: 'benchmark-v1',
+          corpusVersion: 'holdout-corpus-v1',
+          supportedEcosystems: ['typescript', 'node'],
+          assessmentModes: ['TARGETED', 'CHANGE', 'REPOSITORY'],
+          profiles: ['standard', 'deep'],
+          model: {
+            applicability: 'APPLICABLE',
+            providerId: 'reference-provider',
+            providerVersion: '2026.08',
+            modelId: 'reference-model',
+            modelVersion: 'v1',
+          },
+        },
+        releaseEvaluation: baseReleaseRequest(),
+      }
+    }
+
+    it('renders a complete deterministic public Scorecard through one interface', () => {
+      const result = renderPublicSecurityScorecardV1(baseScorecardRequest())
+      const reordered = baseScorecardRequest()
+      reordered.publication.supportedEcosystems.reverse()
+      reordered.publication.assessmentModes.reverse()
+      reordered.publication.profiles.reverse()
+
+      expect(PUBLIC_SECURITY_SCORECARD_ENGINE_ID).toBe('security/public-scorecard/v1')
+      expect(publicSecurityScorecardV1Schema.parse(result)).toEqual(result)
+      expect(renderPublicSecurityScorecardV1(reordered)).toEqual(result)
+      expect(result).toMatchObject({
+        release: { releaseVersion: '0.1.0-rc.1', decision: 'PROMOTE' },
+        scope: {
+          supportedEcosystems: ['node', 'typescript'],
+          assessmentModes: ['CHANGE', 'REPOSITORY', 'TARGETED'],
+          profiles: ['deep', 'standard'],
+        },
+        method: {
+          uncertaintyMethod: 'HOEFFDING_TWO_SIDED_V1',
+          nonInferiorityMethod: 'CONSERVATIVE_HOEFFDING_BOUNDS_V1',
+        },
+        budget: { status: 'MATCHED' },
+        comparison: { conclusion: 'MEASURED' },
+        nonInferiority: { status: 'PASSED' },
+      })
+      expect(result.effectiveness.repetitionAnalysis?.status).toBe('SUFFICIENT')
+      expect(result.utility?.conclusion).toBe('MEASURED')
+      expect(result.failures).toMatchObject({
+        productFailureCount: 0,
+        releaseReasonCodes: [],
+        failedReleaseChecks: [],
+        inconclusiveReleaseChecks: [],
+      })
+      expect(Object.isFrozen(result)).toBe(true)
+      expect(Object.isFrozen(result.scope)).toBe(true)
+    })
+
+    it('removes Holdout, Evidence, Arm, and Stratum identities from public output', () => {
+      const result = renderPublicSecurityScorecardV1(baseScorecardRequest())
+      const serialized = JSON.stringify(result)
+
+      for (const privateValue of [
+        'release-constitution-v1',
+        'qualification/release-constitution-v1',
+        'qualification/calibration-v1',
+        'release-evidence-set-v1',
+        'hard-safety-evidence-v1',
+        'windows-packed-proof',
+        'candidate-arm',
+        'baseline-arm',
+        'release-ni-plan',
+        'severity-high',
+      ]) {
+        expect(serialized).not.toContain(privateValue)
+      }
+      expect(serialized).not.toContain('"evidenceId"')
+      expect(serialized).not.toContain('"armId"')
+      expect(serialized).not.toContain('"stratumId"')
+      expect(serialized).not.toContain('"groundTruthManifest"')
+      expect(result.limitations).toEqual(expect.arrayContaining([
+        'ACTIVE_HOLDOUT_DETAILS_WITHHELD',
+        'SENSITIVE_EVIDENCE_WITHHELD',
+        'PRIVATE_VULNERABILITIES_WITHHELD',
+      ]))
+    })
+
+    it('publishes known release failures without publishing their private Evidence', () => {
+      const request = baseScorecardRequest()
+      request.releaseEvaluation.candidate.hardSafetyEvidence.unauthorizedNetworkEgressCount = 1
+      const result = renderPublicSecurityScorecardV1(request)
+      const serialized = JSON.stringify(result)
+
+      expect(result.release.decision).toBe('BLOCKED')
+      expect(result.failures.releaseReasonCodes).toEqual(['HARD_SAFETY_FLOOR_FAILED'])
+      expect(result.failures.failedReleaseChecks).toContain('NO_UNAUTHORIZED_NETWORK_EGRESS')
+      expect(result.limitations).toContain('NOT_A_STABLE_RELEASE_CLAIM')
+      expect(serialized).not.toContain('hard-safety-evidence-v1')
+    })
+
+    it('discloses missing proof as limitations and inconclusive checks', () => {
+      const request = baseScorecardRequest()
+      request.releaseEvaluation.candidate.hardSafetyEvidence.evidenceStatus = 'INCOMPLETE'
+      request.releaseEvaluation.candidate.hardSafetyEvidence.capabilityConformance = 'INCOMPLETE'
+      request.releaseEvaluation.candidate.platformProofs = request.releaseEvaluation.candidate
+        .platformProofs.filter(item => item.platform !== 'MACOS')
+      const result = renderPublicSecurityScorecardV1(request)
+
+      expect(result.release.decision).toBe('INCONCLUSIVE')
+      expect(result.failures.inconclusiveReleaseChecks).toContain('MACOS_PACKED_CONFORMANCE')
+      expect(result.failures.releaseReasonCodes).toEqual(['INCOMPLETE_RELEASE_EVIDENCE'])
+      expect(result.limitations).toContain('NOT_A_STABLE_RELEASE_CLAIM')
+    })
+
+    it('rejects post-dated, path-like, extended, or contradictory publication input', () => {
+      const premature = baseScorecardRequest()
+      premature.publication.publishedAtEpochMs = 299
+      expect(() => renderPublicSecurityScorecardV1(premature)).toThrow(
+        PublicSecurityScorecardInputError,
+      )
+
+      const pathLike = baseScorecardRequest()
+      pathLike.publication.corpusVersion = '../private/holdout'
+      expect(() => renderPublicSecurityScorecardV1(pathLike)).toThrow(
+        PublicSecurityScorecardInputError,
+      )
+
+      expect(() => renderPublicSecurityScorecardV1({
+        ...baseScorecardRequest(),
+        holdoutAnswers: ['private-answer'],
+      })).toThrow(PublicSecurityScorecardInputError)
+
+      const result = renderPublicSecurityScorecardV1(baseScorecardRequest())
+      expect(() => publicSecurityScorecardV1Schema.parse({
+        ...result,
+        activeHoldoutAnswers: ['private-answer'],
+      })).toThrow()
+      expect(() => publicSecurityScorecardV1Schema.parse({
+        ...result,
+        limitations: [...result.limitations, 'NOT_A_STABLE_RELEASE_CLAIM'],
+      })).toThrow()
     })
   })
 })
