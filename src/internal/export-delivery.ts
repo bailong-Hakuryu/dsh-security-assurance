@@ -41,6 +41,7 @@ import { binaryDigest, canonicalJson, sha256Hex } from './canonical.ts'
 
 export const EXPORT_ARTIFACT_LIFETIME_SECONDS = 24 * 60 * 60
 const EXPORT_DELIVERY_RETRY_DELAYS_MS = [1_000, 5_000, 30_000, 120_000] as const
+const WINDOWS_RENAME_RETRY_DELAYS_MS = [5, 10, 25, 50, 100, 200] as const
 
 const PROFILE: ExportProfileViewV1 = exportProfileViewV1Schema.parse({
   exportProfileId: INTERNAL_JSON_EXPORT_PROFILE_ID,
@@ -319,7 +320,23 @@ async function replaceRecord(root: string, record: InternalExportRecordV1): Prom
   await writeFile(temporary, canonicalJson(record), { encoding: 'utf8', flag: 'wx', mode: 0o600 })
   await chmod(temporary, 0o600)
   try {
-    await rename(temporary, recordPath(root, record.receipt.exportId))
+    const destination = recordPath(root, record.receipt.exportId)
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await rename(temporary, destination)
+        break
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        const delay = WINDOWS_RENAME_RETRY_DELAYS_MS[attempt]
+        if (
+          process.platform !== 'win32'
+          || delay === undefined
+          || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')
+        ) throw error
+        // Windows readers can briefly retain a sharing lock after readFile settles.
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
   } finally {
     await rm(temporary, { force: true })
   }

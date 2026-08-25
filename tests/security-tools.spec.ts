@@ -758,12 +758,16 @@ describe('security_assessment_export integration', () => {
       })
 
       openTurn(other)
-      const otherSession = resultValue(await executeTool(
+      const otherSessionResult = await executeTool(
         fixture.ctx,
         'security_assessment_export',
         args,
         other.agent,
-      ))
+      )
+      if (otherSessionResult.isError) {
+        throw new Error(`cross-session Export failed: ${JSON.stringify(otherSessionResult.error)}`)
+      }
+      const otherSession = resultValue(otherSessionResult)
       expect(otherSession['exportId']).not.toBe(requested['exportId'])
       expect(otherSession).toMatchObject({
         assessmentId: started.value.assessmentId,
