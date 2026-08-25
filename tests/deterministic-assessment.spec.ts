@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -51,12 +51,12 @@ async function waitUntilSealed(
 }
 
 describe('SecurityAssuranceService deterministic Assessment path', () => {
-  it('seals an honest INDETERMINATE result and serves its Bundle and self-contained Submission', async () => {
+  it('seals an honest INDETERMINATE result and performs an idempotent registered Export delivery', async () => {
     const repository = await repositoryFixture()
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-deterministic-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    let fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
     const platform = process.platform
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)
@@ -75,7 +75,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
           evidenceProtectionId: 'evidence/local-protected',
           dataEgressPolicyId: 'egress/deny-by-default',
           platform,
-          deliveryDestinationIds: [],
+          deliveryDestinationIds: ['delivery/local-audit'],
         },
       })
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
@@ -208,6 +208,120 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       expect(JSON.stringify(submission)).not.toContain(repository)
       expect(Object.isFrozen(submission)).toBe(true)
       if (submission.ok) expect(Object.isFrozen(submission.value.payload.evidence)).toBe(true)
+
+      const preview = await ctx.securityAssurance.getExport(invocation, {
+        schemaVersion: 1,
+        kind: 'PREVIEW',
+        assessmentId: started.value.assessmentId,
+        exportProfileId: 'security/export/internal-json-v1',
+        deliveryDestinationId: 'delivery/local-audit',
+      })
+      expect(preview).toMatchObject({
+        ok: true,
+        value: {
+          schemaVersion: 1,
+          kind: 'PREVIEW',
+          assessmentId: started.value.assessmentId,
+          assessmentRevision: 3,
+          profile: {
+            exportProfileId: 'security/export/internal-json-v1',
+            audience: 'INTERNAL',
+            artifactFormat: 'JSON',
+            redactions: expect.arrayContaining(['ORIGINAL_CREDENTIAL_VALUES', 'PRIVATE_STORE_PATHS']),
+          },
+          destination: {
+            deliveryDestinationId: 'delivery/local-audit',
+            kind: 'HOST_REGISTERED_LOCAL_AUDIT',
+          },
+        },
+      })
+      expect(JSON.stringify(preview)).not.toContain(dshHome)
+      expect(JSON.stringify(preview)).not.toContain(repository)
+
+      const exportRequest = {
+        schemaVersion: 1 as const,
+        idempotencyKey: 'deterministic-export-request-1',
+        assessmentId: started.value.assessmentId,
+        expectedAssessmentRevision: 3,
+        exportProfileId: 'security/export/internal-json-v1' as const,
+        deliveryDestinationId: 'delivery/local-audit',
+      }
+      const requested = await ctx.securityAssurance.requestExport(invocation, exportRequest)
+      expect(requested).toMatchObject({
+        ok: true,
+        value: {
+          operation: 'request_export',
+          assessmentId: started.value.assessmentId,
+          assessmentRevision: 3,
+          acceptedState: 'PENDING',
+          idempotencyKey: exportRequest.idempotencyKey,
+          exportId: expect.stringMatching(/^export-[0-9a-f]{64}$/u),
+        },
+      })
+      const replayed = await ctx.securityAssurance.requestExport(invocation, exportRequest)
+      expect(replayed).toEqual(requested)
+      if (!requested.ok) throw new Error(`export request failed: ${requested.error.code}`)
+
+      const delivered = await ctx.securityAssurance.getExport(invocation, {
+        schemaVersion: 1,
+        kind: 'STATUS',
+        exportId: requested.value.exportId,
+      })
+      expect(delivered).toMatchObject({
+        ok: true,
+        value: {
+          kind: 'STATUS',
+          exportId: requested.value.exportId,
+          assessmentId: started.value.assessmentId,
+          status: 'DELIVERED',
+          artifact: {
+            artifactId: `${requested.value.exportId}/artifact`,
+            digest: {
+              algorithm: 'sha256',
+              mediaType: 'application/vnd.dsh.security.export+json',
+              canonicalization: 'raw-bytes',
+              value: expect.stringMatching(/^[0-9a-f]{64}$/u),
+            },
+          },
+          accessAction: { kind: 'HOST_MANAGED', action: 'DELIVERED_TO_REGISTERED_DESTINATION' },
+          failure: null,
+        },
+      })
+      expect(JSON.stringify(delivered)).not.toContain(dshHome)
+      expect(JSON.stringify(delivered)).not.toContain(repository)
+
+      const otherPrincipal = referenceHostInvocation(ctx.securityAssurance, 'other-reference-host-operator')
+      expect(await ctx.securityAssurance.getExport(otherPrincipal, {
+        schemaVersion: 1,
+        kind: 'STATUS',
+        exportId: requested.value.exportId,
+      })).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } })
+
+      const deliveredBytes = await readFile(join(
+        dshHome,
+        'security-assurance',
+        'delivery',
+        'destinations',
+        'local-audit',
+        `${requested.value.exportId}.json`,
+      ), 'utf8')
+      expect(JSON.parse(deliveredBytes)).toMatchObject({
+        schemaVersion: 1,
+        exportProfileId: 'security/export/internal-json-v1',
+        source: { assessmentId: started.value.assessmentId, assessmentRevision: 3 },
+        submission: { schemaVersion: 1 },
+      })
+      expect(deliveredBytes).not.toContain(repository)
+
+      await fiber.dispose()
+      const restartedContext = new Context()
+      fiber = await restartedContext.plugin(SecurityAssuranceService, { dshHome })
+      const restartedInvocation = referenceHostInvocation(restartedContext.securityAssurance)
+      expect(await restartedContext.securityAssurance.getExport(restartedInvocation, {
+        schemaVersion: 1,
+        kind: 'STATUS',
+        exportId: requested.value.exportId,
+      })).toEqual(delivered)
     } finally {
       await fiber.dispose()
     }

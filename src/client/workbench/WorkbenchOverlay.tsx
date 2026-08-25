@@ -12,6 +12,7 @@ import type {
   WorkbenchAssessmentCommandReasonV1,
   WorkbenchAssessmentCommandStateV1,
   WorkbenchEvidenceStateV1,
+  WorkbenchExportStateV1,
   WorkbenchFindingsStateV1,
   WorkbenchRiskDecisionSubmissionStateV1,
   WorkbenchRiskDecisionSubmissionV1,
@@ -57,6 +58,8 @@ export interface WorkbenchOverlayInjected {
   readonly openBundle: () => void
   readonly openRepositories: () => void
   readonly openRuntimeHealth: () => void
+  readonly previewExport: (deliveryDestinationId: string) => void
+  readonly requestExport: () => void
   readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
   readonly refreshRuntimeHealth: () => void
   readonly resumeAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
@@ -94,6 +97,8 @@ export function WorkbenchOverlay({
   openBundle,
   openRepositories,
   openRuntimeHealth,
+  previewExport,
+  requestExport,
   recordRiskDecision,
   refreshRuntimeHealth,
   resumeAssessment,
@@ -206,7 +211,10 @@ export function WorkbenchOverlay({
             <BundleExportView
               manifest={state.manifest}
               deliveryDestinationIds={state.deliveryDestinationIds}
+              exportState={state.export}
               backToAssessmentDetail={backToAssessmentDetail}
+              previewExport={previewExport}
+              requestExport={requestExport}
               t={t}
             />
           )}
@@ -827,12 +835,18 @@ function MessageState({
 function BundleExportView({
   manifest,
   deliveryDestinationIds,
+  exportState,
   backToAssessmentDetail,
+  previewExport,
+  requestExport,
   t,
 }: {
   readonly manifest: BundleManifestV1
   readonly deliveryDestinationIds: readonly string[]
+  readonly exportState: WorkbenchExportStateV1
   readonly backToAssessmentDetail: () => void
+  readonly previewExport: (deliveryDestinationId: string) => void
+  readonly requestExport: () => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
   return (
@@ -903,10 +917,96 @@ function BundleExportView({
           ? <p className="dsh-security-muted">{t('exports.noDestinations')}</p>
           : (
               <ul className="dsh-security-export-list dsh-security-export-list--destinations">
-                {deliveryDestinationIds.map(destinationId => <li key={destinationId}><code>{destinationId}</code></li>)}
+                {deliveryDestinationIds.map(destinationId => (
+                  <li key={destinationId}>
+                    <code>{destinationId}</code>
+                    <button
+                      type="button"
+                      className="dsh-security-secondary-action"
+                      disabled={exportState.kind === 'PREVIEW_LOADING' || exportState.kind === 'REQUESTING'}
+                      onClick={() => { previewExport(destinationId) }}
+                    >
+                      {t('exports.previewAction')}
+                    </button>
+                  </li>
+                ))}
               </ul>
             )}
       </section>
+      {exportState.kind === 'PREVIEW_LOADING' && (
+        <MessageState
+          title={t('exports.previewLoadingTitle')}
+          body={t('exports.previewLoadingBody')}
+          detail={exportState.deliveryDestinationId}
+          role="status"
+        />
+      )}
+      {(exportState.kind === 'PREVIEW_READY'
+        || exportState.kind === 'REQUESTING'
+        || exportState.kind === 'STATUS_READY') && (
+        <section className="dsh-security-section" aria-labelledby="dsh-security-export-preview-title">
+          <div className="dsh-security-section__header">
+            <h2 id="dsh-security-export-preview-title">{t('exports.previewTitle')}</h2>
+            <MachineBadge value={exportState.kind === 'STATUS_READY' ? exportState.status.status : 'PREVIEW'} />
+          </div>
+          <p className="dsh-security-readonly-note">{t('exports.previewBoundary')}</p>
+          <dl className="dsh-security-facts">
+            <Fact label={t('exports.profile')} value={exportState.preview.profile.exportProfileId} machine />
+            <Fact label={t('exports.audience')} value={exportState.preview.profile.audience} machine />
+            <Fact label={t('exports.format')} value={exportState.preview.profile.artifactFormat} machine />
+            <Fact label={t('exports.mediaType')} value={exportState.preview.profile.mediaType} machine />
+            <Fact
+              label={t('exports.destination')}
+              value={exportState.preview.destination.deliveryDestinationId}
+              machine
+            />
+            <Fact
+              label={t('exports.expiryWindow')}
+              value={`${exportState.preview.expiresAfterSeconds} s`}
+            />
+          </dl>
+          <PreflightLimitations
+            title={t('exports.includedCategories')}
+            values={exportState.preview.profile.includedCategories}
+            empty={t('value.notAvailable')}
+          />
+          <PreflightLimitations
+            title={t('exports.redactions')}
+            values={exportState.preview.profile.redactions}
+            empty={t('value.notAvailable')}
+          />
+          <PreflightLimitations
+            title={t('exports.warnings')}
+            values={exportState.preview.warnings}
+            empty={t('value.notAvailable')}
+          />
+          {exportState.kind !== 'STATUS_READY' && (
+            <button
+              type="button"
+              className="dsh-security-primary-action"
+              disabled={exportState.kind === 'REQUESTING'}
+              onClick={requestExport}
+            >
+              {exportState.kind === 'REQUESTING' ? t('exports.requesting') : t('exports.requestAction')}
+            </button>
+          )}
+          {exportState.kind === 'STATUS_READY' && (
+            <dl className="dsh-security-facts">
+              <Fact label={t('exports.exportId')} value={exportState.status.exportId} machine />
+              <Fact label={t('exports.status')} value={exportState.status.status} machine />
+              <Fact label={t('exports.receiptCorrelation')} value={exportState.receipt.correlationId} machine />
+              <Fact label={t('exports.acceptedAt')} value={exportState.receipt.acceptedAt} />
+              <Fact label={t('exports.expiresAt')} value={exportState.status.expiresAt ?? t('value.notAvailable')} />
+              <Fact
+                label={t('exports.artifactDigest')}
+                value={exportState.status.artifact?.digest.value ?? t('value.notAvailable')}
+                machine={exportState.status.artifact !== null}
+              />
+              <Fact label={t('exports.accessAction')} value={exportState.status.accessAction.kind} machine />
+            </dl>
+          )}
+        </section>
+      )}
     </section>
   )
 }

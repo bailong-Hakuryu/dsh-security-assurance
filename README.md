@@ -212,8 +212,10 @@ Controller, Runtime Health, Repositories and digest-bound New Assessment flow, r
 revision-bound Finding Detail navigation, bilingual metadata-first Evidence,
 explicit expiring bounded-content disclosure, a governed Risk Decision form
 with Critical Dual Authority completion, and a read-only SEALED Bundle/Export
-readiness view are implemented. Export Preview, `requestExport`, `getExport`,
-artifact delivery, and download capabilities remain unimplemented. This repository ships no production external
+readiness view are implemented. Service-derived Export Preview, `requestExport`,
+owner-bound `getExport` status, and durable delivery through the frozen
+`delivery/local-audit` adapter are also implemented. Browser download
+capabilities remain unimplemented. This repository ships no production external
 Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -247,6 +249,8 @@ sole business Interface at `ctx.securityAssurance`. Implemented operations are:
 - `waitForAssessmentRevision`
 - `getBundleManifest`
 - `getAssuranceSubmission`
+- `requestExport`
+- `getExport`
 
 Local Host composition additionally has the synchronous
 `registerAnalyzer(descriptor, factory)` and
@@ -456,16 +460,24 @@ the result only when Assessment, revision, Verdict, Seal, Repository ID, and
 Repository revision match the retained Service Snapshot. The view exposes
 canonical record identities, schemas, classifications, digests, omissions, and
 stable registered Delivery Destination IDs, but no private path, Bundle bytes,
-credential, browser-generated report, Export Profile, download action, or
-delivery status. Those actions require the not-yet-implemented Service-owned
-Export Preview and durable Delivery operations.
+credential, or browser-generated report. From one exact frozen destination the
+Controller may request the fixed `security/export/internal-json-v1` Preview,
+which is entirely Service-derived and explicitly names included categories,
+mandatory redactions, warnings, audience, format, media type, destination, and
+expiry. A matching Preview can be submitted with a fresh idempotency identity;
+the browser accepts only a bound Receipt and owner-bound `getExport` status. The
+current local-audit adapter writes a digest-bound artifact beneath the private
+Service home and exposes only `HOST_MANAGED` access metadata to the browser.
+Artifact paths, bytes, credentials, and direct download capabilities are never
+returned through the Workbench contract.
 
 The Client entry also registers two additive Harness UI contributions. A
 launcher in `sidebar.footer.action` opens a frame-wide dialog in
 `shell.overlay`; neither replaces a single-owner Host shell slot. The overlay
 subscribes to the Controller through the Slot renderer's observable seam and
 renders `CLOSED`, `SELECTION_LOADING`, `SELECTION_READY`,
-`SELECTION_LOADING_MORE`, Runtime Health, Bundle/Export readiness,
+`SELECTION_LOADING_MORE`, Runtime Health, Bundle/Export readiness, Export
+Preview/request/status,
 Repository/Catalog/Preflight/Wizard states, `LOADING`,
 `READY`, and `FAILED` without duplicating
 Remote, polling, authorization, or revision logic. `READY` shows canonical machine IDs

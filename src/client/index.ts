@@ -25,6 +25,9 @@ import type {
   AssessmentSnapshotV1,
   BundleManifestV1,
   DigestEnvelopeV1,
+  ExportPreviewV1,
+  ExportRequestReceiptV1,
+  ExportStatusV1,
   FindingDetailViewV1,
   FindingListPageV1,
   FindingSummaryV1,
@@ -38,6 +41,7 @@ import type {
   StartAssessmentSelectionV1,
   StartPreflightV1,
 } from '../contracts.ts'
+import { INTERNAL_JSON_EXPORT_PROFILE_ID } from '../contracts.ts'
 import type {
   WorkbenchAuthorityContextId,
   WorkbenchEvidenceDisclosureViewV1,
@@ -120,6 +124,19 @@ export type WorkbenchAssessmentCommandStateV1 =
 export type WorkbenchStartSubmissionStateV1 =
   | { readonly kind: 'IDLE' }
   | { readonly kind: 'SUBMITTING' }
+
+/** Transient Service-owned Export Preview, Receipt, and Delivery status. */
+export type WorkbenchExportStateV1 =
+  | { readonly kind: 'IDLE' }
+  | { readonly kind: 'PREVIEW_LOADING'; readonly deliveryDestinationId: string }
+  | { readonly kind: 'PREVIEW_READY'; readonly preview: ExportPreviewV1 }
+  | { readonly kind: 'REQUESTING'; readonly preview: ExportPreviewV1 }
+  | {
+      readonly kind: 'STATUS_READY'
+      readonly preview: ExportPreviewV1
+      readonly receipt: ExportRequestReceiptV1
+      readonly status: ExportStatusV1
+    }
 
 /** Non-sensitive command progress retained beside one exact Finding revision. */
 export type WorkbenchRiskDecisionSubmissionStateV1 =
@@ -205,6 +222,7 @@ export type SecurityAssuranceWorkbenchStateV1 =
     readonly assessmentId: AssessmentId
     readonly manifest: BundleManifestV1
     readonly deliveryDestinationIds: readonly string[]
+    readonly export: WorkbenchExportStateV1
   }
   | { readonly kind: 'REPOSITORIES_LOADING' }
   | {
@@ -263,6 +281,7 @@ const EVIDENCE_NOT_LOADED: WorkbenchEvidenceStateV1 = Object.freeze({ kind: 'NOT
 const RISK_DECISION_IDLE: WorkbenchRiskDecisionSubmissionStateV1 = Object.freeze({ kind: 'IDLE' })
 const ASSESSMENT_COMMAND_IDLE: WorkbenchAssessmentCommandStateV1 = Object.freeze({ kind: 'IDLE' })
 const START_SUBMISSION_IDLE: WorkbenchStartSubmissionStateV1 = Object.freeze({ kind: 'IDLE' })
+const EXPORT_IDLE: WorkbenchExportStateV1 = Object.freeze({ kind: 'IDLE' })
 const LONG_POLL_TIMEOUT_MS = 25_000
 
 /**
@@ -485,6 +504,172 @@ export class SecurityAssuranceWorkbenchController extends Service {
       assessmentId,
       manifest,
       deliveryDestinationIds: Object.freeze([...repository.bindings.deliveryDestinationIds]),
+      export: EXPORT_IDLE,
+    })
+    this.publish(ready)
+    return ready
+  }
+
+  /** Ask the Service to preview one exact frozen Profile and registered Destination. */
+  async previewExport(deliveryDestinationId: string): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (session === undefined || current.kind !== 'BUNDLE_READY') return current
+    if (!current.deliveryDestinationIds.includes(deliveryDestinationId)) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'EXPORT_DESTINATION_NOT_REGISTERED',
+        message: 'The Export destination is not one of the frozen Repository bindings.',
+        retryable: false,
+      })
+    }
+    this.publish(Object.freeze({
+      ...current,
+      export: Object.freeze({ kind: 'PREVIEW_LOADING' as const, deliveryDestinationId }),
+    }))
+    let result: RemoteResult<SecurityResult<import('../contracts.ts').ExportViewV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.getExport(
+        session.contextId,
+        {
+          schemaVersion: 1,
+          kind: 'PREVIEW',
+          assessmentId: current.assessmentId,
+          exportProfileId: INTERNAL_JSON_EXPORT_PROFILE_ID,
+          deliveryDestinationId,
+        },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (
+      !this.isActive(session)
+      || this.state.kind !== 'BUNDLE_READY'
+      || this.state.export.kind !== 'PREVIEW_LOADING'
+      || this.state.export.deliveryDestinationId !== deliveryDestinationId
+    ) return this.state
+    const view = this.readRemoteResult(session, result)
+    if (view === undefined) return this.state
+    if (
+      view.kind !== 'PREVIEW'
+      || view.assessmentId !== current.assessmentId
+      || view.assessmentRevision !== current.manifest.assessmentRevision
+      || view.sealId !== current.manifest.seal.sealId
+      || view.profile.exportProfileId !== INTERNAL_JSON_EXPORT_PROFILE_ID
+      || view.destination.deliveryDestinationId !== deliveryDestinationId
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'EXPORT_PREVIEW_PROTOCOL_VIOLATION',
+        message: 'The Export Preview does not match the retained Bundle and registered Destination.',
+        retryable: false,
+      })
+    }
+    const ready = Object.freeze({
+      ...current,
+      export: Object.freeze({ kind: 'PREVIEW_READY' as const, preview: view }),
+    })
+    this.publish(ready)
+    return ready
+  }
+
+  /** Submit one exact Service preview, then observe its owner-bound durable Delivery status. */
+  async requestExport(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'BUNDLE_READY'
+      || current.export.kind !== 'PREVIEW_READY'
+    ) return current
+    const preview = current.export.preview
+    let idempotencyKey: string
+    try {
+      idempotencyKey = nextExportIdempotencyKey()
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    this.publish(Object.freeze({
+      ...current,
+      export: Object.freeze({ kind: 'REQUESTING' as const, preview }),
+    }))
+    let receiptResult: RemoteResult<SecurityResult<ExportRequestReceiptV1>>
+    try {
+      receiptResult = await this.ownerCtx.remote.securityAssuranceWorkbench.requestExport(
+        session.contextId,
+        {
+          schemaVersion: 1,
+          idempotencyKey,
+          assessmentId: current.assessmentId,
+          expectedAssessmentRevision: current.manifest.assessmentRevision,
+          exportProfileId: preview.profile.exportProfileId,
+          deliveryDestinationId: preview.destination.deliveryDestinationId,
+        },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (
+      !this.isActive(session)
+      || this.state.kind !== 'BUNDLE_READY'
+      || this.state.export.kind !== 'REQUESTING'
+      || this.state.export.preview !== preview
+    ) return this.state
+    const receipt = this.readRemoteResult(session, receiptResult)
+    if (receipt === undefined) return this.state
+    if (
+      receipt.operation !== 'request_export'
+      || receipt.assessmentId !== current.assessmentId
+      || receipt.assessmentRevision !== current.manifest.assessmentRevision
+      || receipt.idempotencyKey !== idempotencyKey
+      || receipt.acceptedState !== 'PENDING'
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'EXPORT_RECEIPT_PROTOCOL_VIOLATION',
+        message: 'The Export Receipt does not match the submitted Preview.',
+        retryable: false,
+      })
+    }
+
+    let statusResult: RemoteResult<SecurityResult<import('../contracts.ts').ExportViewV1>>
+    try {
+      statusResult = await this.ownerCtx.remote.securityAssuranceWorkbench.getExport(
+        session.contextId,
+        { schemaVersion: 1, kind: 'STATUS', exportId: receipt.exportId },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (
+      !this.isActive(session)
+      || this.state.kind !== 'BUNDLE_READY'
+      || this.state.export.kind !== 'REQUESTING'
+      || this.state.export.preview !== preview
+    ) return this.state
+    const status = this.readRemoteResult(session, statusResult)
+    if (status === undefined) return this.state
+    if (
+      status.kind !== 'STATUS'
+      || status.exportId !== receipt.exportId
+      || status.assessmentId !== current.assessmentId
+      || status.assessmentRevision !== current.manifest.assessmentRevision
+      || status.profile.exportProfileId !== preview.profile.exportProfileId
+      || status.destination.deliveryDestinationId !== preview.destination.deliveryDestinationId
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'EXPORT_STATUS_PROTOCOL_VIOLATION',
+        message: 'The Export status does not match the accepted Receipt and Preview.',
+        retryable: false,
+      })
+    }
+    const ready = Object.freeze({
+      ...current,
+      export: Object.freeze({ kind: 'STATUS_READY' as const, preview, receipt, status }),
     })
     this.publish(ready)
     return ready
@@ -2018,6 +2203,13 @@ function nextRiskDecisionIdempotencyKey(): string {
   return `workbench-risk-decision:${globalThis.crypto.randomUUID()}`
 }
 
+function nextExportIdempotencyKey(): string {
+  if (typeof globalThis.crypto?.randomUUID !== 'function') {
+    throw new Error('The browser cannot generate an Export idempotency identity.')
+  }
+  return `workbench-export:${globalThis.crypto.randomUUID()}`
+}
+
 function normalizeAssessmentCommandReason(
   reason: WorkbenchAssessmentCommandReasonV1,
 ): WorkbenchAssessmentCommandReasonV1 {
@@ -2159,8 +2351,10 @@ function installWorkbenchUi(
         openBundle: () => { void controller.openBundle() },
         openRepositories: () => { void controller.openRepositories() },
         openRuntimeHealth: () => { void controller.openRuntimeHealth() },
+        previewExport: deliveryDestinationId => { void controller.previewExport(deliveryDestinationId) },
         recordRiskDecision: submission => { void controller.recordRiskDecision(submission) },
         refreshRuntimeHealth: () => { void controller.refreshRuntimeHealth() },
+        requestExport: () => { void controller.requestExport() },
         resumeAssessment: reason => { void controller.resumeAssessment(reason) },
         selectAssessment: assessmentId => { void controller.selectAssessment(assessmentId) },
         selectRepository: repositoryId => { void controller.selectRepository(repositoryId) },

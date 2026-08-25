@@ -14,6 +14,8 @@ import type {
   BundleManifestV1,
   DigestEnvelopeV1,
   EvidenceViewV1,
+  ExportRequestReceiptV1,
+  ExportViewV1,
   FindingDetailViewV1,
   FindingListPageV1,
   GetCatalogRequest,
@@ -22,11 +24,13 @@ import type {
   GetAssessmentRequest,
   GetRepositoryRequest,
   GetFindingRequest,
+  GetExportRequest,
   ListFindingsRequest,
   ListAssessmentsRequest,
   ListRepositoriesRequest,
   CancelAssessmentRequest,
   RecordRiskDecisionRequest,
+  RequestExportRequest,
   ResumeAssessmentRequest,
   RiskDecisionReceiptV1,
   RepositoryListSnapshotV1,
@@ -63,6 +67,8 @@ export type WorkbenchSecurityPermissionV1 =
   | 'assessment:cancel'
   | 'evidence:disclose:validation-review'
   | 'assurance-submission:read'
+  | 'export:request'
+  | 'export:read'
   | 'risk:decide'
   | 'risk:break-glass'
 
@@ -275,6 +281,34 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
     signal: AbortSignal,
   ): Promise<SecurityResult<BundleManifestV1>> {
     return this.ctx.securityAssurance.getBundleManifest(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
+  }
+
+  /** Preview a Service-owned Export selection or read its durable Delivery status. */
+  @Remote
+  getExport(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: GetExportRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<ExportViewV1>> {
+    return this.ctx.securityAssurance.getExport(
+      securityAssuranceWorkbenchContext,
+      request,
+      { signal },
+    )
+  }
+
+  /** Request one idempotent registered-destination Export through current Host authority. */
+  @Remote
+  requestExport(
+    securityAssuranceWorkbenchContext: SecurityInvocation,
+    request: RequestExportRequest,
+    signal: AbortSignal,
+  ): Promise<SecurityResult<ExportRequestReceiptV1>> {
+    return this.ctx.securityAssurance.requestExport(
       securityAssuranceWorkbenchContext,
       request,
       { signal },

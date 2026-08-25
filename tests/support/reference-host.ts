@@ -14,6 +14,8 @@ const fullReferenceHostPermissions = [
   'assessment:cancel',
   'evidence:disclose:validation-review',
   'assurance-submission:read',
+  'export:request',
+  'export:read',
   'risk:decide',
   'risk:break-glass',
 ] as const satisfies readonly SecurityPermission[]

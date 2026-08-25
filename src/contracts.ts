@@ -1763,6 +1763,235 @@ export const bundleManifestV1Schema: z.ZodType<BundleManifestV1> = z.strictObjec
   digest: digestEnvelopeV1Schema,
 })
 
+export const INTERNAL_JSON_EXPORT_PROFILE_ID = 'security/export/internal-json-v1' as const
+export const LOCAL_AUDIT_DELIVERY_DESTINATION_ID = 'delivery/local-audit' as const
+
+export const exportIdSchema = z.string().regex(/^export-[0-9a-f]{64}$/)
+export type ExportId = z.infer<typeof exportIdSchema>
+
+export const exportProfileIdV1Schema = z.literal(INTERNAL_JSON_EXPORT_PROFILE_ID)
+export type ExportProfileIdV1 = z.infer<typeof exportProfileIdV1Schema>
+
+export interface ExportProfileViewV1 {
+  readonly exportProfileId: ExportProfileIdV1
+  readonly audience: 'INTERNAL'
+  readonly artifactFormat: 'JSON'
+  readonly mediaType: 'application/vnd.dsh.security.export+json'
+  readonly includedCategories: readonly (
+    | 'SUBJECT'
+    | 'POLICY'
+    | 'COVERAGE'
+    | 'FINDINGS'
+    | 'RISK_DECISIONS'
+    | 'EVIDENCE'
+    | 'PROVENANCE'
+    | 'SEAL'
+  )[]
+  readonly redactions: readonly (
+    | 'ORIGINAL_CREDENTIAL_VALUES'
+    | 'HOST_CREDENTIALS'
+    | 'PRIVATE_STORE_PATHS'
+  )[]
+}
+
+export const exportProfileViewV1Schema: z.ZodType<ExportProfileViewV1> = z.strictObject({
+  exportProfileId: exportProfileIdV1Schema,
+  audience: z.literal('INTERNAL'),
+  artifactFormat: z.literal('JSON'),
+  mediaType: z.literal('application/vnd.dsh.security.export+json'),
+  includedCategories: z.array(z.enum([
+    'SUBJECT',
+    'POLICY',
+    'COVERAGE',
+    'FINDINGS',
+    'RISK_DECISIONS',
+    'EVIDENCE',
+    'PROVENANCE',
+    'SEAL',
+  ])).min(1).max(16),
+  redactions: z.array(z.enum([
+    'ORIGINAL_CREDENTIAL_VALUES',
+    'HOST_CREDENTIALS',
+    'PRIVATE_STORE_PATHS',
+  ])).min(1).max(16),
+})
+
+export interface ExportDestinationViewV1 {
+  readonly deliveryDestinationId: typeof LOCAL_AUDIT_DELIVERY_DESTINATION_ID
+  readonly kind: 'HOST_REGISTERED_LOCAL_AUDIT'
+  readonly summary: string
+}
+
+export const exportDestinationViewV1Schema: z.ZodType<ExportDestinationViewV1> = z.strictObject({
+  deliveryDestinationId: z.literal(LOCAL_AUDIT_DELIVERY_DESTINATION_ID),
+  kind: z.literal('HOST_REGISTERED_LOCAL_AUDIT'),
+  summary: z.string().min(1).max(256),
+})
+
+export interface ExportPreviewV1 {
+  readonly schemaVersion: 1
+  readonly kind: 'PREVIEW'
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly sealId: string
+  readonly profile: ExportProfileViewV1
+  readonly destination: ExportDestinationViewV1
+  readonly expiresAfterSeconds: number
+  readonly warnings: readonly string[]
+}
+
+export const exportPreviewV1Schema: z.ZodType<ExportPreviewV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  kind: z.literal('PREVIEW'),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  sealId: boundedBindingId,
+  profile: exportProfileViewV1Schema,
+  destination: exportDestinationViewV1Schema,
+  expiresAfterSeconds: z.number().int().min(60).max(31_536_000),
+  warnings: z.array(z.string().min(1).max(512)).max(16),
+})
+
+export interface GetExportPreviewRequest {
+  readonly schemaVersion: 1
+  readonly kind: 'PREVIEW'
+  readonly assessmentId: AssessmentId
+  readonly exportProfileId: ExportProfileIdV1
+  readonly deliveryDestinationId: string
+}
+
+export interface GetExportStatusRequest {
+  readonly schemaVersion: 1
+  readonly kind: 'STATUS'
+  readonly exportId: ExportId
+}
+
+export type GetExportRequest = GetExportPreviewRequest | GetExportStatusRequest
+
+export const getExportRequestSchema: z.ZodType<GetExportRequest> = z.discriminatedUnion('kind', [
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    kind: z.literal('PREVIEW'),
+    assessmentId: assessmentIdSchema,
+    exportProfileId: exportProfileIdV1Schema,
+    deliveryDestinationId: boundedBindingId,
+  }),
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    kind: z.literal('STATUS'),
+    exportId: exportIdSchema,
+  }),
+])
+
+export interface RequestExportRequest {
+  readonly schemaVersion: 1
+  readonly idempotencyKey: string
+  readonly assessmentId: AssessmentId
+  readonly expectedAssessmentRevision: number
+  readonly exportProfileId: ExportProfileIdV1
+  readonly deliveryDestinationId: string
+}
+
+export const requestExportRequestSchema: z.ZodType<RequestExportRequest> = z.strictObject({
+  schemaVersion: z.literal(1),
+  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+  assessmentId: assessmentIdSchema,
+  expectedAssessmentRevision: z.number().int().positive(),
+  exportProfileId: exportProfileIdV1Schema,
+  deliveryDestinationId: boundedBindingId,
+})
+
+export interface ExportRequestReceiptV1 {
+  readonly schemaVersion: 1
+  readonly operation: 'request_export'
+  readonly exportId: ExportId
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly idempotencyKey: string
+  readonly acceptedState: 'PENDING'
+  readonly acceptedAt: string
+  readonly correlationId: string
+}
+
+export const exportRequestReceiptV1Schema: z.ZodType<ExportRequestReceiptV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  operation: z.literal('request_export'),
+  exportId: exportIdSchema,
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  idempotencyKey: z.string().min(1).max(128),
+  acceptedState: z.literal('PENDING'),
+  acceptedAt: z.iso.datetime({ offset: true }),
+  correlationId: z.string().regex(/^sec-[0-9a-f-]{36}$/),
+})
+
+export type ExportDeliveryStatusV1 = 'PENDING' | 'DELIVERED' | 'FAILED' | 'EXPIRED'
+
+export interface ExportStatusV1 {
+  readonly schemaVersion: 1
+  readonly kind: 'STATUS'
+  readonly exportId: ExportId
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly status: ExportDeliveryStatusV1
+  readonly profile: ExportProfileViewV1
+  readonly destination: ExportDestinationViewV1
+  readonly artifact: null | {
+    readonly artifactId: string
+    readonly digest: DigestEnvelopeV1
+  }
+  readonly expiresAt: string | null
+  readonly accessAction:
+    | { readonly kind: 'NONE'; readonly reason: 'DELIVERY_PENDING' | 'DELIVERY_FAILED' | 'ARTIFACT_EXPIRED' }
+    | { readonly kind: 'HOST_MANAGED'; readonly action: 'DELIVERED_TO_REGISTERED_DESTINATION' }
+  readonly failure: null | { readonly code: 'ARTIFACT_DELIVERY_FAILED' }
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export const exportStatusV1Schema: z.ZodType<ExportStatusV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  kind: z.literal('STATUS'),
+  exportId: exportIdSchema,
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  status: z.enum(['PENDING', 'DELIVERED', 'FAILED', 'EXPIRED']),
+  profile: exportProfileViewV1Schema,
+  destination: exportDestinationViewV1Schema,
+  artifact: z.strictObject({
+    artifactId: boundedBindingId,
+    digest: digestEnvelopeV1Schema,
+  }).nullable(),
+  expiresAt: z.iso.datetime({ offset: true }).nullable(),
+  accessAction: z.discriminatedUnion('kind', [
+    z.strictObject({
+      kind: z.literal('NONE'),
+      reason: z.enum(['DELIVERY_PENDING', 'DELIVERY_FAILED', 'ARTIFACT_EXPIRED']),
+    }),
+    z.strictObject({
+      kind: z.literal('HOST_MANAGED'),
+      action: z.literal('DELIVERED_TO_REGISTERED_DESTINATION'),
+    }),
+  ]),
+  failure: z.strictObject({ code: z.literal('ARTIFACT_DELIVERY_FAILED') }).nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+}).superRefine((view, context) => {
+  if ((view.status === 'DELIVERED') !== (view.artifact !== null)) {
+    context.addIssue({ code: 'custom', path: ['artifact'], message: 'only a delivered Export has an artifact' })
+  }
+  if ((view.status === 'FAILED') !== (view.failure !== null)) {
+    context.addIssue({ code: 'custom', path: ['failure'], message: 'failure exists exactly for failed delivery' })
+  }
+})
+
+export type ExportViewV1 = ExportPreviewV1 | ExportStatusV1
+
+export const exportViewV1Schema: z.ZodType<ExportViewV1> = z.union([
+  exportPreviewV1Schema,
+  exportStatusV1Schema,
+])
+
 export const securitySubmissionJsonV1Schema = z.json()
 export type SecuritySubmissionJsonV1 = z.infer<typeof securitySubmissionJsonV1Schema>
 
@@ -1997,6 +2226,18 @@ export const assessmentRevisionSignalResultSchema: z.ZodType<SecurityResult<Asse
 export const bundleManifestResultSchema: z.ZodType<SecurityResult<BundleManifestV1>> =
   z.discriminatedUnion('ok', [
     z.strictObject({ ok: z.literal(true), value: bundleManifestV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
+
+export const exportRequestReceiptResultSchema: z.ZodType<SecurityResult<ExportRequestReceiptV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: exportRequestReceiptV1Schema }),
+    z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
+  ])
+
+export const exportViewResultSchema: z.ZodType<SecurityResult<ExportViewV1>> =
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), value: exportViewV1Schema }),
     z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
   ])
 

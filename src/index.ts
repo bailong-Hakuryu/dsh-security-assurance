@@ -11,6 +11,7 @@ import {
   getAssessmentRequestSchema,
   getBundleManifestRequestSchema,
   getEvidenceViewRequestSchema,
+  getExportRequestSchema,
   getFindingRequestSchema,
   getCatalogRequestSchema,
   getRepositoryRequestSchema,
@@ -21,6 +22,7 @@ import {
   repositoryIdSchema,
   registerRepositoryRequestSchema,
   recordRiskDecisionRequestSchema,
+  requestExportRequestSchema,
   resumeAssessmentRequestSchema,
   startAssessmentRequestSchema,
   updateRepositoryRequestSchema,
@@ -53,12 +55,15 @@ import type {
   GetAssessmentRequest,
   GetBundleManifestRequest,
   GetEvidenceViewRequest,
+  GetExportRequest,
   GetFindingRequest,
   GetCatalogRequest,
   GetHealthRequest,
   GetRepositoryRequest,
   InvocationOptions,
   EvidenceViewV1,
+  ExportRequestReceiptV1,
+  ExportViewV1,
   FindingDetailViewV1,
   FindingListPageV1,
   ListFindingsRequest,
@@ -67,6 +72,7 @@ import type {
   PublicSecurityErrorCode,
   RegisterRepositoryRequest,
   RecordRiskDecisionRequest,
+  RequestExportRequest,
   ResumeAssessmentRequest,
   RepositoryCommandReceiptV1,
   RepositoryListSnapshotV1,
@@ -109,6 +115,11 @@ import {
   EvidenceViewModule,
   EvidenceViewNotFoundError,
 } from './internal/evidence-view.ts'
+import {
+  buildExportPreview,
+  ExportDeliveryError,
+  ExportDeliveryModule,
+} from './internal/export-delivery.ts'
 import {
   FindingQueryCursorError,
   FindingQueryModule,
@@ -292,6 +303,7 @@ export class SecurityAssuranceService extends Service {
   private readonly findingQueries = new FindingQueryModule()
   private readonly assessmentLists = new AssessmentListQueryModule()
   private readonly evidenceViews = new EvidenceViewModule()
+  private readonly exportDelivery: ExportDeliveryModule
   private readonly riskDecisions = new RiskDecisionModule()
   private readonly ready: Promise<SecurityPersistence | undefined>
   private readonly securityRoot: string
@@ -304,6 +316,7 @@ export class SecurityAssuranceService extends Service {
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'securityAssurance')
     this.securityRoot = join(resolveDshHome(config.dshHome), 'security-assurance')
+    this.exportDelivery = new ExportDeliveryModule(this.securityRoot)
     Object.defineProperty(this, RESOLVE_TRUSTED_INVOCATION, {
       configurable: false,
       enumerable: false,
@@ -1399,6 +1412,108 @@ export class SecurityAssuranceService extends Service {
     }
   }
 
+  /** Accept one idempotent SEALED Export and deliver it without exposing a private path. */
+  async requestExport(
+    invocation: SecurityInvocation,
+    request: RequestExportRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<ExportRequestReceiptV1>> {
+    try {
+      const authority = this.authorityResolver.authority(invocation)
+      if (authority === undefined || !authority.permissions.has('export:request')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to request Exports.')
+      }
+      const interrupted = interruption<ExportRequestReceiptV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = requestExportRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match requestExport schema version 1.')
+      }
+      const sealed = await this.verifiedSealedRecord(parsed.data.assessmentId)
+      if (sealed === undefined) {
+        const persistence = await this.ready
+        if (persistence?.getAssessmentRecord(parsed.data.assessmentId) === undefined) {
+          return failure('NOT_FOUND', 'The Assessment does not exist.')
+        }
+        return failure('CONFLICT', 'Only a SEALED Assessment may produce an official Export.')
+      }
+      if (sealed.bundleManifest.assessmentRevision !== parsed.data.expectedAssessmentRevision) {
+        return failure('CONFLICT', 'The Export Request does not match the sealed Assessment revision.')
+      }
+      if (!sealed.bindings.deliveryDestinationIds.includes(parsed.data.deliveryDestinationId)) {
+        return failure('CONFLICT', 'The Delivery Destination is not frozen into this Assessment contract.')
+      }
+      const preview = buildExportPreview({
+        assessmentId: parsed.data.assessmentId,
+        assessmentRevision: sealed.bundleManifest.assessmentRevision,
+        sealId: sealed.bundleManifest.seal.sealId,
+        deliveryDestinationId: parsed.data.deliveryDestinationId,
+      })
+      if (preview === undefined) {
+        return failure('CONFLICT', 'The registered Delivery Destination has no active v1 delivery adapter.')
+      }
+      const begin = await this.exportDelivery.begin({
+        principalId: authority.principalId,
+        authorityKind: authority.kind,
+      }, parsed.data, preview)
+      await this.exportDelivery.deliver(begin, sealed.submission)
+      return deepFreeze({ ok: true, value: begin.record.receipt })
+    } catch (error) {
+      return this.exportFailure(error)
+    }
+  }
+
+  /** Preview one authorized Export selection or read one owner-bound durable Delivery status. */
+  async getExport(
+    invocation: SecurityInvocation,
+    request: GetExportRequest,
+    options: InvocationOptions = {},
+  ): Promise<SecurityResult<ExportViewV1>> {
+    try {
+      const authority = this.authorityResolver.authority(invocation)
+      if (authority === undefined || !authority.permissions.has('export:read')) {
+        return failure('UNAUTHORIZED', 'The caller is not authorized to read Exports.')
+      }
+      const interrupted = interruption<ExportViewV1>(options)
+      if (interrupted !== undefined) return interrupted
+      const parsed = getExportRequestSchema.safeParse(request)
+      if (!parsed.success) {
+        return failure('INVALID_REQUEST', 'The request does not match getExport schema version 1.')
+      }
+      if (parsed.data.kind === 'STATUS') {
+        const view = await this.exportDelivery.get(parsed.data.exportId, {
+          principalId: authority.principalId,
+          authorityKind: authority.kind,
+        })
+        if (view === undefined) return failure('NOT_FOUND', 'The Export does not exist.')
+        return deepFreeze({ ok: true, value: view })
+      }
+      const sealed = await this.verifiedSealedRecord(parsed.data.assessmentId)
+      if (sealed === undefined) {
+        const persistence = await this.ready
+        if (persistence?.getAssessmentRecord(parsed.data.assessmentId) === undefined) {
+          return failure('NOT_FOUND', 'The Assessment does not exist.')
+        }
+        return failure('CONFLICT', 'Only a SEALED Assessment may be previewed for official Export.')
+      }
+      if (!sealed.bindings.deliveryDestinationIds.includes(parsed.data.deliveryDestinationId)) {
+        return failure('CONFLICT', 'The Delivery Destination is not frozen into this Assessment contract.')
+      }
+      const preview = buildExportPreview({
+        assessmentId: parsed.data.assessmentId,
+        assessmentRevision: sealed.bundleManifest.assessmentRevision,
+        sealId: sealed.bundleManifest.seal.sealId,
+        deliveryDestinationId: parsed.data.deliveryDestinationId,
+      })
+      if (preview === undefined) {
+        return failure('CONFLICT', 'The registered Delivery Destination has no active v1 delivery adapter.')
+      }
+      return deepFreeze({ ok: true, value: preview })
+    } catch (error) {
+      return this.exportFailure(error)
+    }
+  }
+
   private launchAssessment(persistence: SecurityPersistence, assessmentId: AssessmentId): void {
     if (this.disposed || this.runningAssessments.has(assessmentId)) return
     const controller = new AbortController()
@@ -1709,6 +1824,23 @@ export class SecurityAssuranceService extends Service {
     }
     if (artifactRead && error instanceof Error) {
       return failure('UNAVAILABLE', 'The sealed Assessment artifact failed integrity verification.', true)
+    }
+    return failure('INTERNAL', 'Security Assurance could not complete the operation.', true)
+  }
+
+  private exportFailure<T>(error: unknown): SecurityResult<T> {
+    if (error instanceof ExportDeliveryError) {
+      if (error.code === 'IDEMPOTENCY_CONFLICT') {
+        return failure('CONFLICT', 'The Export idempotency key conflicts with a different request.')
+      }
+      if (error.code === 'NOT_FOUND') return failure('NOT_FOUND', 'The Export does not exist.')
+      return failure('UNAVAILABLE', 'Export delivery state is unavailable.', true)
+    }
+    if (error instanceof SecurityPersistenceError) {
+      return failure('UNAVAILABLE', 'The private Security Assurance store is unavailable.', true)
+    }
+    if (error instanceof Error) {
+      return failure('UNAVAILABLE', 'Export delivery could not complete the operation.', true)
     }
     return failure('INTERNAL', 'Security Assurance could not complete the operation.', true)
   }

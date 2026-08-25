@@ -135,7 +135,7 @@ async function harness(strictTypert = false, riskDecisionWindow = true): Promise
     }],
     [authorityContextId('workbench-session-export-reader'), {
       principalId: 'workbench-export-reader',
-      permissions: ['assessment:read', 'repository:read'],
+      permissions: ['assessment:read', 'repository:read', 'export:read', 'export:request'],
     }],
   ])
   const remoteFiber = await ctx.plugin(SecurityAssuranceWorkbenchRemote, {
@@ -201,6 +201,7 @@ describe('Security Assurance Workbench Remote', () => {
         ]),
       },
     })
+    if (!manifest.ok) throw new Error(`Bundle read failed: ${manifest.error.code}`)
 
     const assessment = await ctx.securityAssurance.getAssessment(
       referenceHostInvocation(ctx.securityAssurance),
@@ -222,7 +223,78 @@ describe('Security Assurance Workbench Remote', () => {
         bindings: { deliveryDestinationIds: ['delivery/local-audit'] },
       },
     })
-    expect(resolvedContextIds).toEqual([authorityId, authorityId])
+
+    const preview = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getExport',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          schemaVersion: 1,
+          kind: 'PREVIEW',
+          assessmentId,
+          exportProfileId: 'security/export/internal-json-v1',
+          deliveryDestinationId: 'delivery/local-audit',
+        },
+      },
+    }) as SecurityResult<import('../src/index.ts').ExportViewV1>
+    expect(preview).toMatchObject({
+      ok: true,
+      value: {
+        kind: 'PREVIEW',
+        assessmentId,
+        assessmentRevision: manifest.value.assessmentRevision,
+        profile: { exportProfileId: 'security/export/internal-json-v1' },
+        destination: { deliveryDestinationId: 'delivery/local-audit' },
+      },
+    })
+
+    const requested = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'requestExport',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          schemaVersion: 1,
+          idempotencyKey: 'workbench-export-request-v1',
+          assessmentId,
+          expectedAssessmentRevision: manifest.value.assessmentRevision,
+          exportProfileId: 'security/export/internal-json-v1',
+          deliveryDestinationId: 'delivery/local-audit',
+        },
+      },
+    }) as SecurityResult<import('../src/index.ts').ExportRequestReceiptV1>
+    expect(requested).toMatchObject({
+      ok: true,
+      value: {
+        operation: 'request_export',
+        assessmentId,
+        assessmentRevision: manifest.value.assessmentRevision,
+        acceptedState: 'PENDING',
+      },
+    })
+    if (!requested.ok) throw new Error(`Export request failed: ${requested.error.code}`)
+
+    await expect(ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getExport',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: { schemaVersion: 1, kind: 'STATUS', exportId: requested.value.exportId },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        kind: 'STATUS',
+        exportId: requested.value.exportId,
+        status: 'DELIVERED',
+        artifact: { digest: { mediaType: 'application/vnd.dsh.security.export+json' } },
+        accessAction: { kind: 'HOST_MANAGED' },
+      },
+    })
+    expect(JSON.stringify(preview)).not.toContain('privatePath')
+    expect(JSON.stringify(requested)).not.toContain('privatePath')
+    expect(resolvedContextIds).toEqual([authorityId, authorityId, authorityId, authorityId, authorityId])
   })
 
   it('returns the bounded Runtime Health snapshot through freshly resolved Host authority', async () => {

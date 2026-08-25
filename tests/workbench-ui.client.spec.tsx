@@ -791,7 +791,7 @@ describe('Security Assurance Workbench UI', () => {
     await b.runtime.dispose()
   })
 
-  it('renders a bilingual verified Bundle and registered destination readiness view without delivery authority', async () => {
+  it('renders a bilingual Service-owned Export Preview, Receipt, and registered Delivery status', async () => {
     const id = assessmentId('asm-00000000-0000-0000-0000-0000000000c1')
     const digest = {
       schemaVersion: 1 as const,
@@ -834,8 +834,37 @@ describe('Security Assurance Workbench UI', () => {
       omissions: [{ schemaId: 'security/threat-model', reason: 'NO_ELIGIBLE_ANALYZER' }],
       digest,
     }
+    const exportId = `export-${'e'.repeat(64)}`
+    const exportDigest = {
+      ...digest,
+      mediaType: 'application/vnd.dsh.security.export+json',
+      canonicalization: 'raw-bytes' as const,
+      value: 'e'.repeat(64),
+    }
+    const exportPreview = {
+      schemaVersion: 1,
+      kind: 'PREVIEW',
+      assessmentId: id,
+      assessmentRevision: 8,
+      sealId: seal.sealId,
+      profile: {
+        exportProfileId: 'security/export/internal-json-v1',
+        audience: 'INTERNAL',
+        artifactFormat: 'JSON',
+        mediaType: 'application/vnd.dsh.security.export+json',
+        includedCategories: ['SUBJECT', 'FINDINGS', 'EVIDENCE', 'SEAL'],
+        redactions: ['ORIGINAL_CREDENTIAL_VALUES', 'HOST_CREDENTIALS', 'PRIVATE_STORE_PATHS'],
+      },
+      destination: {
+        deliveryDestinationId: 'delivery/local-audit',
+        kind: 'HOST_REGISTERED_LOCAL_AUDIT',
+        summary: 'Host-registered local audit delivery',
+      },
+      expiresAfterSeconds: 86_400,
+      warnings: ['No private Store path or credential is disclosed.'],
+    }
     const endpoints: string[] = []
-    const b = await bench((_path, endpoint) => {
+    const b = await bench((_path, endpoint, payload) => {
       endpoints.push(endpoint)
       if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
         return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
@@ -863,6 +892,46 @@ describe('Security Assurance Workbench UI', () => {
           updatedAt: '2026-08-25T00:00:00.000Z',
         } } })
       }
+      if (endpoint === 'securityAssuranceWorkbench/getExport') {
+        const request = (payload as {
+          readonly args: { readonly request: { readonly kind: 'PREVIEW' | 'STATUS' } }
+        }).args.request
+        if (request.kind === 'PREVIEW') {
+          return Promise.resolve({ ok: true, value: { ok: true, value: exportPreview } })
+        }
+        return Promise.resolve({ ok: true, value: { ok: true, value: {
+          schemaVersion: 1,
+          kind: 'STATUS',
+          exportId,
+          assessmentId: id,
+          assessmentRevision: 8,
+          status: 'DELIVERED',
+          profile: exportPreview.profile,
+          destination: exportPreview.destination,
+          artifact: { artifactId: `${exportId}/artifact`, digest: exportDigest },
+          expiresAt: '2026-08-26T00:09:00.000Z',
+          accessAction: { kind: 'HOST_MANAGED', action: 'DELIVERED_TO_REGISTERED_DESTINATION' },
+          failure: null,
+          createdAt: '2026-08-25T00:09:00.000Z',
+          updatedAt: '2026-08-25T00:09:01.000Z',
+        } } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/requestExport') {
+        const idempotencyKey = (payload as {
+          readonly args: { readonly request: { readonly idempotencyKey: string } }
+        }).args.request.idempotencyKey
+        return Promise.resolve({ ok: true, value: { ok: true, value: {
+          schemaVersion: 1,
+          operation: 'request_export',
+          exportId,
+          assessmentId: id,
+          assessmentRevision: 8,
+          idempotencyKey,
+          acceptedState: 'PENDING',
+          acceptedAt: '2026-08-25T00:09:00.000Z',
+          correlationId: 'sec-00000000-0000-0000-0000-0000000000e1',
+        } } })
+      }
       return Promise.reject(new Error(`Unexpected endpoint: ${endpoint}`))
     })
     const launcher = b.runtime.renderSlot('sidebar.footer.action', { wide: true })
@@ -884,7 +953,7 @@ describe('Security Assurance Workbench UI', () => {
     expect(overlay.view.getByText('NO_ELIGIBLE_ANALYZER')).toBeTruthy()
     expect(overlay.view.getByText('delivery/local-audit')).toBeTruthy()
     expect(overlay.view.getByText('delivery/team-report')).toBeTruthy()
-    expect(overlay.view.queryByRole('button', { name: /下载|导出|交付/u })).toBeNull()
+    expect(overlay.view.queryByRole('button', { name: /下载/u })).toBeNull()
     expect(overlay.view.queryByText(/^[A-Z]:\\/u)).toBeNull()
     expect(endpoints).toEqual([
       'securityAssuranceWorkbench/getAssessment',
@@ -892,9 +961,33 @@ describe('Security Assurance Workbench UI', () => {
       'securityAssuranceWorkbench/getRepository',
     ])
 
+    await act(async () => {
+      fireEvent.click(overlay.view.getAllByRole('button', { name: '预览 Export' })[0]!)
+    })
+    expect(endpoints.at(-1)).toBe('securityAssuranceWorkbench/getExport')
+    expect(overlay.view.getByRole('heading', { name: 'Export Preview 与 Delivery' })).toBeTruthy()
+    expect(overlay.view.getByText('security/export/internal-json-v1')).toBeTruthy()
+    expect(overlay.view.getByText('ORIGINAL_CREDENTIAL_VALUES')).toBeTruthy()
+    expect(overlay.view.getByText('PRIVATE_STORE_PATHS')).toBeTruthy()
+    expect(overlay.view.queryByText(/^[A-Z]:\\/u)).toBeNull()
+
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '请求并交付 Export' }))
+    })
+    expect(overlay.view.getByText(exportId)).toBeTruthy()
+    expect(overlay.view.getAllByText('DELIVERED').length).toBeGreaterThan(0)
+    expect(overlay.view.getByText('sec-00000000-0000-0000-0000-0000000000e1')).toBeTruthy()
+    expect(overlay.view.getByText('e'.repeat(64))).toBeTruthy()
+    expect(overlay.view.queryByRole('button', { name: /下载/u })).toBeNull()
+    expect(endpoints.slice(-3)).toEqual([
+      'securityAssuranceWorkbench/getExport',
+      'securityAssuranceWorkbench/requestExport',
+      'securityAssuranceWorkbench/getExport',
+    ])
+
     act(() => { b.locale.setLocale('en') })
     expect(overlay.view.getByRole('heading', { name: 'Bundle and Export Readiness' })).toBeTruthy()
-    expect(overlay.view.getByText(/does not invent a Profile, path, download capability, or delivery status/u)).toBeTruthy()
+    expect(overlay.view.getByText(/no path, credential, or artifact bytes enter the browser/u)).toBeTruthy()
     await act(async () => {
       fireEvent.click(overlay.view.getByRole('button', { name: 'Back to Assessment detail' }))
     })

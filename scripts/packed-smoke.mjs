@@ -169,9 +169,15 @@ if (
   || typeof contracts.riskDecisionAttestationV1Schema?.parse !== 'function'
   || typeof contracts.riskDecisionRecordV1Schema?.parse !== 'function'
   || typeof contracts.riskDecisionReceiptResultSchema?.parse !== 'function'
+  || typeof contracts.getExportRequestSchema?.parse !== 'function'
+  || typeof contracts.requestExportRequestSchema?.parse !== 'function'
+  || typeof contracts.exportPreviewV1Schema?.parse !== 'function'
+  || typeof contracts.exportStatusV1Schema?.parse !== 'function'
+  || typeof contracts.exportRequestReceiptResultSchema?.parse !== 'function'
+  || typeof contracts.exportViewResultSchema?.parse !== 'function'
   || contracts.CRITICAL_BREAK_GLASS_CONTROL_ID !== 'security/critical-break-glass-v1'
 ) {
-  throw new Error('packed Finding, Evidence View, and Risk Decision contracts are incomplete')
+  throw new Error('packed Finding, Evidence, Risk Decision, and Export contracts are incomplete')
 }
 const analyzer = await import('dsh-security-assurance/analyzer')
 if (
@@ -195,12 +201,16 @@ const typertContribution = await import('dsh-security-assurance/typert')
 const clientRemoteContribution = await import('dsh-security-assurance/remote')
 if (
   typeof workbenchRemote.default !== 'function'
-  || typertContribution.TYPERT?.invocations?.length !== 16
-    || clientRemoteContribution.default?.descriptors?.length !== 16
+  || typertContribution.TYPERT?.invocations?.length !== 18
+    || clientRemoteContribution.default?.descriptors?.length !== 18
     || !clientRemoteContribution.default.descriptors.some(descriptor =>
       descriptor.method === 'getHealth')
     || !clientRemoteContribution.default.descriptors.some(descriptor =>
       descriptor.method === 'getBundleManifest')
+    || !clientRemoteContribution.default.descriptors.some(descriptor =>
+      descriptor.method === 'getExport')
+    || !clientRemoteContribution.default.descriptors.some(descriptor =>
+      descriptor.method === 'requestExport')
     || !clientRemoteContribution.default.descriptors.some(descriptor =>
       descriptor.method === 'getRepository')
     || !clientRemoteContribution.default.descriptors.some(descriptor =>
@@ -268,6 +278,8 @@ if (
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openRuntimeHealth !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.refreshRuntimeHealth !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openBundle !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.previewExport !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.requestExport !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.backToAssessmentDetail !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openRepositories !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectRepository !== 'function'
@@ -310,6 +322,8 @@ if (
   || typeof ctx.securityAssurance.getFinding !== 'function'
   || typeof ctx.securityAssurance.getEvidenceView !== 'function'
   || typeof ctx.securityAssurance.recordRiskDecision !== 'function'
+  || typeof ctx.securityAssurance.requestExport !== 'function'
+  || typeof ctx.securityAssurance.getExport !== 'function'
 ) {
   throw new Error('Cordis activation did not expose Finding/Evidence/Risk Decision or local Analyzer composition')
 }
@@ -319,7 +333,14 @@ const workbenchFiber = ctx.plugin(workbenchRemote.default, {
     if (contextId !== 'packed-workbench-context-v1') return undefined
     return {
       principalId: 'packed-workbench-operator',
-      permissions: ['health:read', 'repository:read', 'assessment:read', 'risk:decide'],
+      permissions: [
+        'health:read',
+        'repository:read',
+        'assessment:read',
+        'risk:decide',
+        'export:read',
+        'export:request',
+      ],
     }
   },
 })
@@ -379,13 +400,46 @@ const missingRepository = await ctx.typertGateway.invoke({
     },
   },
 })
+const missingExportPreview = await ctx.typertGateway.invoke({
+  namespace: 'securityAssuranceWorkbench',
+  method: 'getExport',
+  args: {
+    securityAssuranceWorkbenchContextId: 'packed-workbench-context-v1',
+    request: {
+      schemaVersion: 1,
+      kind: 'PREVIEW',
+      assessmentId: 'asm-00000000-0000-0000-0000-000000000000',
+      exportProfileId: 'security/export/internal-json-v1',
+      deliveryDestinationId: 'delivery/local-audit',
+    },
+  },
+})
+const missingExportRequest = await ctx.typertGateway.invoke({
+  namespace: 'securityAssuranceWorkbench',
+  method: 'requestExport',
+  args: {
+    securityAssuranceWorkbenchContextId: 'packed-workbench-context-v1',
+    request: {
+      schemaVersion: 1,
+      idempotencyKey: 'packed-missing-export-request-v1',
+      assessmentId: 'asm-00000000-0000-0000-0000-000000000000',
+      expectedAssessmentRevision: 1,
+      exportProfileId: 'security/export/internal-json-v1',
+      deliveryDestinationId: 'delivery/local-audit',
+    },
+  },
+})
 if (
   missingBundle?.ok !== false
   || missingBundle.error?.code !== 'NOT_FOUND'
   || missingRepository?.ok !== false
   || missingRepository.error?.code !== 'NOT_FOUND'
+  || missingExportPreview?.ok !== false
+  || missingExportPreview.error?.code !== 'NOT_FOUND'
+  || missingExportRequest?.ok !== false
+  || missingExportRequest.error?.code !== 'NOT_FOUND'
 ) {
-  throw new Error('packed strict Workbench Remote did not delegate Bundle and Repository reads')
+  throw new Error('packed strict Workbench Remote did not delegate Bundle, Repository, and Export operations')
 }
 const missingAssessment = await ctx.typertGateway.invoke({
   namespace: 'securityAssuranceWorkbench',

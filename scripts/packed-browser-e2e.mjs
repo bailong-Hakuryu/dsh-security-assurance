@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -21,7 +21,7 @@ const fullAuthorityContextId = 'workbench-browser-e2e-full-authority'
 const deniedAuthorityContextId = 'workbench-browser-e2e-denied-authority'
 const operatorPrincipalId = 'reference-browser-host-operator'
 const repositoryDisplayName = 'Packed Browser E2E Repository'
-const deliveryDestinationId = 'delivery/reference-browser-e2e'
+const deliveryDestinationId = 'delivery/local-audit'
 const scriptBodyMarker = 'browser-e2e-secret-body.js'
 const riskRationale = 'The validated install lifecycle risk remains blocking for this release.'
 const fullPermissions = [
@@ -34,6 +34,8 @@ const fullPermissions = [
   'assessment:cancel',
   'evidence:disclose:validation-review',
   'assurance-submission:read',
+  'export:request',
+  'export:read',
   'risk:decide',
   'risk:break-glass',
 ]
@@ -633,6 +635,37 @@ async function runBrowserScenario() {
   await waitForWorkbenchState(page, 'state => state.kind === "BUNDLE_READY"')
   await page.getByRole('heading', { name: 'Bundle and Export Readiness' }).waitFor()
   assert.equal(await page.getByText(deliveryDestinationId, { exact: true }).count(), 1)
+  await page.getByRole('button', { name: 'Preview Export' }).click()
+  await waitForWorkbenchState(
+    page,
+    'state => state.kind === "BUNDLE_READY" && state.export.kind === "PREVIEW_READY"',
+  )
+  await page.getByRole('heading', { name: 'Export Preview and Delivery' }).waitFor()
+  assert.equal(await page.getByText('security/export/internal-json-v1', { exact: true }).count(), 1)
+  assert.equal(await page.getByText('PRIVATE_STORE_PATHS', { exact: true }).count(), 1)
+  assert.equal((await dialog.innerText()).includes(normalizedPath(dshHome)), false)
+  assert.equal(await page.getByRole('button', { name: /download/iu }).count(), 0)
+  await page.getByRole('button', { name: 'Request and deliver Export' }).click()
+  const deliveredExport = await waitForWorkbenchState(
+    page,
+    'state => state.kind === "BUNDLE_READY" && state.export.kind === "STATUS_READY" && state.export.status.status === "DELIVERED"',
+  )
+  const exportId = deliveredExport.export.status.exportId
+  assert.match(exportId, /^export-[0-9a-f]{64}$/u)
+  assert.equal(deliveredExport.export.status.accessAction.kind, 'HOST_MANAGED')
+  assert.equal(deliveredExport.export.status.artifact?.digest.mediaType, 'application/vnd.dsh.security.export+json')
+  const deliveredArtifact = await readFile(join(
+    dshHome,
+    'security-assurance',
+    'delivery',
+    'destinations',
+    'local-audit',
+    `${exportId}.json`,
+  ), 'utf8')
+  const deliveredArtifactValue = JSON.parse(deliveredArtifact)
+  assert.equal(deliveredArtifactValue.source.assessmentId, assessmentId)
+  assert.equal(deliveredArtifactValue.exportProfileId, 'security/export/internal-json-v1')
+  assert.equal(deliveredArtifact.includes(normalizedPath(repositoryRoot)), false)
 
   await setWorkbenchLocale(page, 'zh')
   await page.getByRole('dialog', { name: '安全保障工作台' }).waitFor()
@@ -711,7 +744,7 @@ async function runBrowserScenario() {
   await context.close()
   await browser.close()
   browser = undefined
-  return { assessmentId, requestCount: requestUrls.length, consoleCount: consoleEntries.length }
+  return { assessmentId, exportId, requestCount: requestUrls.length, consoleCount: consoleEntries.length }
 }
 
 async function stopHost() {

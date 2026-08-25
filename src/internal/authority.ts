@@ -10,6 +10,8 @@ export type SecurityPermission =
   | 'assessment:cancel'
   | 'evidence:disclose:validation-review'
   | 'assurance-submission:read'
+  | 'export:request'
+  | 'export:read'
   | 'risk:decide'
   | 'risk:break-glass'
 export type SecurityCallerChannelKind = 'harness-session' | 'host-operator' | 'control-plane'
@@ -53,6 +55,8 @@ export class SecurityAuthorityResolver {
       'assessment:cancel',
       'evidence:disclose:validation-review',
       'assurance-submission:read',
+      'export:request',
+      'export:read',
       'risk:decide',
       'risk:break-glass',
     ])
