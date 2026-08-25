@@ -41,12 +41,14 @@ const sufficientStratumDefinitions = [
 function request(
   cases: readonly unknown[],
   stratumDefinitions: readonly unknown[] = sufficientStratumDefinitions,
+  repetitionPlan?: unknown,
 ) {
   return {
     schemaVersion: 1 as const,
     engineId: EFFECTIVENESS_METRICS_ENGINE_ID,
     severityWeights,
     stratumDefinitions,
+    ...(repetitionPlan === undefined ? {} : { repetitionPlan }),
     cases,
   }
 }
@@ -210,6 +212,7 @@ describe('Effectiveness Metrics Engine v1', () => {
           reasonCodes: [],
         },
       ],
+      repetitionAnalysis: null,
     })
     expect(Object.isFrozen(result)).toBe(true)
     expect(Object.isFrozen(result.counts)).toBe(true)
@@ -317,6 +320,14 @@ describe('Effectiveness Metrics Engine v1', () => {
         }],
       },
     }
+    const repetitionPlan = {
+      method: 'HOEFFDING_TWO_SIDED_V1',
+      repetitionIds: ['rep-a', 'rep-b'],
+      benchmarkCaseIds: ['case-valid'],
+      confidenceLevel: 0.95,
+      maximumConfidenceIntervalWidth: 1,
+    }
+    const repeatedValidCase = { ...validCase, repetitionId: 'rep-a' }
     const invalid = [
       request([validCase, { ...validCase }]),
       request([{
@@ -377,6 +388,21 @@ describe('Effectiveness Metrics Engine v1', () => {
           minimumSamples: 1,
         },
       ]),
+      request([{ ...validCase, repetitionId: 'rep-a' }]),
+      request([repeatedValidCase, repeatedValidCase], sufficientStratumDefinitions, repetitionPlan),
+      request(
+        [{ ...repeatedValidCase, repetitionId: 'rep-unknown' }],
+        sufficientStratumDefinitions,
+        repetitionPlan,
+      ),
+      request([repeatedValidCase], sufficientStratumDefinitions, {
+        ...repetitionPlan,
+        repetitionIds: ['rep-a', 'rep-a'],
+      }),
+      request([
+        repeatedValidCase,
+        { ...repeatedValidCase, repetitionId: 'rep-b', assessmentMode: 'TARGETED' },
+      ], sufficientStratumDefinitions, repetitionPlan),
     ]
 
     for (const candidate of invalid) {
@@ -508,6 +534,191 @@ describe('Effectiveness Metrics Engine v1', () => {
         reasonCodes: ['INSUFFICIENT_SAMPLE_COUNT'],
       },
     ])
+  })
+
+  it('reports the complete independent-repetition distribution and frozen uncertainty method', () => {
+    const repeatedCases = [
+      {
+        caseId: 'case-shared',
+        repetitionId: 'rep-a',
+        disposition: 'INCLUDED',
+        assessmentMode: 'CHANGE',
+        supportedEcosystem: 'node',
+        expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
+        groundTruthDefects: [{
+          defectId: 'defect-high',
+          severity: 'HIGH',
+          weaknessFamily: 'cwe-79',
+          policyBlocking: true,
+        }],
+        result: {
+          kind: 'COMPLETED',
+          verdict: 'FAILED',
+          coverageStatus: 'GAP',
+          findings: [{
+            findingId: 'finding-match',
+            adjudication: { status: 'MATCHED', defectId: 'defect-high' },
+          }],
+        },
+      },
+      {
+        caseId: 'case-shared',
+        repetitionId: 'rep-b',
+        disposition: 'INCLUDED',
+        assessmentMode: 'CHANGE',
+        supportedEcosystem: 'node',
+        expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
+        groundTruthDefects: [{
+          defectId: 'defect-high',
+          severity: 'HIGH',
+          weaknessFamily: 'cwe-79',
+          policyBlocking: true,
+        }],
+        result: {
+          kind: 'COMPLETED',
+          verdict: 'SATISFIED',
+          coverageStatus: 'COMPLETE',
+          findings: [{
+            findingId: 'finding-false-positive',
+            adjudication: { status: 'NOT_MATCHED' },
+          }],
+        },
+      },
+    ]
+    const repetitionPlan = {
+      method: 'HOEFFDING_TWO_SIDED_V1',
+      repetitionIds: ['rep-a', 'rep-b'],
+      benchmarkCaseIds: ['case-shared'],
+      confidenceLevel: 0.95,
+      maximumConfidenceIntervalWidth: 1,
+    }
+    const result = calculateEffectivenessMetricsV1(request(
+      repeatedCases,
+      sufficientStratumDefinitions,
+      repetitionPlan,
+    ))
+
+    const measuredMinimumDistribution = {
+      status: 'MEASURED',
+      sampleSize: 2,
+      mean: 0.5,
+      sampleStandardDeviation: Math.sqrt(0.5),
+      worst: 0,
+      worstDirection: 'MINIMUM',
+      confidenceInterval: {
+        method: 'HOEFFDING_TWO_SIDED_V1',
+        confidenceLevel: 0.95,
+        lower: 0,
+        upper: 1,
+        width: 1,
+      },
+      uncertaintyStatus: 'SUFFICIENT',
+      reasonCodes: [],
+    }
+    expect(effectivenessMetricsV1Schema.parse(result)).toEqual(result)
+    expect(result.conclusion).toBe('MEASURED')
+    expect(result.counts).toMatchObject({
+      includedCases: 2,
+      sufficientStrata: 4,
+      inconclusiveStrata: 0,
+    })
+    expect(result.strata.map(item => item.observedSamples)).toEqual([1, 1, 1, 1])
+    expect(result.repetitionAnalysis).toEqual({
+      method: 'HOEFFDING_TWO_SIDED_V1',
+      confidenceLevel: 0.95,
+      maximumConfidenceIntervalWidth: 1,
+      plannedIndependentRepetitions: 2,
+      observedIndependentRepetitions: 2,
+      status: 'SUFFICIENT',
+      reasonCodes: [],
+      metrics: {
+        criticalHighValidatedRecall: measuredMinimumDistribution,
+        severityWeightedValidatedRecall: measuredMinimumDistribution,
+        validatedPrecision: measuredMinimumDistribution,
+        unsafeSatisfactionRate: {
+          ...measuredMinimumDistribution,
+          worst: 1,
+          worstDirection: 'MAXIMUM',
+        },
+        coverageHonestyRate: measuredMinimumDistribution,
+      },
+    })
+    expect(Object.isFrozen(result.repetitionAnalysis)).toBe(true)
+    expect(Object.isFrozen(result.repetitionAnalysis?.metrics)).toBe(true)
+  })
+
+  it('makes missing repetitions and excessive uncertainty explicitly inconclusive', () => {
+    const caseFor = (repetitionId: string) => ({
+      caseId: 'case-shared',
+      repetitionId,
+      disposition: 'INCLUDED',
+      assessmentMode: 'CHANGE',
+      supportedEcosystem: 'node',
+      expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
+      groundTruthDefects: [{
+        defectId: 'defect-high',
+        severity: 'HIGH',
+        weaknessFamily: 'cwe-79',
+        policyBlocking: true,
+      }],
+      result: {
+        kind: 'COMPLETED',
+        verdict: repetitionId === 'rep-a' ? 'FAILED' : 'SATISFIED',
+        coverageStatus: repetitionId === 'rep-a' ? 'GAP' : 'COMPLETE',
+        findings: [{
+          findingId: `finding-${repetitionId}`,
+          adjudication: repetitionId === 'rep-a'
+            ? { status: 'MATCHED', defectId: 'defect-high' }
+            : { status: 'NOT_MATCHED' },
+        }],
+      },
+    })
+    const tightPlan = {
+      method: 'HOEFFDING_TWO_SIDED_V1',
+      repetitionIds: ['rep-a', 'rep-b'],
+      benchmarkCaseIds: ['case-shared'],
+      confidenceLevel: 0.95,
+      maximumConfidenceIntervalWidth: 0.5,
+    }
+    const excessive = calculateEffectivenessMetricsV1(request(
+      [caseFor('rep-a'), caseFor('rep-b')],
+      sufficientStratumDefinitions,
+      tightPlan,
+    ))
+    expect(excessive.conclusion).toBe('INCONCLUSIVE')
+    expect(excessive.reasonCodes).toContain('EXCESSIVE_REPETITION_UNCERTAINTY')
+    expect(excessive.repetitionAnalysis).toMatchObject({
+      status: 'INCONCLUSIVE',
+      reasonCodes: ['EXCESSIVE_CONFIDENCE_INTERVAL_WIDTH'],
+      metrics: {
+        criticalHighValidatedRecall: {
+          status: 'MEASURED',
+          uncertaintyStatus: 'INCONCLUSIVE',
+          reasonCodes: ['CONFIDENCE_INTERVAL_TOO_WIDE'],
+        },
+      },
+    })
+
+    const missing = calculateEffectivenessMetricsV1(request(
+      [caseFor('rep-a')],
+      sufficientStratumDefinitions,
+      tightPlan,
+    ))
+    expect(missing.conclusion).toBe('INCONCLUSIVE')
+    expect(missing.reasonCodes).toContain('INCOMPLETE_REPETITION_EVIDENCE')
+    expect(missing.repetitionAnalysis).toMatchObject({
+      plannedIndependentRepetitions: 2,
+      observedIndependentRepetitions: 1,
+      status: 'INCONCLUSIVE',
+      reasonCodes: ['INCOMPLETE_REPETITION_CASE_MATRIX'],
+      metrics: {
+        criticalHighValidatedRecall: {
+          status: 'INCONCLUSIVE',
+          sampleSize: 0,
+          reasonCodes: ['INCOMPLETE_REPETITION_CASE_MATRIX'],
+        },
+      },
+    })
   })
 
   it('uses strict schemas and rejects authority, path, and post-hoc threshold fields', () => {

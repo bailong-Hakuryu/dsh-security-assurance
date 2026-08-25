@@ -190,44 +190,90 @@ if (
   throw new Error('packed Analyzer Contract Entry is incomplete')
 }
 const evaluation = await import('dsh-security-assurance/evaluation')
+const packedStratumDefinitions = [
+  {
+    stratumId: 'severity-high',
+    selector: { dimension: 'SEVERITY', value: 'HIGH' },
+    minimumSamples: 1,
+  },
+  {
+    stratumId: 'weakness-cwe-79',
+    selector: { dimension: 'WEAKNESS_FAMILY', value: 'cwe-79' },
+    minimumSamples: 1,
+  },
+  {
+    stratumId: 'mode-change',
+    selector: { dimension: 'ASSESSMENT_MODE', value: 'CHANGE' },
+    minimumSamples: 1,
+  },
+  {
+    stratumId: 'ecosystem-node',
+    selector: { dimension: 'SUPPORTED_ECOSYSTEM', value: 'node' },
+    minimumSamples: 1,
+  },
+]
 const packedEmptyMetrics = evaluation.calculateEffectivenessMetricsV1({
   schemaVersion: 1,
   engineId: 'security/effectiveness-metrics/v1',
   severityWeights: { CRITICAL: 8, HIGH: 5, MEDIUM: 3, LOW: 2, INFORMATIONAL: 1 },
-  stratumDefinitions: [
-    {
-      stratumId: 'severity-high',
-      selector: { dimension: 'SEVERITY', value: 'HIGH' },
-      minimumSamples: 1,
-    },
-    {
-      stratumId: 'weakness-cwe-79',
-      selector: { dimension: 'WEAKNESS_FAMILY', value: 'cwe-79' },
-      minimumSamples: 1,
-    },
-    {
-      stratumId: 'mode-change',
-      selector: { dimension: 'ASSESSMENT_MODE', value: 'CHANGE' },
-      minimumSamples: 1,
-    },
-    {
-      stratumId: 'ecosystem-node',
-      selector: { dimension: 'SUPPORTED_ECOSYSTEM', value: 'node' },
-      minimumSamples: 1,
-    },
-  ],
+  stratumDefinitions: packedStratumDefinitions,
   cases: [],
+})
+const packedRepeatedMetrics = evaluation.calculateEffectivenessMetricsV1({
+  schemaVersion: 1,
+  engineId: 'security/effectiveness-metrics/v1',
+  severityWeights: { CRITICAL: 8, HIGH: 5, MEDIUM: 3, LOW: 2, INFORMATIONAL: 1 },
+  stratumDefinitions: packedStratumDefinitions,
+  repetitionPlan: {
+    method: 'HOEFFDING_TWO_SIDED_V1',
+    repetitionIds: ['rep-a', 'rep-b'],
+    benchmarkCaseIds: ['case-shared'],
+    confidenceLevel: 0.95,
+    maximumConfidenceIntervalWidth: 1,
+  },
+  cases: ['rep-a', 'rep-b'].map((repetitionId, index) => ({
+    caseId: 'case-shared',
+    repetitionId,
+    disposition: 'INCLUDED',
+    assessmentMode: 'CHANGE',
+    supportedEcosystem: 'node',
+    expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
+    groundTruthDefects: [{
+      defectId: 'defect-high',
+      severity: 'HIGH',
+      weaknessFamily: 'cwe-79',
+      policyBlocking: true,
+    }],
+    result: {
+      kind: 'COMPLETED',
+      verdict: index === 0 ? 'FAILED' : 'SATISFIED',
+      coverageStatus: index === 0 ? 'GAP' : 'COMPLETE',
+      findings: [{
+        findingId: 'finding-' + repetitionId,
+        adjudication: index === 0
+          ? { status: 'MATCHED', defectId: 'defect-high' }
+          : { status: 'NOT_MATCHED' },
+      }],
+    },
+  })),
 })
 if (
   evaluation.EFFECTIVENESS_METRICS_ENGINE_ID !== 'security/effectiveness-metrics/v1'
   || typeof evaluation.benchmarkStratumDefinitionV1Schema?.parse !== 'function'
   || typeof evaluation.benchmarkStratumResultV1Schema?.parse !== 'function'
+  || typeof evaluation.benchmarkRepetitionPlanV1Schema?.parse !== 'function'
+  || typeof evaluation.repetitionAnalysisV1Schema?.parse !== 'function'
   || typeof evaluation.effectivenessMetricsRequestV1Schema?.parse !== 'function'
   || typeof evaluation.effectivenessMetricsV1Schema?.parse !== 'function'
   || packedEmptyMetrics.conclusion !== 'INCONCLUSIVE'
   || packedEmptyMetrics.reasonCodes.length !== 6
   || packedEmptyMetrics.strata.length !== 4
   || packedEmptyMetrics.counts.inconclusiveStrata !== 4
+  || packedRepeatedMetrics.conclusion !== 'MEASURED'
+  || packedRepeatedMetrics.repetitionAnalysis?.status !== 'SUFFICIENT'
+  || packedRepeatedMetrics.repetitionAnalysis.metrics.validatedPrecision.mean !== 0.5
+  || packedRepeatedMetrics.repetitionAnalysis.metrics.unsafeSatisfactionRate.worst !== 1
+  || packedRepeatedMetrics.strata.some(item => item.observedSamples !== 1)
 ) {
   throw new Error('packed Evaluation entry did not execute the versioned Metrics Engine')
 }

@@ -379,9 +379,16 @@ counts product failures, and makes every deficient Stratum explicitly
 and calculated by the same pure implementation consumed by packed release
 tooling.
 
-These slices are not an Effectiveness or release claim. Independent
-repetitions, uncertainty requirements, paired Arms, matched-budget comparison,
-Utility, non-inferiority, Ground Truth air-gap execution, Release Constitution
+For stochastic evidence, an optional frozen repetition plan names the complete
+independent repetition by Benchmark Case matrix, confidence level, and maximum
+interval width. The engine rejects undeclared or inconsistent identities,
+refuses partial matrices, and reports the mean, sample standard deviation,
+direction-aware worst result, and a deterministic two-sided Hoeffding interval
+for every primary metric. Repetitions never inflate Stratum sample counts.
+
+These slices are not an Effectiveness or release claim. Stratum-specific
+uncertainty requirements, paired Arms, matched-budget comparison, Utility,
+non-inferiority, Ground Truth air-gap execution, Release Constitution
 thresholds, Scorecards, and the Release Evidence Manifest remain separate
 future proof slices.
 
