@@ -99,6 +99,12 @@ export interface RecoverableExportDeliveryV1 {
   readonly nextRetryAt: string | null
 }
 
+export interface RecoverableExportExpiryV1 {
+  readonly exportId: ExportId
+  readonly expiresAt: string
+  readonly purgePending: boolean
+}
+
 export class ExportDeliveryError extends Error {
   constructor(
     readonly code:
@@ -263,23 +269,34 @@ function normalizeLegacyRecord(value: unknown): unknown {
   const rawView = record.view
   if (typeof rawView !== 'object' || rawView === null || Array.isArray(rawView)) return value
   const view = rawView as Record<string, unknown>
-  if (view.delivery !== undefined) return value
   const status = view.status
   const updatedAt = typeof view.updatedAt === 'string' ? view.updatedAt : null
   const attempted = status !== 'PENDING' && updatedAt !== null
   const failed = status === 'FAILED' && updatedAt !== null
+  let changed = false
+  const normalizedView: Record<string, unknown> = { ...view }
+  if (view.delivery === undefined) {
+    changed = true
+    normalizedView.delivery = {
+      attemptCount: attempted ? 1 : 0,
+      lastAttemptAt: attempted ? updatedAt : null,
+      lastFailureAt: failed ? updatedAt : null,
+      lastFailureCode: failed ? 'ARTIFACT_IO_ERROR' : null,
+      nextRetryAt: null,
+    }
+  }
+  if (view.retention === undefined && (status === 'PENDING' || status === 'FAILED')) {
+    changed = true
+    normalizedView.retention = { status: 'NOT_RETAINED' }
+  }
+  if (view.retention === undefined && status === 'DELIVERED') {
+    changed = true
+    normalizedView.retention = { status: 'RETAINED' }
+  }
+  if (!changed) return value
   return {
     ...record,
-    view: {
-      ...view,
-      delivery: {
-        attemptCount: attempted ? 1 : 0,
-        lastAttemptAt: attempted ? updatedAt : null,
-        lastFailureAt: failed ? updatedAt : null,
-        lastFailureCode: failed ? 'ARTIFACT_IO_ERROR' : null,
-        nextRetryAt: null,
-      },
-    },
+    view: normalizedView,
   }
 }
 
@@ -354,6 +371,7 @@ export class ExportDeliveryModule {
       destination: preview.destination,
       artifact: null,
       expiresAt: null,
+      retention: { status: 'NOT_RETAINED' },
       delivery: {
         attemptCount: 0,
         lastAttemptAt: null,
@@ -449,6 +467,108 @@ export class ExportDeliveryModule {
     return recoverable.sort((left, right) => left.exportId.localeCompare(right.exportId))
   }
 
+  async listExpirable(): Promise<readonly RecoverableExportExpiryV1[]> {
+    let entries: Dirent[]
+    try {
+      entries = await readdir(join(this.root, 'exports'), { withFileTypes: true })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
+    }
+    const expirable: RecoverableExportExpiryV1[] = []
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const parsed = exportIdSchema.safeParse(entry.name)
+      if (!parsed.success) continue
+      try {
+        const record = await readRecord(this.root, parsed.data)
+        if (record === undefined || record.view.expiresAt === null) continue
+        if (record.view.status === 'DELIVERED') {
+          expirable.push({
+            exportId: record.receipt.exportId,
+            expiresAt: record.view.expiresAt,
+            purgePending: false,
+          })
+        } else if (
+          record.view.status === 'EXPIRED'
+          && record.view.retention.status === 'PURGE_PENDING'
+        ) {
+          expirable.push({
+            exportId: record.receipt.exportId,
+            expiresAt: record.view.expiresAt,
+            purgePending: true,
+          })
+        }
+      } catch (error) {
+        if (error instanceof ExportDeliveryError && error.code === 'UNAVAILABLE') continue
+        throw error
+      }
+    }
+    return expirable.sort((left, right) => Date.parse(left.expiresAt) - Date.parse(right.expiresAt))
+  }
+
+  async reconcileExpiry(exportId: ExportId): Promise<ExportStatusV1> {
+    return this.exclusive(exportId, async () => {
+      let record = await readRecord(this.root, exportId)
+      if (record === undefined) throw new ExportDeliveryError('NOT_FOUND', 'The Export does not exist')
+      if (record.view.status === 'DELIVERED') {
+        const expiresAt = record.view.expiresAt
+        const artifact = record.view.artifact
+        const purgeRequestedAt = this.now()
+        if (
+          expiresAt === null
+          || artifact === null
+          || Date.parse(expiresAt) > Date.parse(purgeRequestedAt)
+        ) return record.view
+        const view = exportStatusV1Schema.parse({
+          ...record.view,
+          status: 'EXPIRED',
+          artifact: null,
+          retention: {
+            status: 'PURGE_PENDING',
+            tombstone: {
+              artifactId: artifact.artifactId,
+              digest: artifact.digest,
+              expiredAt: expiresAt,
+              deletionAuthority: 'SECURITY_SERVICE_RETENTION',
+              reason: 'ARTIFACT_EXPIRED',
+            },
+            purgeRequestedAt,
+            purgedAt: null,
+          },
+          accessAction: { kind: 'NONE', reason: 'ARTIFACT_EXPIRED' },
+          updatedAt: purgeRequestedAt,
+        })
+        record = internalExportRecordV1Schema.parse({ ...record, view })
+        await replaceRecord(this.root, record)
+      }
+      if (record.view.status !== 'EXPIRED' || record.view.retention.status === 'PURGED') {
+        return record.view
+      }
+      if (record.view.retention.status !== 'PURGE_PENDING') return record.view
+      try {
+        await rm(artifactPath(this.root, exportId), { force: true })
+      } catch {
+        return record.view
+      }
+      const observedPurgeCompletion = this.now()
+      const purgedAt = Date.parse(observedPurgeCompletion) < Date.parse(record.view.retention.purgeRequestedAt)
+        ? record.view.retention.purgeRequestedAt
+        : observedPurgeCompletion
+      const view = exportStatusV1Schema.parse({
+        ...record.view,
+        retention: {
+          ...record.view.retention,
+          status: 'PURGED',
+          purgedAt,
+        },
+        updatedAt: purgedAt,
+      })
+      await replaceRecord(this.root, internalExportRecordV1Schema.parse({ ...record, view }))
+      return view
+    })
+  }
+
   private async writeArtifact(
     record: InternalExportRecordV1,
     submission: SecurityAssuranceSubmissionV1,
@@ -497,6 +617,7 @@ export class ExportDeliveryModule {
         digest: binaryDigest('application/vnd.dsh.security.export+json', bytes),
       },
       expiresAt,
+      retention: { status: 'RETAINED' },
       delivery: { ...record.view.delivery, nextRetryAt: null },
       accessAction: { kind: 'HOST_MANAGED', action: 'DELIVERED_TO_REGISTERED_DESTINATION' },
       failure: null,
@@ -510,17 +631,17 @@ export class ExportDeliveryModule {
     const record = await readRecord(this.root, exportId)
     if (record === undefined || !ownerMatches(record, authority)) return undefined
     if (
-      record.view.status === 'DELIVERED'
-      && record.view.expiresAt !== null
-      && Date.parse(record.view.expiresAt) <= Date.parse(this.now())
+      (
+        record.view.status === 'DELIVERED'
+        && record.view.expiresAt !== null
+        && Date.parse(record.view.expiresAt) <= Date.parse(this.now())
+      )
+      || (
+        record.view.status === 'EXPIRED'
+        && record.view.retention.status === 'PURGE_PENDING'
+      )
     ) {
-      return exportStatusV1Schema.parse({
-        ...record.view,
-        status: 'EXPIRED',
-        artifact: null,
-        accessAction: { kind: 'NONE', reason: 'ARTIFACT_EXPIRED' },
-        updatedAt: this.now(),
-      })
+      return this.reconcileExpiry(exportId)
     }
     return record.view
   }
@@ -637,8 +758,10 @@ export class ExportDeliveryModule {
 
   private exclusive(exportId: ExportId, action: () => Promise<ExportStatusV1>): Promise<ExportStatusV1> {
     const existing = this.inFlight.get(exportId)
-    if (existing !== undefined) return existing
-    const task = Promise.resolve().then(action)
+    const preceding = existing === undefined
+      ? Promise.resolve()
+      : existing.then(() => {}, () => {})
+    const task = preceding.then(action)
     this.inFlight.set(exportId, task)
     void task.then(
       () => {

@@ -1004,6 +1004,30 @@ function BundleExportView({
             <dl className="dsh-security-facts">
               <Fact label={t('exports.exportId')} value={exportState.status.exportId} machine />
               <Fact label={t('exports.status')} value={exportState.status.status} machine />
+              <Fact label={t('exports.retentionStatus')} value={exportState.status.retention.status} machine />
+              {(exportState.status.retention.status === 'PURGE_PENDING'
+                || exportState.status.retention.status === 'PURGED') && (
+                <>
+                  <Fact
+                    label={t('exports.tombstoneDigest')}
+                    value={exportState.status.retention.tombstone.digest.value}
+                    machine
+                  />
+                  <Fact
+                    label={t('exports.purgeReason')}
+                    value={exportState.status.retention.tombstone.reason}
+                    machine
+                  />
+                  <Fact
+                    label={t('exports.purgeRequestedAt')}
+                    value={exportState.status.retention.purgeRequestedAt}
+                  />
+                  <Fact
+                    label={t('exports.purgedAt')}
+                    value={exportState.status.retention.purgedAt ?? t('value.notAvailable')}
+                  />
+                </>
+              )}
               <Fact label={t('exports.attemptCount')} value={String(exportState.status.delivery.attemptCount)} />
               <Fact
                 label={t('exports.lastAttemptAt')}
@@ -1049,7 +1073,7 @@ function BundleExportView({
               <p className="dsh-security-readonly-note">{t('exports.downloadBoundary')}</p>
             </div>
           )}
-          {exportState.kind === 'STATUS_READY' && exportState.status.status === 'PENDING' && (
+          {exportState.kind === 'STATUS_READY' && (
             <div className="dsh-security-section__action">
               <button
                 type="button"

@@ -927,17 +927,34 @@ describe('Security Assurance Workbench UI', () => {
         }
         exportStatusReads += 1
         const pending = exportStatusReads === 1
+        const expired = exportStatusReads >= 3
         return Promise.resolve({ ok: true, value: { ok: true, value: {
           schemaVersion: 1,
           kind: 'STATUS',
           exportId,
           assessmentId: id,
           assessmentRevision: 8,
-          status: pending ? 'PENDING' : 'DELIVERED',
+          status: pending ? 'PENDING' : expired ? 'EXPIRED' : 'DELIVERED',
           profile: exportPreview.profile,
           destination: exportPreview.destination,
-          artifact: pending ? null : { artifactId: `${exportId}/artifact`, digest: exportDigest },
+          artifact: pending || expired ? null : { artifactId: `${exportId}/artifact`, digest: exportDigest },
           expiresAt: pending ? null : '2026-08-26T00:09:00.000Z',
+          retention: pending
+            ? { status: 'NOT_RETAINED' }
+            : expired
+              ? {
+                  status: 'PURGED',
+                  tombstone: {
+                    artifactId: `${exportId}/artifact`,
+                    digest: exportDigest,
+                    expiredAt: '2026-08-26T00:09:00.000Z',
+                    deletionAuthority: 'SECURITY_SERVICE_RETENTION',
+                    reason: 'ARTIFACT_EXPIRED',
+                  },
+                  purgeRequestedAt: '2026-08-26T00:09:00.001Z',
+                  purgedAt: '2026-08-26T00:09:00.002Z',
+                }
+              : { status: 'RETAINED' },
           delivery: {
             attemptCount: pending ? 1 : 2,
             lastAttemptAt: pending ? '2026-08-25T00:09:01.000Z' : '2026-08-25T00:09:02.000Z',
@@ -947,6 +964,8 @@ describe('Security Assurance Workbench UI', () => {
           },
           accessAction: pending
             ? { kind: 'NONE', reason: 'DELIVERY_PENDING' }
+            : expired
+              ? { kind: 'NONE', reason: 'ARTIFACT_EXPIRED' }
             : {
                 kind: 'ONE_USE_DOWNLOAD',
                 action: 'REQUEST_ONE_USE_DOWNLOAD',
@@ -955,7 +974,11 @@ describe('Security Assurance Workbench UI', () => {
               },
           failure: null,
           createdAt: '2026-08-25T00:09:00.000Z',
-          updatedAt: pending ? '2026-08-25T00:09:01.000Z' : '2026-08-25T00:09:02.000Z',
+          updatedAt: pending
+            ? '2026-08-25T00:09:01.000Z'
+            : expired
+              ? '2026-08-26T00:09:00.002Z'
+              : '2026-08-25T00:09:02.000Z',
         } } })
       }
       if (endpoint === 'securityAssuranceWorkbench/requestExport') {
@@ -1018,6 +1041,7 @@ describe('Security Assurance Workbench UI', () => {
     })
     expect(overlay.view.getByText(exportId)).toBeTruthy()
     expect(overlay.view.getAllByText('PENDING').length).toBeGreaterThan(0)
+    expect(overlay.view.getByText('NOT_RETAINED')).toBeTruthy()
     expect(overlay.view.getByText('ARTIFACT_IO_ERROR')).toBeTruthy()
     expect(overlay.view.getAllByText('2026-08-25T00:09:02.000Z').length).toBeGreaterThan(0)
     expect(overlay.view.getByRole('button', { name: '刷新 Delivery 状态' })).toBeTruthy()
@@ -1032,6 +1056,7 @@ describe('Security Assurance Workbench UI', () => {
       fireEvent.click(overlay.view.getByRole('button', { name: '刷新 Delivery 状态' }))
     })
     expect(overlay.view.getAllByText('DELIVERED').length).toBeGreaterThan(0)
+    expect(overlay.view.getByText('RETAINED')).toBeTruthy()
     expect(overlay.view.getByText('sec-00000000-0000-0000-0000-0000000000e1')).toBeTruthy()
     expect(overlay.view.getByText(exportDigestValue)).toBeTruthy()
     expect(overlay.view.getByRole('button', { name: '授权并下载一次' })).toBeTruthy()
@@ -1056,6 +1081,15 @@ describe('Security Assurance Workbench UI', () => {
     anchorClick.mockRestore()
     delete (globalThis.URL as { createObjectURL?: unknown }).createObjectURL
     delete (globalThis.URL as { revokeObjectURL?: unknown }).revokeObjectURL
+
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '刷新 Delivery 状态' }))
+    })
+    expect(overlay.view.getAllByText('EXPIRED').length).toBeGreaterThan(0)
+    expect(overlay.view.getByText('PURGED')).toBeTruthy()
+    expect(overlay.view.getByText('ARTIFACT_EXPIRED')).toBeTruthy()
+    expect(overlay.view.getByText(exportDigestValue)).toBeTruthy()
+    expect(overlay.view.queryByRole('button', { name: '授权并下载一次' })).toBeNull()
 
     act(() => { b.locale.setLocale('en') })
     expect(overlay.view.getByRole('heading', { name: 'Bundle and Export Readiness' })).toBeTruthy()

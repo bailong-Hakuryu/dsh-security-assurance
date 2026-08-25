@@ -71,6 +71,17 @@ async function waitForExportStatus(
   throw new Error(`Export ${exportId} did not reach the expected status`)
 }
 
+async function waitForPersistedExportPurge(recordFile: string): Promise<void> {
+  for (let attempt = 0; attempt < 320; attempt += 1) {
+    const value = JSON.parse(await readFile(recordFile, 'utf8')) as {
+      readonly view?: { readonly retention?: { readonly status?: string } }
+    }
+    if (value.view?.retention?.status === 'PURGED') return
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  throw new Error(`Export record ${recordFile} did not persist PURGED retention`)
+}
+
 describe('SecurityAssuranceService deterministic Assessment path', () => {
   it('seals an honest INDETERMINATE result and performs an idempotent registered Export delivery', async () => {
     const repository = await repositoryFixture()
@@ -353,14 +364,15 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
         exportId: requested.value.exportId,
       })).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } })
 
-      const deliveredBytes = await readFile(join(
+      const deliveredArtifact = join(
         dshHome,
         'security-assurance',
         'delivery',
         'destinations',
         'local-audit',
         `${requested.value.exportId}.json`,
-      ), 'utf8')
+      )
+      const deliveredBytes = await readFile(deliveredArtifact, 'utf8')
       expect(JSON.parse(deliveredBytes)).toMatchObject({
         schemaVersion: 1,
         exportProfileId: 'security/export/internal-json-v1',
@@ -483,7 +495,91 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
         failure: { code: 'ARTIFACT_DELIVERY_FAILED' },
       })
 
+      const retentionHome = await mkdtemp(join(tmpdir(), 'dsh-security-export-retention-home-'))
+      temporaryRoots.push(retentionHome)
+      let retentionClock = new Date().toISOString()
+      const retentionModule = new ExportDeliveryModule(
+        join(retentionHome, 'security-assurance'),
+        () => retentionClock,
+      )
+      const retentionBegin = await retentionModule.begin(deliveryAuthority, {
+        ...exportRequest,
+        idempotencyKey: 'deterministic-export-retention-1',
+      }, preview.value)
+      const retained = await retentionModule.deliver(retentionBegin, submission.value)
+      expect(retained).toMatchObject({ status: 'DELIVERED', retention: { status: 'RETAINED' } })
+      if (retained.expiresAt === null || retained.artifact === null) {
+        throw new Error('retained Export lost expiry or artifact metadata')
+      }
+      retentionClock = retained.expiresAt
+      const retentionArtifact = join(
+        retentionHome,
+        'security-assurance',
+        'delivery',
+        'destinations',
+        'local-audit',
+        `${retentionBegin.record.receipt.exportId}.json`,
+      )
+      await rm(retentionArtifact)
+      await mkdir(retentionArtifact)
+      await writeFile(join(retentionArtifact, 'sentinel.txt'), 'must not be recursively deleted', 'utf8')
+      const purgePending = await retentionModule.get(retentionBegin.record.receipt.exportId, deliveryAuthority)
+      expect(purgePending).toMatchObject({
+        status: 'EXPIRED',
+        artifact: null,
+        retention: {
+          status: 'PURGE_PENDING',
+          tombstone: {
+            artifactId: retained.artifact.artifactId,
+            digest: retained.artifact.digest,
+            deletionAuthority: 'SECURITY_SERVICE_RETENTION',
+            reason: 'ARTIFACT_EXPIRED',
+          },
+          purgedAt: null,
+        },
+        accessAction: { kind: 'NONE', reason: 'ARTIFACT_EXPIRED' },
+      })
+      await expect(readFile(join(retentionArtifact, 'sentinel.txt'), 'utf8')).resolves.toBe(
+        'must not be recursively deleted',
+      )
+      await expect(retentionModule.authorizeDownload(deliveryAuthority, {
+        ...downloadRequest,
+        exportId: retentionBegin.record.receipt.exportId,
+        artifactId: retained.artifact.artifactId,
+        expectedDigest: retained.artifact.digest,
+      })).rejects.toMatchObject({ code: 'CONFLICT' })
+      if (purgePending?.retention.status !== 'PURGE_PENDING') {
+        throw new Error('expired Export lost its pending purge audit')
+      }
+      const purgeRequestedAt = purgePending.retention.purgeRequestedAt
+      await rm(retentionArtifact, { recursive: true })
+      retentionClock = new Date(Date.parse(retentionClock) - 1_000).toISOString()
+      const purged = await retentionModule.get(retentionBegin.record.receipt.exportId, deliveryAuthority)
+      expect(purged).toMatchObject({
+        status: 'EXPIRED',
+        retention: {
+          status: 'PURGED',
+          tombstone: { digest: retained.artifact.digest },
+          purgedAt: purgeRequestedAt,
+        },
+      })
+      await expect(readFile(retentionArtifact)).rejects.toMatchObject({ code: 'ENOENT' })
+
       await fiber.dispose()
+      const deliveredRecord = join(
+        dshHome,
+        'security-assurance',
+        'delivery',
+        'exports',
+        requested.value.exportId,
+        'record.json',
+      )
+      const offlineExpiry = JSON.parse(await readFile(deliveredRecord, 'utf8')) as {
+        view: Record<string, unknown> & { createdAt: string; expiresAt: string }
+      }
+      delete offlineExpiry.view.retention
+      offlineExpiry.view.expiresAt = new Date(Date.parse(offlineExpiry.view.createdAt) + 1).toISOString()
+      await writeFile(deliveredRecord, JSON.stringify(offlineExpiry), 'utf8')
       const recoveryBegin = await deliveryModule.begin(deliveryAuthority, {
         ...exportRequest,
         idempotencyKey: 'deterministic-export-crash-recovery-1',
@@ -500,6 +596,8 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       const restartedContext = new Context()
       fiber = await restartedContext.plugin(SecurityAssuranceService, { dshHome })
       const restartedInvocation = referenceHostInvocation(restartedContext.securityAssurance)
+      await waitForPersistedExportPurge(deliveredRecord)
+      await expect(readFile(deliveredArtifact)).rejects.toMatchObject({ code: 'ENOENT' })
       const retrying = await waitForExportStatus(
         restartedContext.securityAssurance,
         restartedInvocation,
@@ -526,11 +624,32 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
         failure: null,
       })
       expect(recovered.delivery.attemptCount).toBeGreaterThanOrEqual(2)
-      expect(await restartedContext.securityAssurance.getExport(restartedInvocation, {
+      const expired = await restartedContext.securityAssurance.getExport(restartedInvocation, {
         schemaVersion: 1,
         kind: 'STATUS',
         exportId: requested.value.exportId,
-      })).toEqual(delivered)
+      })
+      expect(expired).toMatchObject({
+        ok: true,
+        value: {
+          status: 'EXPIRED',
+          artifact: null,
+          retention: {
+            status: 'PURGED',
+            tombstone: {
+              artifactId: delivered.value.artifact.artifactId,
+              digest: delivered.value.artifact.digest,
+              deletionAuthority: 'SECURITY_SERVICE_RETENTION',
+              reason: 'ARTIFACT_EXPIRED',
+            },
+          },
+          accessAction: { kind: 'NONE', reason: 'ARTIFACT_EXPIRED' },
+        },
+      })
+      expect(await restartedContext.securityAssurance.getExport(restartedInvocation, downloadRequest)).toMatchObject({
+        ok: false,
+        error: { code: 'CONFLICT' },
+      })
     } finally {
       await fiber.dispose()
     }

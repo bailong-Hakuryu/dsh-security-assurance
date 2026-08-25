@@ -727,7 +727,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
       ExportDeliveryStatusV1,
       readonly ExportDeliveryStatusV1[]
     >> = {
-      PENDING: ['PENDING', 'DELIVERED', 'FAILED'],
+      PENDING: ['PENDING', 'DELIVERED', 'FAILED', 'EXPIRED'],
       DELIVERED: ['DELIVERED', 'EXPIRED'],
       FAILED: ['FAILED'],
       EXPIRED: ['EXPIRED'],

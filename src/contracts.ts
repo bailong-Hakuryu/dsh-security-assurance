@@ -1950,6 +1950,30 @@ export type ExportDeliveryAttemptFailureCodeV1 =
   | 'ARTIFACT_INTEGRITY_CONFLICT'
   | 'SOURCE_SUBMISSION_UNAVAILABLE'
 
+export interface ExportArtifactTombstoneV1 {
+  readonly artifactId: string
+  readonly digest: DigestEnvelopeV1
+  readonly expiredAt: string
+  readonly deletionAuthority: 'SECURITY_SERVICE_RETENTION'
+  readonly reason: 'ARTIFACT_EXPIRED'
+}
+
+export type ExportRetentionV1 =
+  | { readonly status: 'NOT_RETAINED' }
+  | { readonly status: 'RETAINED' }
+  | {
+      readonly status: 'PURGE_PENDING'
+      readonly tombstone: ExportArtifactTombstoneV1
+      readonly purgeRequestedAt: string
+      readonly purgedAt: null
+    }
+  | {
+      readonly status: 'PURGED'
+      readonly tombstone: ExportArtifactTombstoneV1
+      readonly purgeRequestedAt: string
+      readonly purgedAt: string
+    }
+
 export interface ExportStatusV1 {
   readonly schemaVersion: 1
   readonly kind: 'STATUS'
@@ -1964,6 +1988,7 @@ export interface ExportStatusV1 {
     readonly digest: DigestEnvelopeV1
   }
   readonly expiresAt: string | null
+  readonly retention: ExportRetentionV1
   readonly delivery: {
     readonly attemptCount: number
     readonly lastAttemptAt: string | null
@@ -1999,6 +2024,34 @@ export const exportStatusV1Schema: z.ZodType<ExportStatusV1> = z.strictObject({
     digest: digestEnvelopeV1Schema,
   }).nullable(),
   expiresAt: z.iso.datetime({ offset: true }).nullable(),
+  retention: z.discriminatedUnion('status', [
+    z.strictObject({ status: z.literal('NOT_RETAINED') }),
+    z.strictObject({ status: z.literal('RETAINED') }),
+    z.strictObject({
+      status: z.literal('PURGE_PENDING'),
+      tombstone: z.strictObject({
+        artifactId: boundedBindingId,
+        digest: digestEnvelopeV1Schema,
+        expiredAt: z.iso.datetime({ offset: true }),
+        deletionAuthority: z.literal('SECURITY_SERVICE_RETENTION'),
+        reason: z.literal('ARTIFACT_EXPIRED'),
+      }),
+      purgeRequestedAt: z.iso.datetime({ offset: true }),
+      purgedAt: z.null(),
+    }),
+    z.strictObject({
+      status: z.literal('PURGED'),
+      tombstone: z.strictObject({
+        artifactId: boundedBindingId,
+        digest: digestEnvelopeV1Schema,
+        expiredAt: z.iso.datetime({ offset: true }),
+        deletionAuthority: z.literal('SECURITY_SERVICE_RETENTION'),
+        reason: z.literal('ARTIFACT_EXPIRED'),
+      }),
+      purgeRequestedAt: z.iso.datetime({ offset: true }),
+      purgedAt: z.iso.datetime({ offset: true }),
+    }),
+  ]),
   delivery: z.strictObject({
     attemptCount: z.number().int().min(0).max(EXPORT_DELIVERY_MAX_ATTEMPTS),
     lastAttemptAt: z.iso.datetime({ offset: true }).nullable(),
@@ -2051,6 +2104,42 @@ export const exportStatusV1Schema: z.ZodType<ExportStatusV1> = z.strictObject({
   }
   if ((view.delivery.lastFailureAt === null) !== (view.delivery.lastFailureCode === null)) {
     context.addIssue({ code: 'custom', path: ['delivery'], message: 'delivery failure time and code exist together' })
+  }
+  if ((view.status === 'DELIVERED' || view.status === 'EXPIRED') !== (view.expiresAt !== null)) {
+    context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'retained or expired Export has an expiry' })
+  }
+  if (view.status === 'DELIVERED' && view.retention.status !== 'RETAINED') {
+    context.addIssue({ code: 'custom', path: ['retention'], message: 'delivered Export is retained' })
+  }
+  if (view.status === 'EXPIRED' && ![
+    'PURGE_PENDING',
+    'PURGED',
+  ].includes(view.retention.status)) {
+    context.addIssue({ code: 'custom', path: ['retention'], message: 'expired Export has purge state' })
+  }
+  if (
+    (view.status === 'PENDING' || view.status === 'FAILED')
+    && view.retention.status !== 'NOT_RETAINED'
+  ) {
+    context.addIssue({ code: 'custom', path: ['retention'], message: 'undelivered Export is not retained' })
+  }
+  if (
+    (view.retention.status === 'PURGE_PENDING' || view.retention.status === 'PURGED')
+    && view.expiresAt !== view.retention.tombstone.expiredAt
+  ) {
+    context.addIssue({ code: 'custom', path: ['retention', 'tombstone'], message: 'tombstone binds exact expiry' })
+  }
+  if (
+    (view.retention.status === 'PURGE_PENDING' || view.retention.status === 'PURGED')
+    && Date.parse(view.retention.purgeRequestedAt) < Date.parse(view.retention.tombstone.expiredAt)
+  ) {
+    context.addIssue({ code: 'custom', path: ['retention', 'purgeRequestedAt'], message: 'purge cannot precede expiry' })
+  }
+  if (
+    view.retention.status === 'PURGED'
+    && Date.parse(view.retention.purgedAt) < Date.parse(view.retention.purgeRequestedAt)
+  ) {
+    context.addIssue({ code: 'custom', path: ['retention', 'purgedAt'], message: 'purge completion follows its request' })
   }
 })
 

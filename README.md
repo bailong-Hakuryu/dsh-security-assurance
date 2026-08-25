@@ -217,9 +217,13 @@ owner-bound `getExport` status, and durable delivery through the frozen
 `delivery/local-audit` adapter are also implemented. Persisted attempt metadata,
 bounded backoff, startup recovery of unfinished work, terminal failure, and
 lifecycle-owned worker shutdown keep Delivery independent of the browser. An
-explicit Workbench download resolves current Host authority again, atomically consumes a
-process-local 60-second one-use capability, verifies the exact artifact digest,
-and discards content from Workbench state after invoking the browser download.
+expiry reaper also persists an owner-bound digest tombstone, denies access,
+deletes only the exact governed artifact file, and records physical purge
+completion. Offline expiry and interrupted cleanup are reconciled at startup. An
+explicit Workbench download resolves current Host authority again, atomically
+consumes a process-local 60-second one-use capability, verifies the exact
+artifact digest, and discards content from Workbench state after invoking the
+browser download.
 This repository ships no production external
 Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
@@ -476,9 +480,10 @@ Service home. Transient artifact I/O and sealed-source reads remain `PENDING`
 under a five-attempt Service-owned retry policy; status discloses bounded attempt
 count, last safe failure category, timestamps, and next retry time. The
 Workbench can explicitly refresh that status but never initiates a retry.
-Canonical-byte conflicts are terminal. Status projects `HOST_MANAGED` access
-unless current authority also has `export:download`; only then does it project
-`ONE_USE_DOWNLOAD`. The explicit
+At expiry it observes `PURGE_PENDING` or `PURGED` plus a path-free digest
+tombstone; the browser never performs cleanup. Canonical-byte conflicts are
+terminal. Status projects `HOST_MANAGED` access unless current authority also
+has `export:download`; only then does it project `ONE_USE_DOWNLOAD`. The explicit
 download action reauthorizes through the Host Remote, binds Export, artifact, and
 Digest Envelope, mints and consumes a non-serializable process-local capability
 inside the same Service invocation, and returns an artifact of at most 16 MiB as

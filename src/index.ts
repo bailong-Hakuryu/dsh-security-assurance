@@ -168,6 +168,7 @@ export * from './analyzer.ts'
 
 const EXPORT_DELIVERY_IDLE_SCAN_MS = 30_000
 const EXPORT_DELIVERY_WORKER_ERROR_RETRY_MS = 1_000
+const EXPORT_RETENTION_REAPER_RETRY_MS = 30_000
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -1556,8 +1557,10 @@ export class SecurityAssuranceService extends Service {
       let waitMs = EXPORT_DELIVERY_IDLE_SCAN_MS
       try {
         const recoverable = await this.exportDelivery.listRecoverable()
+        const expirable = await this.exportDelivery.listExpirable()
         const observedAt = Date.now()
         let attempted = false
+        let purgePending = false
         for (const delivery of recoverable) {
           if (signal.aborted) return
           const retryAt = delivery.nextRetryAt === null ? observedAt : Date.parse(delivery.nextRetryAt)
@@ -1579,7 +1582,21 @@ export class SecurityAssuranceService extends Service {
             await this.exportDelivery.deliverPending(delivery.exportId, submission)
           }
         }
-        if (attempted) continue
+        for (const expiry of expirable) {
+          if (signal.aborted) return
+          const expiresAt = expiry.purgePending ? observedAt : Date.parse(expiry.expiresAt)
+          if (expiresAt > observedAt) {
+            waitMs = Math.min(waitMs, expiresAt - observedAt)
+            continue
+          }
+          attempted = true
+          const status = await this.exportDelivery.reconcileExpiry(expiry.exportId)
+          if (status.status === 'EXPIRED' && status.retention.status === 'PURGE_PENDING') {
+            purgePending = true
+          }
+        }
+        if (attempted && !purgePending) continue
+        if (purgePending) waitMs = Math.min(waitMs, EXPORT_RETENTION_REAPER_RETRY_MS)
       } catch {
         waitMs = EXPORT_DELIVERY_WORKER_ERROR_RETRY_MS
       }
