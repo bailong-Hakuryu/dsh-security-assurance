@@ -385,12 +385,15 @@ interval width. The engine rejects undeclared or inconsistent identities,
 refuses partial matrices, and reports the mean, sample standard deviation,
 direction-aware worst result, and a deterministic two-sided Hoeffding interval
 for every primary metric. Repetitions never inflate Stratum sample counts.
+Every predeclared Stratum also freezes a validated-recall interval-width limit;
+the engine reports unweighted and severity-weighted recall distributions for
+that exact Stratum and makes the Stratum inconclusive when either bound is
+unavailable or too wide.
 
-These slices are not an Effectiveness or release claim. Stratum-specific
-uncertainty requirements, paired Arms, matched-budget comparison, Utility,
-non-inferiority, Ground Truth air-gap execution, Release Constitution
-thresholds, Scorecards, and the Release Evidence Manifest remain separate
-future proof slices.
+These slices are not an Effectiveness or release claim. Paired Arms,
+matched-budget comparison, Utility, non-inferiority, Ground Truth air-gap
+execution, Release Constitution thresholds, Scorecards, and the Release
+Evidence Manifest remain separate future proof slices.
 
 ## Model-facing Assessment operations
 

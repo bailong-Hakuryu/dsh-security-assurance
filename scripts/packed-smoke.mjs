@@ -212,6 +212,10 @@ const packedStratumDefinitions = [
     minimumSamples: 1,
   },
 ]
+const packedRepetitionStratumDefinitions = packedStratumDefinitions.map(definition => ({
+  ...definition,
+  maximumValidatedRecallIntervalWidth: 1,
+}))
 const packedEmptyMetrics = evaluation.calculateEffectivenessMetricsV1({
   schemaVersion: 1,
   engineId: 'security/effectiveness-metrics/v1',
@@ -223,7 +227,7 @@ const packedRepeatedMetrics = evaluation.calculateEffectivenessMetricsV1({
   schemaVersion: 1,
   engineId: 'security/effectiveness-metrics/v1',
   severityWeights: { CRITICAL: 8, HIGH: 5, MEDIUM: 3, LOW: 2, INFORMATIONAL: 1 },
-  stratumDefinitions: packedStratumDefinitions,
+  stratumDefinitions: packedRepetitionStratumDefinitions,
   repetitionPlan: {
     method: 'HOEFFDING_TWO_SIDED_V1',
     repetitionIds: ['rep-a', 'rep-b'],
@@ -274,6 +278,7 @@ if (
   || packedRepeatedMetrics.repetitionAnalysis.metrics.validatedPrecision.mean !== 0.5
   || packedRepeatedMetrics.repetitionAnalysis.metrics.unsafeSatisfactionRate.worst !== 1
   || packedRepeatedMetrics.strata.some(item => item.observedSamples !== 1)
+  || packedRepeatedMetrics.strata.some(item => item.uncertainty?.status !== 'SUFFICIENT')
 ) {
   throw new Error('packed Evaluation entry did not execute the versioned Metrics Engine')
 }

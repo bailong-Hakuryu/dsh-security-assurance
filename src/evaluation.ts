@@ -107,6 +107,7 @@ export const benchmarkStratumDefinitionV1Schema = z.strictObject({
   stratumId: boundedEvaluationIdSchema,
   selector: benchmarkStratumSelectorV1Schema,
   minimumSamples: z.number().int().positive().max(1_000_000),
+  maximumValidatedRecallIntervalWidth: z.number().positive().max(1).optional(),
 })
 
 export type BenchmarkStratumDefinitionV1 = z.infer<
@@ -179,37 +180,6 @@ export type EffectivenessInconclusiveReasonV1 = z.infer<
   typeof effectivenessInconclusiveReasonV1Schema
 >
 
-export const benchmarkStratumResultV1Schema = z.strictObject({
-  stratumId: boundedEvaluationIdSchema,
-  selector: benchmarkStratumSelectorV1Schema,
-  sampleUnit: z.enum(['CASE', 'GROUND_TRUTH_DEFECT']),
-  minimumSamples: z.number().int().positive(),
-  observedSamples: z.number().int().nonnegative(),
-  status: z.enum(['SUFFICIENT', 'INCONCLUSIVE']),
-  reasonCodes: z.array(z.literal('INSUFFICIENT_SAMPLE_COUNT')).max(1),
-}).superRefine((value, context) => {
-  const expectedUnit = value.selector.dimension === 'SEVERITY'
-    || value.selector.dimension === 'WEAKNESS_FAMILY'
-    ? 'GROUND_TRUTH_DEFECT'
-    : 'CASE'
-  const sufficient = value.observedSamples >= value.minimumSamples
-  if (
-    value.sampleUnit !== expectedUnit
-    || (sufficient && (value.status !== 'SUFFICIENT' || value.reasonCodes.length !== 0))
-    || (!sufficient && (
-      value.status !== 'INCONCLUSIVE'
-      || value.reasonCodes.length !== 1
-      || value.reasonCodes[0] !== 'INSUFFICIENT_SAMPLE_COUNT'
-    ))
-  ) {
-    context.addIssue({ code: 'custom', message: 'Inconsistent Benchmark Stratum result.' })
-  }
-})
-
-export type BenchmarkStratumResultV1 = z.infer<
-  typeof benchmarkStratumResultV1Schema
->
-
 export const repetitionConfidenceIntervalV1Schema = z.strictObject({
   method: z.literal('HOEFFDING_TWO_SIDED_V1'),
   confidenceLevel: z.number().gt(0.5).lt(1),
@@ -267,6 +237,74 @@ export const repetitionMetricDistributionV1Schema = z.discriminatedUnion('status
 
 export type RepetitionMetricDistributionV1 = z.infer<
   typeof repetitionMetricDistributionV1Schema
+>
+
+export const stratumUncertaintyAnalysisV1Schema = z.strictObject({
+  method: z.literal('HOEFFDING_TWO_SIDED_V1'),
+  confidenceLevel: z.number().gt(0.5).lt(1),
+  maximumValidatedRecallIntervalWidth: z.number().positive().max(1),
+  status: z.enum(['SUFFICIENT', 'INCONCLUSIVE']),
+  reasonCodes: z.array(z.enum([
+    'INCOMPLETE_REPETITION_METRICS',
+    'EXCESSIVE_CONFIDENCE_INTERVAL_WIDTH',
+  ])).max(2),
+  metrics: z.strictObject({
+    validatedRecall: repetitionMetricDistributionV1Schema,
+    severityWeightedValidatedRecall: repetitionMetricDistributionV1Schema,
+  }),
+}).superRefine((value, context) => {
+  const metrics = Object.values(value.metrics)
+  if (
+    (value.status === 'SUFFICIENT' && (
+      value.reasonCodes.length !== 0
+      || metrics.some(metric => (
+        metric.status !== 'MEASURED'
+        || metric.uncertaintyStatus !== 'SUFFICIENT'
+      ))
+    ))
+    || (value.status === 'INCONCLUSIVE' && value.reasonCodes.length === 0)
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent Stratum uncertainty.' })
+  }
+})
+
+export type StratumUncertaintyAnalysisV1 = z.infer<
+  typeof stratumUncertaintyAnalysisV1Schema
+>
+
+export const benchmarkStratumResultV1Schema = z.strictObject({
+  stratumId: boundedEvaluationIdSchema,
+  selector: benchmarkStratumSelectorV1Schema,
+  sampleUnit: z.enum(['CASE', 'GROUND_TRUTH_DEFECT']),
+  minimumSamples: z.number().int().positive(),
+  observedSamples: z.number().int().nonnegative(),
+  status: z.enum(['SUFFICIENT', 'INCONCLUSIVE']),
+  reasonCodes: z.array(z.enum([
+    'INSUFFICIENT_SAMPLE_COUNT',
+    'INCOMPLETE_REPETITION_METRICS',
+    'EXCESSIVE_CONFIDENCE_INTERVAL_WIDTH',
+  ])).max(3),
+  uncertainty: stratumUncertaintyAnalysisV1Schema.optional(),
+}).superRefine((value, context) => {
+  const expectedUnit = value.selector.dimension === 'SEVERITY'
+    || value.selector.dimension === 'WEAKNESS_FAMILY'
+    ? 'GROUND_TRUTH_DEFECT'
+    : 'CASE'
+  const sampleSufficient = value.observedSamples >= value.minimumSamples
+  const uncertaintySufficient = value.uncertainty === undefined
+    || value.uncertainty.status === 'SUFFICIENT'
+  const sufficient = sampleSufficient && uncertaintySufficient
+  if (
+    value.sampleUnit !== expectedUnit
+    || (sufficient && (value.status !== 'SUFFICIENT' || value.reasonCodes.length !== 0))
+    || (!sufficient && (value.status !== 'INCONCLUSIVE' || value.reasonCodes.length === 0))
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent Benchmark Stratum result.' })
+  }
+})
+
+export type BenchmarkStratumResultV1 = z.infer<
+  typeof benchmarkStratumResultV1Schema
 >
 
 export const repetitionAnalysisV1Schema = z.strictObject({
@@ -354,6 +392,10 @@ function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length
 }
 
+function stratumSelectorKey(selector: BenchmarkStratumSelectorV1): string {
+  return `${selector.dimension}\0${selector.value}`
+}
+
 function parseRequest(input: unknown): EffectivenessMetricsRequestV1 {
   const parsed = effectivenessMetricsRequestV1Schema.safeParse(input)
   if (
@@ -367,9 +409,9 @@ function parseRequest(input: unknown): EffectivenessMetricsRequestV1 {
   }
 
   const stratumIds = parsed.data.stratumDefinitions.map(item => item.stratumId)
-  const stratumSelectors = parsed.data.stratumDefinitions.map(
-    item => `${item.selector.dimension}\0${item.selector.value}`,
-  )
+  const stratumSelectors = parsed.data.stratumDefinitions.map(item => (
+    stratumSelectorKey(item.selector)
+  ))
   const stratumDimensions = new Set(
     parsed.data.stratumDefinitions.map(item => item.selector.dimension),
   )
@@ -387,7 +429,10 @@ function parseRequest(input: unknown): EffectivenessMetricsRequestV1 {
   const repetitionPlan = parsed.data.repetitionPlan
   if (repetitionPlan === undefined) {
     if (
-      parsed.data.cases.some(item => item.repetitionId !== undefined)
+      parsed.data.stratumDefinitions.some(
+        item => item.maximumValidatedRecallIntervalWidth !== undefined,
+      )
+      || parsed.data.cases.some(item => item.repetitionId !== undefined)
       || !unique(parsed.data.cases.map(item => item.caseId))
     ) {
       return invalidEvidence()
@@ -396,6 +441,9 @@ function parseRequest(input: unknown): EffectivenessMetricsRequestV1 {
     if (
       !unique(repetitionPlan.repetitionIds)
       || !unique(repetitionPlan.benchmarkCaseIds)
+      || parsed.data.stratumDefinitions.some(
+        item => item.maximumValidatedRecallIntervalWidth === undefined,
+      )
     ) {
       return invalidEvidence()
     }
@@ -723,6 +771,146 @@ function calculateRepetitionAnalysis(
   }
 }
 
+type StratumRecallCounts = {
+  matched: number
+  total: number
+  matchedWeighted: number
+  totalWeighted: number
+}
+
+function calculateStratumUncertaintyAnalyses(
+  request: EffectivenessMetricsRequestV1,
+  repetitionAnalysis: RepetitionAnalysisV1 | null,
+): Map<string, StratumUncertaintyAnalysisV1> {
+  const plan = request.repetitionPlan
+  if (plan === undefined || repetitionAnalysis === null) return new Map()
+
+  const definitionsBySelector = new Map(
+    request.stratumDefinitions.map(definition => [
+      stratumSelectorKey(definition.selector),
+      definition,
+    ]),
+  )
+  const countsByRepetition = new Map<string, Map<string, StratumRecallCounts>>()
+  for (const repetitionId of plan.repetitionIds) {
+    countsByRepetition.set(repetitionId, new Map())
+  }
+
+  for (const item of request.cases) {
+    if (item.disposition === 'BENCHMARK_INVALID') continue
+    const repetitionCounts = countsByRepetition.get(item.repetitionId as string)
+    if (repetitionCounts === undefined) continue
+    const matchedDefects = new Set<string>()
+    if (item.result.kind === 'COMPLETED') {
+      for (const finding of item.result.findings) {
+        if (finding.adjudication.status === 'MATCHED') {
+          matchedDefects.add(finding.adjudication.defectId)
+        }
+      }
+    }
+    const caseDefinitions = [
+      definitionsBySelector.get(`ASSESSMENT_MODE\0${item.assessmentMode}`),
+      definitionsBySelector.get(`SUPPORTED_ECOSYSTEM\0${item.supportedEcosystem}`),
+    ]
+    for (const defect of item.groundTruthDefects) {
+      const definitions = [
+        definitionsBySelector.get(`SEVERITY\0${defect.severity}`),
+        definitionsBySelector.get(`WEAKNESS_FAMILY\0${defect.weaknessFamily}`),
+        ...caseDefinitions,
+      ]
+      for (const definition of definitions) {
+        if (definition === undefined) continue
+        const counts = repetitionCounts.get(definition.stratumId) ?? {
+          matched: 0,
+          total: 0,
+          matchedWeighted: 0,
+          totalWeighted: 0,
+        }
+        const weight = request.severityWeights[defect.severity]
+        counts.total += 1
+        counts.totalWeighted += weight
+        if (matchedDefects.has(defect.defectId)) {
+          counts.matched += 1
+          counts.matchedWeighted += weight
+        }
+        repetitionCounts.set(definition.stratumId, counts)
+      }
+    }
+  }
+
+  const matrixIncomplete = repetitionAnalysis.reasonCodes.includes(
+    'INCOMPLETE_REPETITION_CASE_MATRIX',
+  )
+  const analyses = new Map<string, StratumUncertaintyAnalysisV1>()
+  for (const definition of request.stratumDefinitions) {
+    const maximumWidth = definition.maximumValidatedRecallIntervalWidth as number
+    let validatedRecall: RepetitionMetricDistributionV1
+    let severityWeightedValidatedRecall: RepetitionMetricDistributionV1
+    if (matrixIncomplete) {
+      validatedRecall = inconclusiveDistribution('MINIMUM', 'INCOMPLETE_REPETITION_METRICS')
+      severityWeightedValidatedRecall = inconclusiveDistribution(
+        'MINIMUM',
+        'INCOMPLETE_REPETITION_METRICS',
+      )
+    } else {
+      const counts = [...plan.repetitionIds]
+        .sort(compareIds)
+        .map(repetitionId => countsByRepetition.get(repetitionId)?.get(definition.stratumId) ?? {
+          matched: 0,
+          total: 0,
+          matchedWeighted: 0,
+          totalWeighted: 0,
+        })
+      const recalls = counts.map(item => ratio(item.matched, item.total))
+      const weightedRecalls = counts.map(item => ratio(
+        item.matchedWeighted,
+        item.totalWeighted,
+      ))
+      const distributionPlan = {
+        ...plan,
+        maximumConfidenceIntervalWidth: maximumWidth,
+      }
+      validatedRecall = recalls.some(metric => metric.status === 'INCONCLUSIVE')
+        ? inconclusiveDistribution('MINIMUM', 'INCOMPLETE_REPETITION_METRICS')
+        : calculateDistribution(
+            recalls.map(metric => metric.value as number),
+            'MINIMUM',
+            distributionPlan,
+          )
+      severityWeightedValidatedRecall = weightedRecalls.some(
+        metric => metric.status === 'INCONCLUSIVE',
+      )
+        ? inconclusiveDistribution('MINIMUM', 'INCOMPLETE_REPETITION_METRICS')
+        : calculateDistribution(
+            weightedRecalls.map(metric => metric.value as number),
+            'MINIMUM',
+            distributionPlan,
+          )
+    }
+
+    const metrics = { validatedRecall, severityWeightedValidatedRecall }
+    const reasonCodes: StratumUncertaintyAnalysisV1['reasonCodes'] = []
+    if (Object.values(metrics).some(metric => metric.status === 'INCONCLUSIVE')) {
+      reasonCodes.push('INCOMPLETE_REPETITION_METRICS')
+    }
+    if (Object.values(metrics).some(metric => (
+      metric.status === 'MEASURED'
+      && metric.uncertaintyStatus === 'INCONCLUSIVE'
+    ))) {
+      reasonCodes.push('EXCESSIVE_CONFIDENCE_INTERVAL_WIDTH')
+    }
+    analyses.set(definition.stratumId, {
+      method: plan.method,
+      confidenceLevel: plan.confidenceLevel,
+      maximumValidatedRecallIntervalWidth: maximumWidth,
+      status: reasonCodes.length === 0 ? 'SUFFICIENT' : 'INCONCLUSIVE',
+      reasonCodes,
+      metrics,
+    })
+  }
+  return analyses
+}
+
 /**
  * Calculate aggregate Effectiveness, predeclared Stratum sample sufficiency,
  * and optional independent-repetition uncertainty from immutable evidence.
@@ -741,6 +929,11 @@ export function calculateEffectivenessMetricsV1(input: unknown): EffectivenessMe
   const stratumSummary = request.repetitionPlan === undefined
     ? summary
     : summarizeCases(stratumCases, request.severityWeights)
+  const repetitionAnalysis = calculateRepetitionAnalysis(request)
+  const stratumUncertaintyAnalyses = calculateStratumUncertaintyAnalyses(
+    request,
+    repetitionAnalysis,
+  )
 
   const strata: BenchmarkStratumResultV1[] = request.stratumDefinitions
     .map((definition): BenchmarkStratumResultV1 => {
@@ -764,21 +957,31 @@ export function calculateEffectivenessMetricsV1(input: unknown): EffectivenessMe
           observedSamples = stratumSummary.ecosystemSamples.get(definition.selector.value) ?? 0
           break
       }
-      const sufficient = observedSamples >= definition.minimumSamples
+      const uncertainty = stratumUncertaintyAnalyses.get(definition.stratumId)
+      const reasonCodes: BenchmarkStratumResultV1['reasonCodes'] = []
+      if (observedSamples < definition.minimumSamples) {
+        reasonCodes.push('INSUFFICIENT_SAMPLE_COUNT')
+      }
+      if (uncertainty?.reasonCodes.includes('INCOMPLETE_REPETITION_METRICS')) {
+        reasonCodes.push('INCOMPLETE_REPETITION_METRICS')
+      }
+      if (uncertainty?.reasonCodes.includes('EXCESSIVE_CONFIDENCE_INTERVAL_WIDTH')) {
+        reasonCodes.push('EXCESSIVE_CONFIDENCE_INTERVAL_WIDTH')
+      }
       return {
         stratumId: definition.stratumId,
         selector: definition.selector,
         sampleUnit,
         minimumSamples: definition.minimumSamples,
         observedSamples,
-        status: sufficient ? 'SUFFICIENT' : 'INCONCLUSIVE',
-        reasonCodes: sufficient ? [] : ['INSUFFICIENT_SAMPLE_COUNT'],
+        status: reasonCodes.length === 0 ? 'SUFFICIENT' : 'INCONCLUSIVE',
+        reasonCodes,
+        ...(uncertainty === undefined ? {} : { uncertainty }),
       }
     })
     .sort((left, right) => compareIds(left.stratumId, right.stratumId))
   const sufficientStrata = strata.filter(item => item.status === 'SUFFICIENT').length
   const inconclusiveStrata = strata.length - sufficientStrata
-  const repetitionAnalysis = calculateRepetitionAnalysis(request)
 
   const reasonCodes = [...summary.reasonCodes]
   if (inconclusiveStrata > 0) reasonCodes.push('INSUFFICIENT_BENCHMARK_STRATA')
