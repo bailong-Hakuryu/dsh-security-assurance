@@ -48,12 +48,24 @@ importers:
       '@deepseek-ai/dsh-home-paths':
         specifier: link:../deepseek-harness-master/packages/util/home-paths
         version: link:../deepseek-harness-master/packages/util/home-paths
+      '@deepseek-ai/dsh-llm':
+        specifier: link:../deepseek-harness-master/packages/llm/llm
+        version: link:../deepseek-harness-master/packages/llm/llm
+      '@deepseek-ai/dsh-session':
+        specifier: link:../deepseek-harness-master/packages/core/session
+        version: link:../deepseek-harness-master/packages/core/session
+      '@deepseek-ai/dsh-system-prompt':
+        specifier: link:../deepseek-harness-master/packages/core/system-prompt
+        version: link:../deepseek-harness-master/packages/core/system-prompt
       '@deepseek-ai/dsh-subagent':
         specifier: link:../deepseek-harness-master/packages/subagent/subagent
         version: link:../deepseek-harness-master/packages/subagent/subagent
       '@deepseek-ai/dsh-subprocess-local':
         specifier: link:../deepseek-harness-master/packages/subprocess/subprocess-local
         version: link:../deepseek-harness-master/packages/subprocess/subprocess-local
+      '@deepseek-ai/dsh-tools':
+        specifier: link:../deepseek-harness-master/packages/core/tools
+        version: link:../deepseek-harness-master/packages/core/tools
       '@deepseek-ai/dsh-typert-generator':
         specifier: link:../deepseek-harness-master/packages/typert/generator
         version: link:../deepseek-harness-master/packages/typert/generator

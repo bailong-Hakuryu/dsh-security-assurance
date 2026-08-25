@@ -16,6 +16,11 @@ This repository is under active vertical-slice development, not at the
   effective Security Catalog and digest-bound Start Preflight, Finding Summary
   and Detail, purpose-bound Evidence View, Bundle Manifest, and Assurance
   Submission operations;
+- an independently activatable `dsh-security-assurance/tools` Consumer with the
+  read-only `security_assessment_status` model tool. It derives the exact live
+  Harness session outside model arguments, mints only `assessment:read`
+  authority, delegates to `getAssessment`, and returns only revision, state,
+  bounded Coverage counts, and a Verdict after sealing;
 - versioned Zod-validated public contracts;
 - one `SecurityResult<T>` success/failure envelope;
 - redacted authorization, validation, cancellation, deadline, and internal
@@ -205,8 +210,9 @@ This repository is under active vertical-slice development, not at the
 
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
-model tools, and the complete Workbench information architecture are deliberately not claimed
-as implemented yet. The Workbench Host Remote, authenticated redacted Assessment selection
+the remaining start/findings/resume/cancel/export model tools, and the complete
+Workbench information architecture are deliberately not claimed as implemented
+yet. The Workbench Host Remote, authenticated redacted Assessment selection
 with stable cursor continuation, generated Client contract, transient browser
 Controller, Runtime Health, Repositories and digest-bound New Assessment flow, read-only Assessment Detail, multidimensional Finding triage,
 revision-bound Finding Detail navigation, bilingual metadata-first Evidence,
@@ -342,6 +348,23 @@ reason. `cancelAssessment` first returns the durable cancellation-request
 Receipt after the Service has quiesced local work and finalized the Assessment;
 that Receipt identifies the request revision and does not misrepresent it as
 the later terminal revision.
+
+## Model-facing Assessment status
+
+The optional `dsh-security-assurance/tools` entry registers exactly one current
+vertical slice, `security_assessment_status`, through the Harness Tool Registry.
+Its only declared input is `assessment_id`. Caller Principal, permissions, and
+channel are never accepted from model arguments: execution requires the exact
+registered, running Agent in its active open turn and derives a process-local
+`harness-session` Invocation carrying only `assessment:read`.
+
+The canonical result contains `assessmentId`, `assessmentRevision`, `state`,
+the four bounded Coverage summary fields, and `verdict` (`null` until the
+Service has sealed the Assessment). It deliberately omits Repository and Subject
+bindings, Policy and Evidence digests, Coverage resolutions, recovery internals,
+available actions, timestamps, Seal metadata, Findings, attack paths, export
+locations, and authority metadata. The entry is lifecycle-owned: unloading it
+removes the tool without stopping the root Security Service.
 
 ## Host Repository composition
 
@@ -653,9 +676,9 @@ or Edge through the assembled Client. It does not modify Harness or ship that
 test authority layer. Shared Web HMR remains disabled in the qualified Harness
 reference, so this command deliberately makes no HMR coverage claim.
 
-All four bundle rows in `cordis.patch.yml` are disabled by default.
+All five bundle rows in `cordis.patch.yml` are disabled by default.
 Installation alone does not activate a security authority, Host Repository
-Provider, Workbench Remote, or optional Control Plane Provider.
+Provider, model tool, Workbench Remote, or optional Control Plane Provider.
 
 ## Design authority
 

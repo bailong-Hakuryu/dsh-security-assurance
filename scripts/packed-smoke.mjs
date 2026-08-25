@@ -193,6 +193,18 @@ const root = await import('dsh-security-assurance')
 if ('SecurityPersistence' in root || 'freezeSubject' in root || 'SecurityAuthorityResolver' in root) {
   throw new Error('root export leaked a package-private implementation boundary')
 }
+const modelTools = await import('dsh-security-assurance/tools')
+if (
+  typeof modelTools.default?.apply !== 'function'
+  || modelTools.default?.name !== 'dsh-security-assurance-tools'
+  || JSON.stringify(modelTools.default?.inject) !== JSON.stringify([
+    'agents', 'securityAssurance', 'tools',
+  ])
+  || 'resolveTrustedInvocation' in modelTools
+  || 'SecurityAuthorityResolver' in modelTools
+) {
+  throw new Error('packed model Tool entry is incomplete or leaked authority minting')
+}
 const hostRepositories = await import('dsh-security-assurance/host-repository-provider')
 if ('resolveTrustedInvocation' in hostRepositories || 'SecurityAuthorityResolver' in hostRepositories) {
   throw new Error('Host Repository Provider export leaked authority minting')
@@ -708,6 +720,7 @@ if (ctx.reflect.get('securityAssurance') !== undefined) {
 process.stdout.write(JSON.stringify({
   packedImport: 'PASS',
   analyzerContract: 'PASS',
+  modelTools: 'PASS',
   lifecycle: 'PASS',
   hostRepositoryProvider: 'PASS',
   workbenchRemote: 'PASS',
@@ -726,6 +739,7 @@ process.stdout.write(JSON.stringify({
   if (
     result.packedImport !== 'PASS'
     || result.analyzerContract !== 'PASS'
+    || result.modelTools !== 'PASS'
     || result.lifecycle !== 'PASS'
     || result.workbenchRemote !== 'PASS'
     || result.workbenchClient !== 'PASS'
@@ -1522,6 +1536,7 @@ process.stdout.write(JSON.stringify({
     packageVersion: installedManifest.version,
     packedImport: result.packedImport,
     analyzerContract: result.analyzerContract,
+    modelTools: result.modelTools,
     lifecycle: result.lifecycle,
     hostRepositoryProvider: result.hostRepositoryProvider,
     workbenchRemote: result.workbenchRemote,

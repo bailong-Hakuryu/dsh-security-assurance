@@ -4,6 +4,9 @@
     - id: dsh-security-assurance
       name: dsh-security-assurance
       disabled: true
+    - id: dsh-security-assurance-tools
+      name: dsh-security-assurance/tools
+      disabled: true
     - id: dsh-security-assurance-control-plane-provider
       name: dsh-security-assurance/control-plane-provider
       disabled: true
