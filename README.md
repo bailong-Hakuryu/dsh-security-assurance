@@ -399,10 +399,17 @@ bytes, and human adjudication time. `MATCHED_BUDGET` requires every frozen
 resource ceiling to match exactly; `NATIVE_PROFILE` preserves and discloses
 different ceilings without presenting them as equivalent.
 
-These slices are not an Effectiveness or release claim. Utility,
-pre-registered non-inferiority margins, Ground Truth air-gap execution, Release
-Constitution thresholds, Scorecards, and the Release Evidence Manifest remain
-separate future proof slices.
+An optional non-inferiority plan retains its external registration identity and
+proves that registration preceded evidence collection. It pre-registers a
+margin for every aggregate metric and every mandatory Stratum, is accepted only
+for a matched-budget view, and compares conservative direction-aware Hoeffding
+bounds. Missing repetition evidence, incompatible designs, unmatched budgets,
+or incomplete Stratum margins cannot become a passing result; aggregate gains
+also cannot hide a failed mandatory Stratum.
+
+These slices are not an Effectiveness or release claim. Utility, Ground Truth
+air-gap execution, Release Constitution thresholds, Scorecards, and the Release
+Evidence Manifest remain separate future proof slices.
 
 ## Model-facing Assessment operations
 

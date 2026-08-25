@@ -431,12 +431,48 @@ export const pairedArmEvidenceV1Schema = z.strictObject({
 
 export type PairedArmEvidenceV1 = z.infer<typeof pairedArmEvidenceV1Schema>
 
+const nonInferiorityMarginV1Schema = z.number().min(0).max(1)
+
+export const nonInferiorityPlanV1Schema = z.strictObject({
+  planId: boundedEvaluationIdSchema,
+  registrationRecordId: boundedEvaluationIdSchema,
+  registeredAtEpochMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  evidenceCollectionStartedAtEpochMs: z.number().int().nonnegative()
+    .max(Number.MAX_SAFE_INTEGER),
+  method: z.literal('CONSERVATIVE_HOEFFDING_BOUNDS_V1'),
+  metricMargins: z.strictObject({
+    criticalHighValidatedRecall: nonInferiorityMarginV1Schema,
+    severityWeightedValidatedRecall: nonInferiorityMarginV1Schema,
+    validatedPrecision: nonInferiorityMarginV1Schema,
+    unsafeSatisfactionRate: nonInferiorityMarginV1Schema,
+    coverageHonestyRate: nonInferiorityMarginV1Schema,
+  }),
+  stratumMargins: z.array(z.strictObject({
+    stratumId: boundedEvaluationIdSchema,
+    validatedRecallMargin: nonInferiorityMarginV1Schema,
+  })).min(4).max(10_000),
+}).superRefine((value, context) => {
+  if (value.registeredAtEpochMs >= value.evidenceCollectionStartedAtEpochMs) {
+    context.addIssue({
+      code: 'custom',
+      message: 'The non-inferiority plan must predate evidence collection.',
+    })
+  }
+  if (new Set(value.stratumMargins.map(item => item.stratumId)).size
+    !== value.stratumMargins.length) {
+    context.addIssue({ code: 'custom', message: 'Duplicate Stratum margin.' })
+  }
+})
+
+export type NonInferiorityPlanV1 = z.infer<typeof nonInferiorityPlanV1Schema>
+
 export const pairedArmComparisonRequestV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   engineId: z.literal(PAIRED_ARM_COMPARISON_ENGINE_ID),
   comparisonView: z.enum(['MATCHED_BUDGET', 'NATIVE_PROFILE']),
   baseline: pairedArmEvidenceV1Schema,
   candidate: pairedArmEvidenceV1Schema,
+  nonInferiorityPlan: nonInferiorityPlanV1Schema.optional(),
 })
 
 export type PairedArmComparisonRequestV1 = z.infer<
@@ -513,6 +549,94 @@ export const pairedBudgetComparisonV1Schema = z.strictObject({
 
 export type PairedBudgetComparisonV1 = z.infer<typeof pairedBudgetComparisonV1Schema>
 
+const nonInferiorityMeasureReasonV1Schema = z.enum([
+  'INCOMPATIBLE_EVALUATION_DESIGN',
+  'UNMATCHED_BUDGETS',
+  'INCONCLUSIVE_ARM_UNCERTAINTY',
+])
+
+export const nonInferiorityMeasureV1Schema = z.discriminatedUnion('status', [
+  z.strictObject({
+    status: z.enum(['PASSED', 'FAILED']),
+    margin: nonInferiorityMarginV1Schema,
+    preferredDirection: z.enum(['HIGHER', 'LOWER']),
+    baselineConfidenceInterval: repetitionConfidenceIntervalV1Schema,
+    candidateConfidenceInterval: repetitionConfidenceIntervalV1Schema,
+    conservativeDirectionalDelta: z.number().min(-1).max(1),
+  }),
+  z.strictObject({
+    status: z.literal('INCONCLUSIVE'),
+    margin: nonInferiorityMarginV1Schema,
+    preferredDirection: z.enum(['HIGHER', 'LOWER']),
+    baselineConfidenceInterval: z.null(),
+    candidateConfidenceInterval: z.null(),
+    conservativeDirectionalDelta: z.null(),
+    reasonCodes: z.array(nonInferiorityMeasureReasonV1Schema).length(1),
+  }),
+]).superRefine((value, context) => {
+  if (value.status === 'INCONCLUSIVE') return
+  const expectedDelta = value.preferredDirection === 'HIGHER'
+    ? value.candidateConfidenceInterval.lower - value.baselineConfidenceInterval.upper
+    : value.baselineConfidenceInterval.lower - value.candidateConfidenceInterval.upper
+  const expectedStatus = expectedDelta >= -value.margin ? 'PASSED' : 'FAILED'
+  if (
+    Math.abs(value.conservativeDirectionalDelta - expectedDelta) > Number.EPSILON * 4
+    || value.status !== expectedStatus
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent non-inferiority measure.' })
+  }
+})
+
+export type NonInferiorityMeasureV1 = z.infer<typeof nonInferiorityMeasureV1Schema>
+
+export const nonInferiorityComparisonV1Schema = z.strictObject({
+  planId: boundedEvaluationIdSchema,
+  registrationRecordId: boundedEvaluationIdSchema,
+  registeredAtEpochMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  evidenceCollectionStartedAtEpochMs: z.number().int().nonnegative()
+    .max(Number.MAX_SAFE_INTEGER),
+  method: z.literal('CONSERVATIVE_HOEFFDING_BOUNDS_V1'),
+  status: z.enum(['PASSED', 'FAILED', 'INCONCLUSIVE']),
+  reasonCodes: z.array(z.enum([
+    'INCOMPATIBLE_EVALUATION_DESIGN',
+    'UNMATCHED_BUDGETS',
+    'INCONCLUSIVE_ARM_UNCERTAINTY',
+    'REGRESSED_AGGREGATE_METRIC',
+    'REGRESSED_MANDATORY_STRATUM',
+  ])).max(5),
+  metrics: z.strictObject({
+    criticalHighValidatedRecall: nonInferiorityMeasureV1Schema,
+    severityWeightedValidatedRecall: nonInferiorityMeasureV1Schema,
+    validatedPrecision: nonInferiorityMeasureV1Schema,
+    unsafeSatisfactionRate: nonInferiorityMeasureV1Schema,
+    coverageHonestyRate: nonInferiorityMeasureV1Schema,
+  }),
+  strata: z.array(z.strictObject({
+    stratumId: boundedEvaluationIdSchema,
+    validatedRecall: nonInferiorityMeasureV1Schema,
+  })).min(4).max(10_000),
+}).superRefine((value, context) => {
+  const measures = [
+    ...Object.values(value.metrics),
+    ...value.strata.map(item => item.validatedRecall),
+  ]
+  const expectedStatus = measures.some(item => item.status === 'FAILED')
+    ? 'FAILED'
+    : measures.some(item => item.status === 'INCONCLUSIVE') ? 'INCONCLUSIVE' : 'PASSED'
+  if (
+    value.registeredAtEpochMs >= value.evidenceCollectionStartedAtEpochMs
+    || value.status !== expectedStatus
+    || (value.status === 'PASSED' && value.reasonCodes.length !== 0)
+    || (value.status !== 'PASSED' && value.reasonCodes.length === 0)
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent non-inferiority comparison.' })
+  }
+})
+
+export type NonInferiorityComparisonV1 = z.infer<
+  typeof nonInferiorityComparisonV1Schema
+>
+
 export const pairedArmComparisonV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   engineId: z.literal(PAIRED_ARM_COMPARISON_ENGINE_ID),
@@ -539,6 +663,7 @@ export const pairedArmComparisonV1Schema = z.strictObject({
     unsafeSatisfactionRate: pairedMetricComparisonV1Schema,
     coverageHonestyRate: pairedMetricComparisonV1Schema,
   }),
+  nonInferiority: nonInferiorityComparisonV1Schema.nullable(),
 }).superRefine((value, context) => {
   const metrics = Object.values(value.metrics)
   if (
@@ -1222,6 +1347,21 @@ function parsePairedArmComparisonRequest(input: unknown): PairedArmComparisonReq
   if (!parsed.success || parsed.data.baseline.armId === parsed.data.candidate.armId) {
     return invalidPairedArmEvidence()
   }
+  const plan = parsed.data.nonInferiorityPlan
+  if (plan !== undefined) {
+    const expectedStratumIds = [...parsed.data.baseline.metricsRequest.stratumDefinitions]
+      .map(item => item.stratumId)
+      .sort(compareIds)
+    const marginStratumIds = plan.stratumMargins
+      .map(item => item.stratumId)
+      .sort(compareIds)
+    if (
+      parsed.data.comparisonView !== 'MATCHED_BUDGET'
+      || JSON.stringify(expectedStratumIds) !== JSON.stringify(marginStratumIds)
+    ) {
+      return invalidPairedArmEvidence()
+    }
+  }
   for (const arm of [parsed.data.baseline, parsed.data.candidate]) {
     for (const dimension of EVALUATION_RESOURCE_DIMENSIONS) {
       if (arm.budget.usage[dimension] > arm.budget.limits[dimension]) {
@@ -1230,6 +1370,119 @@ function parsePairedArmComparisonRequest(input: unknown): PairedArmComparisonReq
     }
   }
   return parsed.data
+}
+
+function compareNonInferiorityDistribution(
+  baseline: RepetitionMetricDistributionV1 | undefined,
+  candidate: RepetitionMetricDistributionV1 | undefined,
+  margin: number,
+  worstDirection: 'MINIMUM' | 'MAXIMUM',
+  blockedReason?: 'INCOMPATIBLE_EVALUATION_DESIGN' | 'UNMATCHED_BUDGETS',
+): NonInferiorityMeasureV1 {
+  const preferredDirection = worstDirection === 'MINIMUM' ? 'HIGHER' : 'LOWER'
+  if (
+    blockedReason !== undefined
+    || baseline === undefined
+    || candidate === undefined
+    || baseline.status !== 'MEASURED'
+    || candidate.status !== 'MEASURED'
+    || baseline.uncertaintyStatus !== 'SUFFICIENT'
+    || candidate.uncertaintyStatus !== 'SUFFICIENT'
+  ) {
+    return {
+      status: 'INCONCLUSIVE',
+      margin,
+      preferredDirection,
+      baselineConfidenceInterval: null,
+      candidateConfidenceInterval: null,
+      conservativeDirectionalDelta: null,
+      reasonCodes: [blockedReason ?? 'INCONCLUSIVE_ARM_UNCERTAINTY'],
+    }
+  }
+  const baselineConfidenceInterval = baseline.confidenceInterval
+  const candidateConfidenceInterval = candidate.confidenceInterval
+  const directed = preferredDirection === 'HIGHER'
+    ? candidateConfidenceInterval.lower - baselineConfidenceInterval.upper
+    : baselineConfidenceInterval.lower - candidateConfidenceInterval.upper
+  const conservativeDirectionalDelta = directed === 0 ? 0 : directed
+  return {
+    status: conservativeDirectionalDelta >= -margin ? 'PASSED' : 'FAILED',
+    margin,
+    preferredDirection,
+    baselineConfidenceInterval,
+    candidateConfidenceInterval,
+    conservativeDirectionalDelta,
+  }
+}
+
+function calculateNonInferiorityComparison(
+  request: PairedArmComparisonRequestV1,
+  baselineMetrics: EffectivenessMetricsV1,
+  candidateMetrics: EffectivenessMetricsV1,
+  compatibleDesign: boolean,
+  matchedBudgetBlocked: boolean,
+): NonInferiorityComparisonV1 | null {
+  const plan = request.nonInferiorityPlan
+  if (plan === undefined) return null
+  const blockedReason = !compatibleDesign
+    ? 'INCOMPATIBLE_EVALUATION_DESIGN' as const
+    : matchedBudgetBlocked ? 'UNMATCHED_BUDGETS' as const : undefined
+  const metricNames = Object.keys(effectivenessMetricDirections) as Array<
+    keyof typeof effectivenessMetricDirections
+  >
+  const metrics = {} as NonInferiorityComparisonV1['metrics']
+  for (const metricName of metricNames) {
+    metrics[metricName] = compareNonInferiorityDistribution(
+      baselineMetrics.repetitionAnalysis?.metrics[metricName],
+      candidateMetrics.repetitionAnalysis?.metrics[metricName],
+      plan.metricMargins[metricName],
+      effectivenessMetricDirections[metricName],
+      blockedReason,
+    )
+  }
+  const baselineStrata = new Map(baselineMetrics.strata.map(item => [item.stratumId, item]))
+  const candidateStrata = new Map(candidateMetrics.strata.map(item => [item.stratumId, item]))
+  const strata = [...plan.stratumMargins]
+    .sort((left, right) => compareIds(left.stratumId, right.stratumId))
+    .map(item => ({
+      stratumId: item.stratumId,
+      validatedRecall: compareNonInferiorityDistribution(
+        baselineStrata.get(item.stratumId)?.uncertainty?.metrics.validatedRecall,
+        candidateStrata.get(item.stratumId)?.uncertainty?.metrics.validatedRecall,
+        item.validatedRecallMargin,
+        'MINIMUM',
+        blockedReason,
+      ),
+    }))
+  const measures = [...Object.values(metrics), ...strata.map(item => item.validatedRecall)]
+  const reasonCodes: NonInferiorityComparisonV1['reasonCodes'] = []
+  if (blockedReason !== undefined) {
+    reasonCodes.push(blockedReason)
+  } else {
+    if (Object.values(metrics).some(item => item.status === 'FAILED')) {
+      reasonCodes.push('REGRESSED_AGGREGATE_METRIC')
+    }
+    if (strata.some(item => item.validatedRecall.status === 'FAILED')) {
+      reasonCodes.push('REGRESSED_MANDATORY_STRATUM')
+    }
+    if (measures.some(item => item.status === 'INCONCLUSIVE')) {
+      reasonCodes.push('INCONCLUSIVE_ARM_UNCERTAINTY')
+    }
+  }
+  const status = measures.some(item => item.status === 'FAILED')
+    ? 'FAILED'
+    : measures.some(item => item.status === 'INCONCLUSIVE') ? 'INCONCLUSIVE' : 'PASSED'
+  return {
+    planId: plan.planId,
+    registrationRecordId: plan.registrationRecordId,
+    registeredAtEpochMs: plan.registeredAtEpochMs,
+    evidenceCollectionStartedAtEpochMs: plan.evidenceCollectionStartedAtEpochMs,
+    method: plan.method,
+    status,
+    reasonCodes,
+    metrics,
+    strata,
+  }
 }
 
 function canonicalEvaluationDesign(request: EffectivenessMetricsRequestV1): string {
@@ -1376,6 +1629,13 @@ export function calculatePairedArmComparisonV1(input: unknown): PairedArmCompari
     candidate: { armId: request.candidate.armId, metrics: candidateMetrics },
     budgetComparison,
     metrics: metricComparisons,
+    nonInferiority: calculateNonInferiorityComparison(
+      request,
+      baselineMetrics,
+      candidateMetrics,
+      compatibleDesign,
+      matchedBudgetBlocked,
+    ),
   }
   return deepFreeze(pairedArmComparisonV1Schema.parse(result))
 }

@@ -886,6 +886,70 @@ describe('Paired Arm Comparison Engine v1', () => {
     }])
   }
 
+  const independentRepetitionIds = Array.from(
+    { length: 32 },
+    (_, index) => `rep-${String(index).padStart(2, '0')}`,
+  )
+
+  function repeatedArmMetrics(successful: boolean) {
+    return request(
+      independentRepetitionIds.map(repetitionId => ({
+        caseId: 'case-shared',
+        repetitionId,
+        disposition: 'INCLUDED',
+        assessmentMode: 'CHANGE',
+        supportedEcosystem: 'node',
+        expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
+        groundTruthDefects: [{
+          defectId: 'defect-high',
+          severity: 'HIGH',
+          weaknessFamily: 'cwe-79',
+          policyBlocking: true,
+        }],
+        result: {
+          kind: 'COMPLETED',
+          verdict: successful ? 'FAILED' : 'SATISFIED',
+          coverageStatus: successful ? 'GAP' : 'COMPLETE',
+          findings: [{
+            findingId: `finding-${repetitionId}`,
+            adjudication: successful
+              ? { status: 'MATCHED', defectId: 'defect-high' }
+              : { status: 'NOT_MATCHED' },
+          }],
+        },
+      })),
+      repetitionStratumDefinitions,
+      {
+        method: 'HOEFFDING_TWO_SIDED_V1',
+        repetitionIds: independentRepetitionIds,
+        benchmarkCaseIds: ['case-shared'],
+        confidenceLevel: 0.95,
+        maximumConfidenceIntervalWidth: 1,
+      },
+    )
+  }
+
+  function nonInferiorityPlan(margin: number) {
+    return {
+      planId: 'release-ni-plan',
+      registrationRecordId: 'qualification-registry/ni-plan',
+      registeredAtEpochMs: 1_700_000_000_000,
+      evidenceCollectionStartedAtEpochMs: 1_700_000_001_000,
+      method: 'CONSERVATIVE_HOEFFDING_BOUNDS_V1',
+      metricMargins: {
+        criticalHighValidatedRecall: margin,
+        severityWeightedValidatedRecall: margin,
+        validatedPrecision: margin,
+        unsafeSatisfactionRate: margin,
+        coverageHonestyRate: margin,
+      },
+      stratumMargins: sufficientStratumDefinitions.map(definition => ({
+        stratumId: definition.stratumId,
+        validatedRecallMargin: margin,
+      })),
+    }
+  }
+
   function comparisonRequest(comparisonView: 'MATCHED_BUDGET' | 'NATIVE_PROFILE') {
     return {
       schemaVersion: 1,
@@ -943,6 +1007,79 @@ describe('Paired Arm Comparison Engine v1', () => {
     const forged = structuredClone(result)
     forged.metrics.validatedPrecision.rawDelta = 0
     expect(pairedArmComparisonV1Schema.safeParse(forged).success).toBe(false)
+  })
+
+  it('applies pre-registered conservative bounds to every metric and mandatory Stratum', () => {
+    const passingRequest = comparisonRequest('MATCHED_BUDGET')
+    passingRequest.baseline.metricsRequest = repeatedArmMetrics(false)
+    passingRequest.candidate.metricsRequest = repeatedArmMetrics(true)
+    const passing = calculatePairedArmComparisonV1({
+      ...passingRequest,
+      nonInferiorityPlan: nonInferiorityPlan(0),
+    })
+
+    expect(passing.nonInferiority).toMatchObject({
+      planId: 'release-ni-plan',
+      registrationRecordId: 'qualification-registry/ni-plan',
+      method: 'CONSERVATIVE_HOEFFDING_BOUNDS_V1',
+      status: 'PASSED',
+      reasonCodes: [],
+    })
+    expect(Object.values(passing.nonInferiority?.metrics ?? {}).every(
+      metric => metric.status === 'PASSED'
+        && metric.conservativeDirectionalDelta !== null
+        && metric.conservativeDirectionalDelta > 0,
+    )).toBe(true)
+    expect(passing.nonInferiority?.strata).toHaveLength(4)
+    expect(passing.nonInferiority?.strata.every(
+      item => item.validatedRecall.status === 'PASSED',
+    )).toBe(true)
+    expect(Object.isFrozen(passing.nonInferiority)).toBe(true)
+
+    const failingRequest = comparisonRequest('MATCHED_BUDGET')
+    failingRequest.baseline.metricsRequest = repeatedArmMetrics(true)
+    failingRequest.candidate.metricsRequest = repeatedArmMetrics(false)
+    const failing = calculatePairedArmComparisonV1({
+      ...failingRequest,
+      nonInferiorityPlan: nonInferiorityPlan(0.05),
+    })
+    expect(failing.conclusion).toBe('MEASURED')
+    expect(failing.nonInferiority).toMatchObject({
+      status: 'FAILED',
+      reasonCodes: ['REGRESSED_AGGREGATE_METRIC', 'REGRESSED_MANDATORY_STRATUM'],
+    })
+    expect(Object.values(failing.nonInferiority?.metrics ?? {}).every(
+      metric => metric.status === 'FAILED',
+    )).toBe(true)
+  })
+
+  it('refuses post-hoc, partial, native-profile, and uncertainty-free non-inferiority claims', () => {
+    const noUncertainty = calculatePairedArmComparisonV1({
+      ...comparisonRequest('MATCHED_BUDGET'),
+      nonInferiorityPlan: nonInferiorityPlan(0.1),
+    })
+    expect(noUncertainty.nonInferiority).toMatchObject({
+      status: 'INCONCLUSIVE',
+      reasonCodes: ['INCONCLUSIVE_ARM_UNCERTAINTY'],
+    })
+
+    const postHocPlan = nonInferiorityPlan(0.1)
+    postHocPlan.registeredAtEpochMs = postHocPlan.evidenceCollectionStartedAtEpochMs
+    expect(() => calculatePairedArmComparisonV1({
+      ...comparisonRequest('MATCHED_BUDGET'),
+      nonInferiorityPlan: postHocPlan,
+    })).toThrow(PairedArmComparisonInputError)
+
+    const partialPlan = nonInferiorityPlan(0.1)
+    partialPlan.stratumMargins.pop()
+    expect(() => calculatePairedArmComparisonV1({
+      ...comparisonRequest('MATCHED_BUDGET'),
+      nonInferiorityPlan: partialPlan,
+    })).toThrow(PairedArmComparisonInputError)
+    expect(() => calculatePairedArmComparisonV1({
+      ...comparisonRequest('NATIVE_PROFILE'),
+      nonInferiorityPlan: nonInferiorityPlan(0.1),
+    })).toThrow(PairedArmComparisonInputError)
   })
 
   it('distinguishes unmatched matched-budget evidence from an explicit native-profile view', () => {

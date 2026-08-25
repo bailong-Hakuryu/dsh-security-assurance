@@ -265,9 +265,17 @@ const packedArmMetricsRequest = successful => ({
   schemaVersion: 1,
   engineId: 'security/effectiveness-metrics/v1',
   severityWeights: { CRITICAL: 8, HIGH: 5, MEDIUM: 3, LOW: 2, INFORMATIONAL: 1 },
-  stratumDefinitions: packedStratumDefinitions,
-  cases: [{
+  stratumDefinitions: packedRepetitionStratumDefinitions,
+  repetitionPlan: {
+    method: 'HOEFFDING_TWO_SIDED_V1',
+    repetitionIds: ['rep-a', 'rep-b'],
+    benchmarkCaseIds: ['case-paired'],
+    confidenceLevel: 0.95,
+    maximumConfidenceIntervalWidth: 1,
+  },
+  cases: ['rep-a', 'rep-b'].map(repetitionId => ({
     caseId: 'case-paired',
+    repetitionId,
     disposition: 'INCLUDED',
     assessmentMode: 'CHANGE',
     supportedEcosystem: 'node',
@@ -283,13 +291,13 @@ const packedArmMetricsRequest = successful => ({
       verdict: successful ? 'FAILED' : 'SATISFIED',
       coverageStatus: successful ? 'GAP' : 'COMPLETE',
       findings: [{
-        findingId: successful ? 'finding-match' : 'finding-false-positive',
+        findingId: (successful ? 'finding-match-' : 'finding-false-positive-') + repetitionId,
         adjudication: successful
           ? { status: 'MATCHED', defectId: 'defect-high' }
           : { status: 'NOT_MATCHED' },
       }],
     },
-  }],
+  })),
 })
 const packedResourceLimits = {
   wallTimeMs: 60_000,
@@ -322,6 +330,24 @@ const packedPairedComparison = evaluation.calculatePairedArmComparisonV1({
     metricsRequest: packedArmMetricsRequest(true),
     budget: packedArmBudget(8_000),
   },
+  nonInferiorityPlan: {
+    planId: 'packed-release-ni-plan',
+    registrationRecordId: 'packed-qualification-registry/ni-plan',
+    registeredAtEpochMs: 1_700_000_000_000,
+    evidenceCollectionStartedAtEpochMs: 1_700_000_001_000,
+    method: 'CONSERVATIVE_HOEFFDING_BOUNDS_V1',
+    metricMargins: {
+      criticalHighValidatedRecall: 1,
+      severityWeightedValidatedRecall: 1,
+      validatedPrecision: 1,
+      unsafeSatisfactionRate: 1,
+      coverageHonestyRate: 1,
+    },
+    stratumMargins: packedStratumDefinitions.map(definition => ({
+      stratumId: definition.stratumId,
+      validatedRecallMargin: 1,
+    })),
+  },
 })
 if (
   evaluation.EFFECTIVENESS_METRICS_ENGINE_ID !== 'security/effectiveness-metrics/v1'
@@ -331,6 +357,8 @@ if (
   || typeof evaluation.repetitionAnalysisV1Schema?.parse !== 'function'
   || evaluation.PAIRED_ARM_COMPARISON_ENGINE_ID !== 'security/paired-arm-comparison/v1'
   || typeof evaluation.pairedArmComparisonV1Schema?.parse !== 'function'
+  || typeof evaluation.nonInferiorityPlanV1Schema?.parse !== 'function'
+  || typeof evaluation.nonInferiorityComparisonV1Schema?.parse !== 'function'
   || typeof evaluation.calculatePairedArmComparisonV1 !== 'function'
   || typeof evaluation.effectivenessMetricsRequestV1Schema?.parse !== 'function'
   || typeof evaluation.effectivenessMetricsV1Schema?.parse !== 'function'
@@ -347,6 +375,8 @@ if (
   || packedPairedComparison.conclusion !== 'MEASURED'
   || packedPairedComparison.budgetComparison.status !== 'MATCHED'
   || packedPairedComparison.metrics.validatedPrecision.directionalDelta !== 1
+  || packedPairedComparison.nonInferiority?.status !== 'PASSED'
+  || packedPairedComparison.nonInferiority.strata.length !== 4
 ) {
   throw new Error('packed Evaluation entry did not execute the versioned Metrics Engine')
 }
