@@ -86,7 +86,8 @@ async function executeTool(
     | 'security_assessment_status'
     | 'security_assessment_findings'
     | 'security_assessment_resume'
-    | 'security_assessment_cancel',
+    | 'security_assessment_cancel'
+    | 'security_assessment_export',
   args: unknown,
   agent?: Agent,
   initiator: Agent | null | undefined = agent,
@@ -205,15 +206,29 @@ describe('security assessment tool registration', () => {
       const findings = fixture.ctx.tools.get('security_assessment_findings')
       const resume = fixture.ctx.tools.get('security_assessment_resume')
       const cancel = fixture.ctx.tools.get('security_assessment_cancel')
+      const exportAssessment = fixture.ctx.tools.get('security_assessment_export')
       expect(start?.name).toBe('security_assessment_start')
       expect(status?.name).toBe('security_assessment_status')
       expect(findings?.name).toBe('security_assessment_findings')
       expect(resume?.name).toBe('security_assessment_resume')
       expect(cancel?.name).toBe('security_assessment_cancel')
+      expect(exportAssessment?.name).toBe('security_assessment_export')
       expect(fixture.ctx.tools.executionMode({
         callId: CallId('security-start-mode'),
         name: 'security_assessment_start',
         arguments: startArgs('repo-00000000-0000-0000-0000-000000000000'),
+        signal: toolSignal,
+      })).toEqual({ kind: 'exclusive' })
+      expect(fixture.ctx.tools.executionMode({
+        callId: CallId('security-export-mode'),
+        name: 'security_assessment_export',
+        arguments: {
+          assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+          expected_assessment_revision: 3,
+          idempotency_key: 'security-export-mode-v1',
+          export_profile_id: 'security/export/internal-json-v1',
+          delivery_destination_id: 'delivery/local-audit',
+        },
         signal: toolSignal,
       })).toEqual({ kind: 'exclusive' })
       expect(fixture.ctx.tools.executionMode({
@@ -300,11 +315,24 @@ describe('security assessment tool registration', () => {
         kind: 'other',
         rawInput: 'asm-00000000-0000-0000-0000-000000000000',
       })
+      expect(exportAssessment?.presentCall?.({
+        assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+        expected_assessment_revision: 3,
+        idempotency_key: 'security-export-present-v1',
+        export_profile_id: 'security/export/internal-json-v1',
+        delivery_destination_id: 'delivery/local-audit',
+      })).toEqual({
+        card: 'generic',
+        title: 'Request security assessment export',
+        kind: 'other',
+        rawInput: 'asm-00000000-0000-0000-0000-000000000000',
+      })
       expect(start?.presentCall?.({ forged: true })).toBeUndefined()
       expect(status?.presentCall?.({ forged: true })).toBeUndefined()
       expect(findings?.presentCall?.({ forged: true })).toBeUndefined()
       expect(resume?.presentCall?.({ forged: true })).toBeUndefined()
       expect(cancel?.presentCall?.({ forged: true })).toBeUndefined()
+      expect(exportAssessment?.presentCall?.({ forged: true })).toBeUndefined()
 
       await fixture.toolsFiber.dispose()
       expect(fixture.ctx.tools.get('security_assessment_start')).toBeUndefined()
@@ -312,8 +340,204 @@ describe('security assessment tool registration', () => {
       expect(fixture.ctx.tools.get('security_assessment_findings')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_resume')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_cancel')).toBeUndefined()
+      expect(fixture.ctx.tools.get('security_assessment_export')).toBeUndefined()
       expect(fixture.ctx.reflect.get('securityAssurance')).toBeDefined()
     } finally {
+      await fixture.dispose()
+    }
+  })
+})
+
+describe('security_assessment_export integration', () => {
+  it('requests a registered SEALED delivery and returns only a bounded session-owned receipt', async () => {
+    const repository = await repositoryFixture()
+    const fixture = await harness()
+    const root = stubAgent(`security-tool-export-${Math.random()}`)
+    const other = stubAgent(`security-tool-export-other-${Math.random()}`)
+    const disposeRoot = fixture.ctx.agents.register(root.agent)
+    const disposeOther = fixture.ctx.agents.register(other.agent)
+    try {
+      const platform = process.platform
+      if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+        throw new Error(`unsupported test platform: ${platform}`)
+      }
+      const invocation = referenceHostInvocation(fixture.ctx.securityAssurance)
+      const registered = await fixture.ctx.securityAssurance.registerRepository(invocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'security-tool-export-repository-v1',
+        root: repository,
+        displayName: 'Model export tool fixture',
+        bindings: {
+          policyId: 'security/default',
+          assessmentProfileId: 'security/standard',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform,
+          deliveryDestinationIds: ['delivery/local-audit'],
+        },
+      })
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+      const started = await fixture.ctx.securityAssurance.startAssessment(invocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'security-tool-export-assessment-v1',
+        repositoryId: registered.value.repositoryId,
+        subject: { kind: 'workspace_snapshot' },
+        assessmentMode: 'REPOSITORY',
+        assessmentProfileId: 'security/standard',
+        target: { kind: 'repository' },
+        requestedStrongerControlIds: [],
+      })
+      if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
+      await waitUntilSealed(fixture.ctx.securityAssurance, invocation, started.value.assessmentId)
+      const sealed = await fixture.ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })
+      if (!sealed.ok) throw new Error(`sealed query failed: ${sealed.error.code}`)
+      expect(sealed.value.state).toBe('SEALED')
+
+      const args = {
+        assessment_id: started.value.assessmentId,
+        expected_assessment_revision: sealed.value.assessmentRevision,
+        idempotency_key: 'security-tool-export-command-v1',
+        export_profile_id: 'security/export/internal-json-v1',
+        delivery_destination_id: 'delivery/local-audit',
+      }
+      const agentless = await executeTool(
+        fixture.ctx,
+        'security_assessment_export',
+        args,
+      )
+      expect(agentless.error?.info?.code).toBe('SECURITY_TOOL_AGENT_REQUIRED')
+
+      openTurn(root)
+      const driverless = await executeTool(
+        fixture.ctx,
+        'security_assessment_export',
+        args,
+        root.agent,
+        null,
+      )
+      expect(driverless.error?.info?.code).toBe('SECURITY_TOOL_DRIVER_REQUIRED')
+
+      const requested = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_export',
+        {
+          ...args,
+          principal_id: 'forged-export-operator',
+          permissions: ['export:download', 'risk:break-glass'],
+        },
+        root.agent,
+      ))
+      expect(requested).toEqual({
+        schemaVersion: 1,
+        operation: 'request_export',
+        exportId: expect.stringMatching(/^export-[0-9a-f]{64}$/u),
+        assessmentId: started.value.assessmentId,
+        assessmentRevision: sealed.value.assessmentRevision,
+        idempotencyKey: args.idempotency_key,
+        acceptedState: 'PENDING',
+      })
+      const serialized = JSON.stringify(requested)
+      for (const forbidden of [
+        repository,
+        registered.value.repositoryId,
+        args.export_profile_id,
+        args.delivery_destination_id,
+        'destination',
+        'artifact',
+        'digest',
+        'download',
+        'path',
+        'acceptedAt',
+        'correlationId',
+        'principalId',
+        'forged-export-operator',
+        String(root.agent.id),
+      ]) expect(serialized).not.toContain(forbidden)
+
+      const replay = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_export',
+        args,
+        root.agent,
+      ))
+      expect(replay).toEqual(requested)
+
+      const staleRevision = await executeTool(
+        fixture.ctx,
+        'security_assessment_export',
+        {
+          ...args,
+          expected_assessment_revision: sealed.value.assessmentRevision - 1,
+          idempotency_key: 'security-tool-export-stale-v1',
+        },
+        root.agent,
+      )
+      expect(staleRevision.error?.info?.code).toBe('SECURITY_CONFLICT')
+
+      const unfrozenDestination = await executeTool(
+        fixture.ctx,
+        'security_assessment_export',
+        {
+          ...args,
+          idempotency_key: 'security-tool-export-destination-v1',
+          delivery_destination_id: 'delivery/not-frozen',
+        },
+        root.agent,
+      )
+      expect(unfrozenDestination.error?.info?.code).toBe('SECURITY_CONFLICT')
+
+      const invalid = await executeTool(
+        fixture.ctx,
+        'security_assessment_export',
+        {
+          ...args,
+          idempotency_key: 'security-tool-export-invalid-v1',
+          export_profile_id: 'security/export/arbitrary-v1',
+        },
+        root.agent,
+      )
+      expect(invalid.error?.info?.code).toBe('INVALID_ARGS')
+
+      const missing = await executeTool(
+        fixture.ctx,
+        'security_assessment_export',
+        {
+          ...args,
+          assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+          idempotency_key: 'security-tool-export-missing-v1',
+        },
+        root.agent,
+      )
+      expect(missing.error?.info?.code).toBe('SECURITY_NOT_FOUND')
+
+      const hostCannotReadSessionOwnedExport = await fixture.ctx.securityAssurance.getExport(invocation, {
+        schemaVersion: 1,
+        kind: 'STATUS',
+        exportId: requested['exportId'] as `export-${string}`,
+      })
+      expect(hostCannotReadSessionOwnedExport).toMatchObject({
+        ok: false,
+        error: { code: 'NOT_FOUND' },
+      })
+
+      openTurn(other)
+      const otherSession = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_export',
+        args,
+        other.agent,
+      ))
+      expect(otherSession['exportId']).not.toBe(requested['exportId'])
+      expect(otherSession).toMatchObject({
+        assessmentId: started.value.assessmentId,
+        acceptedState: 'PENDING',
+      })
+    } finally {
+      disposeOther()
+      disposeRoot()
       await fixture.dispose()
     }
   })

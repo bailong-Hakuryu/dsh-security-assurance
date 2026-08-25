@@ -19,11 +19,11 @@ This repository is under active vertical-slice development, not at the
 - an independently activatable `dsh-security-assurance/tools` Consumer with
   bounded `security_assessment_start`, read-only `security_assessment_status`
   and `security_assessment_findings`, and revision-bound
-  `security_assessment_resume` and `security_assessment_cancel` model tools.
-  They derive the exact live Harness session outside model arguments, mint one
-  operation-specific permission, and delegate all Assessment validation,
-  pagination, redaction, recovery, cancellation, and state transitions to the
-  root Service;
+  `security_assessment_resume` and `security_assessment_cancel`, plus bounded
+  `security_assessment_export` model tools. They derive the exact live Harness
+  session outside model arguments, mint one operation-specific permission, and
+  delegate all Assessment validation, pagination, redaction, recovery,
+  cancellation, delivery, and state transitions to the root Service;
 - versioned Zod-validated public contracts;
 - one `SecurityResult<T>` success/failure envelope;
 - redacted authorization, validation, cancellation, deadline, and internal
@@ -213,9 +213,8 @@ This repository is under active vertical-slice development, not at the
 
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
-the remaining export model tool, and the complete
-Workbench information architecture are deliberately not claimed as implemented
-yet. The Workbench Host Remote, authenticated redacted Assessment selection
+and the complete Workbench information architecture are deliberately not
+claimed as implemented yet. The Workbench Host Remote, authenticated redacted Assessment selection
 with stable cursor continuation, generated Client contract, transient browser
 Controller, Runtime Health, Repositories and digest-bound New Assessment flow, read-only Assessment Detail, multidimensional Finding triage,
 revision-bound Finding Detail navigation, bilingual metadata-first Evidence,
@@ -352,12 +351,13 @@ Receipt after the Service has quiesced local work and finalized the Assessment;
 that Receipt identifies the request revision and does not misrepresent it as
 the later terminal revision.
 
-## Model-facing Assessment start, status, findings, resume, and cancel
+## Model-facing Assessment operations
 
 The optional `dsh-security-assurance/tools` entry registers the current
 `security_assessment_start` -> `security_assessment_status` ->
 `security_assessment_findings` -> `security_assessment_resume` plus
-`security_assessment_cancel` through the Harness Tool Registry. All five
+`security_assessment_cancel` and `security_assessment_export` through the
+Harness Tool Registry. All six
 operations require the exact
 registered, running Agent in its active open turn and derive a process-local
 `harness-session` Invocation outside model arguments. Caller Principal,
@@ -407,8 +407,18 @@ terminal transition to `cancelAssessment`. Its bounded Receipt identifies the
 state and revision at which cancellation intent was accepted but deliberately
 does not claim `CANCELED`; callers must read current status for terminal truth.
 Force completion, cleanup bypass, Evidence deletion, Verdict injection, reason,
-timestamps, correlation, and cancellation internals are excluded. The entry is
-lifecycle-owned: unloading it removes all five tools
+timestamps, correlation, and cancellation internals are excluded.
+
+`security_assessment_export` takes an exact SEALED Assessment ID and revision,
+an explicit idempotency key, the fixed supported Export Profile, and a Delivery
+Destination frozen into the Assessment contract. It carries only
+`export:request` and delegates sealed-state, profile, destination, owner,
+idempotency, and durable delivery handling to `requestExport`. The bounded
+`PENDING` Receipt contains an owner-bound Export ID but excludes preview or
+artifact content, digests, paths, URLs, credentials, destination options,
+download capabilities, timestamps, and correlation. It does not grant
+`export:read` or `export:download`. The entry is lifecycle-owned: unloading it
+removes all six tools
 without stopping the root Security Service.
 
 ## Host Repository composition

@@ -357,6 +357,7 @@ const packedStatusTool = ctx.tools.get('security_assessment_status')
 const packedFindingsTool = ctx.tools.get('security_assessment_findings')
 const packedResumeTool = ctx.tools.get('security_assessment_resume')
 const packedCancelTool = ctx.tools.get('security_assessment_cancel')
+const packedExportTool = ctx.tools.get('security_assessment_export')
 const packedStartMode = ctx.tools.executionMode({
   callId: 'packed-security-start-mode',
   name: 'security_assessment_start',
@@ -408,19 +409,33 @@ const packedCancelMode = ctx.tools.executionMode({
   },
   signal: new AbortController().signal,
 })
+const packedExportMode = ctx.tools.executionMode({
+  callId: 'packed-security-export-mode',
+  name: 'security_assessment_export',
+  arguments: {
+    assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+    expected_assessment_revision: 3,
+    idempotency_key: 'packed-security-export-mode-v1',
+    export_profile_id: 'security/export/internal-json-v1',
+    delivery_destination_id: 'delivery/local-audit',
+  },
+  signal: new AbortController().signal,
+})
 if (
   packedStartTool?.name !== 'security_assessment_start'
   || packedStatusTool?.name !== 'security_assessment_status'
   || packedFindingsTool?.name !== 'security_assessment_findings'
   || packedResumeTool?.name !== 'security_assessment_resume'
   || packedCancelTool?.name !== 'security_assessment_cancel'
+  || packedExportTool?.name !== 'security_assessment_export'
   || packedStartMode.kind !== 'exclusive'
   || packedStatusMode.kind !== 'parallel'
   || packedFindingsMode.kind !== 'parallel'
   || packedResumeMode.kind !== 'exclusive'
   || packedCancelMode.kind !== 'exclusive'
+  || packedExportMode.kind !== 'exclusive'
 ) {
-  throw new Error('packed model Tool entry did not register start, status, findings, resume, and cancel modes')
+  throw new Error('packed model Tool entry did not register all six operation modes')
 }
 const packedAgentlessFindings = await ctx.tools.execute({
   callId: 'packed-security-findings-agentless',
@@ -812,6 +827,7 @@ if (
   || ctx.tools.get('security_assessment_findings') !== undefined
   || ctx.tools.get('security_assessment_resume') !== undefined
   || ctx.tools.get('security_assessment_cancel') !== undefined
+  || ctx.tools.get('security_assessment_export') !== undefined
 ) {
   throw new Error('packed model Tool entry did not withdraw its registered tools')
 }

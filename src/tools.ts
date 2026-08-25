@@ -6,6 +6,7 @@ import {
   cancelAssessmentRequestSchema,
   getAssessmentRequestSchema,
   listFindingsRequestSchema,
+  requestExportRequestSchema,
   resumeAssessmentRequestSchema,
   startAssessmentRequestSchema,
   type AssessmentId,
@@ -16,6 +17,7 @@ import {
   type AssessmentState,
   type FindingListPageV1,
   type FindingSummaryV1,
+  type ExportRequestReceiptV1,
   type SecurityInvocation,
   type SecurityVerdict,
 } from './contracts.ts'
@@ -53,6 +55,17 @@ export interface SecurityAssessmentCancellationReceiptV1 {
   readonly assessmentRevision: number
   readonly acceptedState: 'CREATED' | 'RUNNING' | 'BLOCKED'
   readonly idempotencyKey: string
+}
+
+/** Model-safe projection of one accepted official Export request. */
+export interface SecurityAssessmentExportReceiptV1 {
+  readonly schemaVersion: 1
+  readonly operation: 'request_export'
+  readonly exportId: string
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly idempotencyKey: string
+  readonly acceptedState: 'PENDING'
 }
 
 /** Model-safe projection of one current Assessment revision. */
@@ -156,6 +169,26 @@ const CANCEL_OUTPUT = {
     },
   },
   render: (_args: unknown, value: SecurityAssessmentCancellationReceiptV1) => ([{
+    type: 'text' as const,
+    text: JSON.stringify(value),
+  }]),
+} as const
+
+const EXPORT_OUTPUT = {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      schemaVersion: { type: 'integer', const: 1, required: true },
+      operation: { type: 'string', const: 'request_export', required: true },
+      exportId: { type: 'string', required: true },
+      assessmentId: { type: 'string', required: true },
+      assessmentRevision: { type: 'integer', required: true },
+      idempotencyKey: { type: 'string', required: true },
+      acceptedState: { type: 'string', const: 'PENDING', required: true },
+    },
+  },
+  render: (_args: unknown, value: SecurityAssessmentExportReceiptV1) => ([{
     type: 'text' as const,
     text: JSON.stringify(value),
   }]),
@@ -372,6 +405,18 @@ function cancellationReceiptValue(
   }
 }
 
+function exportReceiptValue(receipt: ExportRequestReceiptV1): SecurityAssessmentExportReceiptV1 {
+  return {
+    schemaVersion: 1,
+    operation: receipt.operation,
+    exportId: receipt.exportId,
+    assessmentId: receipt.assessmentId,
+    assessmentRevision: receipt.assessmentRevision,
+    idempotencyKey: receipt.idempotencyKey,
+    acceptedState: receipt.acceptedState,
+  }
+}
+
 function statusValue(snapshot: AssessmentSnapshotV1): SecurityAssessmentStatusV1 {
   return {
     schemaVersion: 1,
@@ -460,6 +505,15 @@ function presentCancel(args: { readonly assessment_id: string }): GenericCallVie
   return {
     card: 'generic',
     title: 'Cancel security assessment',
+    kind: 'other',
+    rawInput: args.assessment_id,
+  }
+}
+
+function presentExport(args: { readonly assessment_id: string }): GenericCallView {
+  return {
+    card: 'generic',
+    title: 'Request security assessment export',
     kind: 'other',
     rawInput: args.assessment_id,
   }
@@ -872,6 +926,68 @@ const SecurityAssuranceTools = {
         return cancellationReceiptValue(result.value)
       },
       presentCall: presentCancel,
+    }))
+
+    ctx.tools.register(defineTool({
+      name: 'security_assessment_export',
+      description: 'Request one official Export for an exact SEALED Security Assessment revision through a '
+        + 'Host-registered Delivery Destination. Supply the fixed supported Export Profile and a fresh '
+        + 'idempotency_key. This tool returns only a durable PENDING Receipt and never returns preview content, '
+        + 'artifact bytes or digest, private paths, URLs, credentials, download capabilities, destination '
+        + 'options, Principal, permissions, or arbitrary output locations.',
+      parameters: {
+        assessment_id: {
+          type: 'string',
+          required: true,
+          description: 'Exact SEALED Assessment id from a current Security status result.',
+        },
+        expected_assessment_revision: {
+          type: 'integer',
+          required: true,
+          description: 'Exact SEALED Assessment revision bound to the official Export.',
+        },
+        idempotency_key: {
+          type: 'string',
+          required: true,
+          description: 'Stable key for replaying this exact Export request.',
+        },
+        export_profile_id: {
+          type: 'string',
+          const: 'security/export/internal-json-v1',
+          required: true,
+          description: 'Exact supported audience-specific Export Profile.',
+        },
+        delivery_destination_id: {
+          type: 'string',
+          required: true,
+          description: 'Host-registered Delivery Destination frozen into the Assessment contract.',
+        },
+      },
+      output: EXPORT_OUTPUT,
+      async execute(args, exec) {
+        const parsed = requestExportRequestSchema.safeParse({
+          schemaVersion: 1,
+          idempotencyKey: args.idempotency_key,
+          assessmentId: args.assessment_id,
+          expectedAssessmentRevision: args.expected_assessment_revision,
+          exportProfileId: args.export_profile_id,
+          deliveryDestinationId: args.delivery_destination_id,
+        })
+        if (!parsed.success) {
+          return reject(
+            'security_assessment_export arguments do not match the official Export request contract',
+            'SECURITY_INVALID_REQUEST',
+          )
+        }
+        const result = await ctx.securityAssurance.requestExport(
+          harnessSessionInvocation(ctx, exec, 'export:request'),
+          parsed.data,
+          { signal: exec.signal },
+        )
+        if (!result.ok) return reject(result.error.message, `SECURITY_${result.error.code}`)
+        return exportReceiptValue(result.value)
+      },
+      presentCall: presentExport,
     }))
   },
 }
