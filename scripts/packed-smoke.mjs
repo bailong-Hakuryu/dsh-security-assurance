@@ -194,14 +194,40 @@ const packedEmptyMetrics = evaluation.calculateEffectivenessMetricsV1({
   schemaVersion: 1,
   engineId: 'security/effectiveness-metrics/v1',
   severityWeights: { CRITICAL: 8, HIGH: 5, MEDIUM: 3, LOW: 2, INFORMATIONAL: 1 },
+  stratumDefinitions: [
+    {
+      stratumId: 'severity-high',
+      selector: { dimension: 'SEVERITY', value: 'HIGH' },
+      minimumSamples: 1,
+    },
+    {
+      stratumId: 'weakness-cwe-79',
+      selector: { dimension: 'WEAKNESS_FAMILY', value: 'cwe-79' },
+      minimumSamples: 1,
+    },
+    {
+      stratumId: 'mode-change',
+      selector: { dimension: 'ASSESSMENT_MODE', value: 'CHANGE' },
+      minimumSamples: 1,
+    },
+    {
+      stratumId: 'ecosystem-node',
+      selector: { dimension: 'SUPPORTED_ECOSYSTEM', value: 'node' },
+      minimumSamples: 1,
+    },
+  ],
   cases: [],
 })
 if (
   evaluation.EFFECTIVENESS_METRICS_ENGINE_ID !== 'security/effectiveness-metrics/v1'
+  || typeof evaluation.benchmarkStratumDefinitionV1Schema?.parse !== 'function'
+  || typeof evaluation.benchmarkStratumResultV1Schema?.parse !== 'function'
   || typeof evaluation.effectivenessMetricsRequestV1Schema?.parse !== 'function'
   || typeof evaluation.effectivenessMetricsV1Schema?.parse !== 'function'
   || packedEmptyMetrics.conclusion !== 'INCONCLUSIVE'
-  || packedEmptyMetrics.reasonCodes.length !== 5
+  || packedEmptyMetrics.reasonCodes.length !== 6
+  || packedEmptyMetrics.strata.length !== 4
+  || packedEmptyMetrics.counts.inconclusiveStrata !== 4
 ) {
   throw new Error('packed Evaluation entry did not execute the versioned Metrics Engine')
 }

@@ -362,19 +362,25 @@ The `dsh-security-assurance/evaluation` entry is independent of the runtime
 Security Service and has no authority, Store, Subject, network, model, browser,
 or filesystem access. `calculateEffectivenessMetricsV1` accepts only strict
 Evaluation case identities, frozen severity weights, Ground Truth defect
-metadata, preclassified benchmark disposition or product failure, completed
-Assessment outcomes, and independently adjudicated Finding matches.
+metadata, predeclared Stratum definitions, preclassified benchmark disposition
+or product failure, completed Assessment outcomes, and independently
+adjudicated Finding matches.
 
 The engine enforces unique Case, defect, and Finding identities plus one-to-one
 matches. Benchmark-invalid Cases are excluded uniformly; product timeout,
 budget exhaustion, crash, and incorrect outcome remain included measured
 results. Missing denominators and unadjudicated Findings produce explicit
 `INCONCLUSIVE` reasons rather than a fabricated zero or passing conclusion.
-Every result is strict, recursively immutable, and calculated by the same pure
-implementation consumed by packed release tooling.
+The engine also requires predeclared sample floors across Severity, Weakness
+Family, Assessment Mode, and Supported Ecosystem. It derives case or Ground
+Truth defect sample units itself, excludes Benchmark-invalid Cases uniformly,
+counts product failures, and makes every deficient Stratum explicitly
+`INCONCLUSIVE`. Results are canonically ordered, strict, recursively immutable,
+and calculated by the same pure implementation consumed by packed release
+tooling.
 
-This first slice is not an Effectiveness or release claim. Stratum sufficiency,
-independent repetitions, uncertainty, paired Arms, matched-budget comparison,
+These slices are not an Effectiveness or release claim. Independent
+repetitions, uncertainty requirements, paired Arms, matched-budget comparison,
 Utility, non-inferiority, Ground Truth air-gap execution, Release Constitution
 thresholds, Scorecards, and the Release Evidence Manifest remain separate
 future proof slices.
