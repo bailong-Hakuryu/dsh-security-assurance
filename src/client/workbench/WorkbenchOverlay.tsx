@@ -60,6 +60,7 @@ export interface WorkbenchOverlayInjected {
   readonly openRepositories: () => void
   readonly openRuntimeHealth: () => void
   readonly previewExport: (deliveryDestinationId: string) => void
+  readonly refreshExportStatus: () => void
   readonly requestExport: () => void
   readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
   readonly refreshRuntimeHealth: () => void
@@ -100,6 +101,7 @@ export function WorkbenchOverlay({
   openRepositories,
   openRuntimeHealth,
   previewExport,
+  refreshExportStatus,
   requestExport,
   recordRiskDecision,
   refreshRuntimeHealth,
@@ -217,6 +219,7 @@ export function WorkbenchOverlay({
               backToAssessmentDetail={backToAssessmentDetail}
               downloadExport={downloadExport}
               previewExport={previewExport}
+              refreshExportStatus={refreshExportStatus}
               requestExport={requestExport}
               t={t}
             />
@@ -842,6 +845,7 @@ function BundleExportView({
   backToAssessmentDetail,
   downloadExport,
   previewExport,
+  refreshExportStatus,
   requestExport,
   t,
 }: {
@@ -851,6 +855,7 @@ function BundleExportView({
   readonly backToAssessmentDetail: () => void
   readonly downloadExport: () => void
   readonly previewExport: (deliveryDestinationId: string) => void
+  readonly refreshExportStatus: () => void
   readonly requestExport: () => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
@@ -999,6 +1004,24 @@ function BundleExportView({
             <dl className="dsh-security-facts">
               <Fact label={t('exports.exportId')} value={exportState.status.exportId} machine />
               <Fact label={t('exports.status')} value={exportState.status.status} machine />
+              <Fact label={t('exports.attemptCount')} value={String(exportState.status.delivery.attemptCount)} />
+              <Fact
+                label={t('exports.lastAttemptAt')}
+                value={exportState.status.delivery.lastAttemptAt ?? t('value.notAvailable')}
+              />
+              <Fact
+                label={t('exports.lastFailure')}
+                value={exportState.status.delivery.lastFailureCode ?? t('value.notAvailable')}
+                machine={exportState.status.delivery.lastFailureCode !== null}
+              />
+              <Fact
+                label={t('exports.lastFailureAt')}
+                value={exportState.status.delivery.lastFailureAt ?? t('value.notAvailable')}
+              />
+              <Fact
+                label={t('exports.nextRetryAt')}
+                value={exportState.status.delivery.nextRetryAt ?? t('value.notAvailable')}
+              />
               <Fact label={t('exports.receiptCorrelation')} value={exportState.receipt.correlationId} machine />
               <Fact label={t('exports.acceptedAt')} value={exportState.receipt.acceptedAt} />
               <Fact label={t('exports.expiresAt')} value={exportState.status.expiresAt ?? t('value.notAvailable')} />
@@ -1024,6 +1047,18 @@ function BundleExportView({
                   : t('exports.downloadAction')}
               </button>
               <p className="dsh-security-readonly-note">{t('exports.downloadBoundary')}</p>
+            </div>
+          )}
+          {exportState.kind === 'STATUS_READY' && exportState.status.status === 'PENDING' && (
+            <div className="dsh-security-section__action">
+              <button
+                type="button"
+                className="dsh-security-secondary-action"
+                onClick={refreshExportStatus}
+              >
+                {t('exports.refreshStatus')}
+              </button>
+              <p className="dsh-security-readonly-note">{t('exports.retryBoundary')}</p>
             </div>
           )}
           {exportState.kind === 'STATUS_READY' && exportState.download.kind === 'COMPLETE' && (

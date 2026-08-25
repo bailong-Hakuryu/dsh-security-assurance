@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
+import type { Dirent } from 'node:fs'
 import {
   chmod,
   mkdir,
   open,
   readFile,
+  readdir,
   rename,
   rm,
   writeFile,
@@ -12,6 +14,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import {
   EXPORT_DOWNLOAD_CAPABILITY_LIFETIME_SECONDS,
+  EXPORT_DELIVERY_MAX_ATTEMPTS,
   exportDestinationViewV1Schema,
   exportDownloadV1Schema,
   exportIdSchema,
@@ -24,6 +27,7 @@ import {
 } from '../contracts.ts'
 import type {
   ExportDestinationViewV1,
+  ExportDeliveryAttemptFailureCodeV1,
   ExportDownloadV1,
   ExportId,
   ExportPreviewV1,
@@ -36,6 +40,7 @@ import type {
 import { binaryDigest, canonicalJson, sha256Hex } from './canonical.ts'
 
 export const EXPORT_ARTIFACT_LIFETIME_SECONDS = 24 * 60 * 60
+const EXPORT_DELIVERY_RETRY_DELAYS_MS = [1_000, 5_000, 30_000, 120_000] as const
 
 const PROFILE: ExportProfileViewV1 = exportProfileViewV1Schema.parse({
   exportProfileId: INTERNAL_JSON_EXPORT_PROFILE_ID,
@@ -86,6 +91,12 @@ export interface ExportDeliveryAuthorityV1 {
 export interface BeginExportResultV1 {
   readonly record: InternalExportRecordV1
   readonly replayed: boolean
+}
+
+export interface RecoverableExportDeliveryV1 {
+  readonly exportId: ExportId
+  readonly assessmentId: ExportStatusV1['assessmentId']
+  readonly nextRetryAt: string | null
 }
 
 export class ExportDeliveryError extends Error {
@@ -246,9 +257,36 @@ function ownerMatches(record: InternalExportRecordV1, authority: ExportDeliveryA
     && record.owner.authorityKind === authority.authorityKind
 }
 
+function normalizeLegacyRecord(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value
+  const record = value as Record<string, unknown>
+  const rawView = record.view
+  if (typeof rawView !== 'object' || rawView === null || Array.isArray(rawView)) return value
+  const view = rawView as Record<string, unknown>
+  if (view.delivery !== undefined) return value
+  const status = view.status
+  const updatedAt = typeof view.updatedAt === 'string' ? view.updatedAt : null
+  const attempted = status !== 'PENDING' && updatedAt !== null
+  const failed = status === 'FAILED' && updatedAt !== null
+  return {
+    ...record,
+    view: {
+      ...view,
+      delivery: {
+        attemptCount: attempted ? 1 : 0,
+        lastAttemptAt: attempted ? updatedAt : null,
+        lastFailureAt: failed ? updatedAt : null,
+        lastFailureCode: failed ? 'ARTIFACT_IO_ERROR' : null,
+        nextRetryAt: null,
+      },
+    },
+  }
+}
+
 async function readRecord(root: string, exportId: ExportId): Promise<InternalExportRecordV1 | undefined> {
   try {
-    return internalExportRecordV1Schema.parse(JSON.parse(await readFile(recordPath(root, exportId), 'utf8')))
+    const value: unknown = JSON.parse(await readFile(recordPath(root, exportId), 'utf8'))
+    return internalExportRecordV1Schema.parse(normalizeLegacyRecord(value))
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     if (error instanceof SyntaxError || error instanceof z.ZodError) {
@@ -273,6 +311,7 @@ async function replaceRecord(root: string, record: InternalExportRecordV1): Prom
 /** Durable, path-hiding Delivery module for the first registered local-audit destination. */
 export class ExportDeliveryModule {
   private readonly root: string
+  private readonly inFlight = new Map<ExportId, Promise<ExportStatusV1>>()
 
   constructor(
     securityRoot: string,
@@ -315,6 +354,13 @@ export class ExportDeliveryModule {
       destination: preview.destination,
       artifact: null,
       expiresAt: null,
+      delivery: {
+        attemptCount: 0,
+        lastAttemptAt: null,
+        lastFailureAt: null,
+        lastFailureCode: null,
+        nextRetryAt: null,
+      },
       accessAction: { kind: 'NONE', reason: 'DELIVERY_PENDING' },
       failure: null,
       createdAt: acceptedAt,
@@ -350,15 +396,71 @@ export class ExportDeliveryModule {
     begin: BeginExportResultV1,
     submission: SecurityAssuranceSubmissionV1,
   ): Promise<ExportStatusV1> {
-    if (begin.record.view.status === 'DELIVERED') return begin.record.view
-    const exportedAt = begin.record.receipt.acceptedAt
+    return this.deliverPending(begin.record.receipt.exportId, submission)
+  }
+
+  async deliverPending(
+    exportId: ExportId,
+    submission: SecurityAssuranceSubmissionV1,
+  ): Promise<ExportStatusV1> {
+    return this.exclusive(exportId, async () => {
+      const prepared = await this.prepareAttempt(exportId)
+      if (prepared === undefined) throw new ExportDeliveryError('NOT_FOUND', 'The Export does not exist')
+      if (!prepared.started) return prepared.record.view
+      return this.writeArtifact(prepared.record, submission)
+    })
+  }
+
+  async recordSourceUnavailable(exportId: ExportId): Promise<ExportStatusV1> {
+    return this.exclusive(exportId, async () => {
+      const prepared = await this.prepareAttempt(exportId)
+      if (prepared === undefined) throw new ExportDeliveryError('NOT_FOUND', 'The Export does not exist')
+      if (!prepared.started) return prepared.record.view
+      return this.failAttempt(prepared.record, 'SOURCE_SUBMISSION_UNAVAILABLE', true)
+    })
+  }
+
+  async listRecoverable(): Promise<readonly RecoverableExportDeliveryV1[]> {
+    let entries: Dirent[]
+    try {
+      entries = await readdir(join(this.root, 'exports'), { withFileTypes: true })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
+    }
+    const recoverable: RecoverableExportDeliveryV1[] = []
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const parsed = exportIdSchema.safeParse(entry.name)
+      if (!parsed.success) continue
+      try {
+        const record = await readRecord(this.root, parsed.data)
+        if (record?.view.status !== 'PENDING') continue
+        recoverable.push({
+          exportId: record.receipt.exportId,
+          assessmentId: record.view.assessmentId,
+          nextRetryAt: record.view.delivery.nextRetryAt,
+        })
+      } catch (error) {
+        if (error instanceof ExportDeliveryError && error.code === 'UNAVAILABLE') continue
+        throw error
+      }
+    }
+    return recoverable.sort((left, right) => left.exportId.localeCompare(right.exportId))
+  }
+
+  private async writeArtifact(
+    record: InternalExportRecordV1,
+    submission: SecurityAssuranceSubmissionV1,
+  ): Promise<ExportStatusV1> {
+    const exportedAt = record.receipt.acceptedAt
     const value = {
       schemaVersion: 1,
-      exportProfileId: begin.record.view.profile.exportProfileId,
+      exportProfileId: record.view.profile.exportProfileId,
       exportedAt,
       source: {
-        assessmentId: begin.record.view.assessmentId,
-        assessmentRevision: begin.record.view.assessmentRevision,
+        assessmentId: record.view.assessmentId,
+        assessmentRevision: record.view.assessmentRevision,
         seal: submission.payload.sourceSeal,
         submissionDigest: submission.digest,
       },
@@ -366,36 +468,41 @@ export class ExportDeliveryModule {
     }
     const bytes = Buffer.from(canonicalJson(value), 'utf8')
     const destinationDirectory = join(this.root, 'destinations', 'local-audit')
-    await mkdir(destinationDirectory, { recursive: true, mode: 0o700 })
-    await chmod(destinationDirectory, 0o700)
-    const destination = artifactPath(this.root, begin.record.receipt.exportId)
+    const destination = artifactPath(this.root, record.receipt.exportId)
     try {
-      await writeFile(destination, bytes, { flag: 'wx', mode: 0o600 })
+      await mkdir(destinationDirectory, { recursive: true, mode: 0o700 })
+      await chmod(destinationDirectory, 0o700)
+      try {
+        await writeFile(destination, bytes, { flag: 'wx', mode: 0o600 })
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        const existing = await readFile(destination)
+        if (!existing.equals(bytes)) {
+          return this.failAttempt(record, 'ARTIFACT_INTEGRITY_CONFLICT', false)
+        }
+      }
       await chmod(destination, 0o600)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-        return this.fail(begin.record)
-      }
-      const existing = await readFile(destination)
-      if (!existing.equals(bytes)) return this.fail(begin.record)
+      return this.failAttempt(record, 'ARTIFACT_IO_ERROR', true)
     }
     const updatedAt = this.now()
     const expiresAt = new Date(
-      Date.parse(begin.record.receipt.acceptedAt) + EXPORT_ARTIFACT_LIFETIME_SECONDS * 1000,
+      Date.parse(record.receipt.acceptedAt) + EXPORT_ARTIFACT_LIFETIME_SECONDS * 1000,
     ).toISOString()
     const view = exportStatusV1Schema.parse({
-      ...begin.record.view,
+      ...record.view,
       status: 'DELIVERED',
       artifact: {
-        artifactId: `${begin.record.receipt.exportId}/artifact`,
+        artifactId: `${record.receipt.exportId}/artifact`,
         digest: binaryDigest('application/vnd.dsh.security.export+json', bytes),
       },
       expiresAt,
+      delivery: { ...record.view.delivery, nextRetryAt: null },
       accessAction: { kind: 'HOST_MANAGED', action: 'DELIVERED_TO_REGISTERED_DESTINATION' },
       failure: null,
       updatedAt,
     })
-    await replaceRecord(this.root, internalExportRecordV1Schema.parse({ ...begin.record, view }))
+    await replaceRecord(this.root, internalExportRecordV1Schema.parse({ ...record, view }))
     return view
   }
 
@@ -528,16 +635,81 @@ export class ExportDeliveryModule {
     return { record, replayed: true }
   }
 
-  private async fail(record: InternalExportRecordV1): Promise<ExportStatusV1> {
-    const updatedAt = this.now()
+  private exclusive(exportId: ExportId, action: () => Promise<ExportStatusV1>): Promise<ExportStatusV1> {
+    const existing = this.inFlight.get(exportId)
+    if (existing !== undefined) return existing
+    const task = Promise.resolve().then(action)
+    this.inFlight.set(exportId, task)
+    void task.then(
+      () => {
+        if (this.inFlight.get(exportId) === task) this.inFlight.delete(exportId)
+      },
+      () => {
+        if (this.inFlight.get(exportId) === task) this.inFlight.delete(exportId)
+      },
+    )
+    return task
+  }
+
+  private async prepareAttempt(exportId: ExportId): Promise<{
+    readonly record: InternalExportRecordV1
+    readonly started: boolean
+  } | undefined> {
+    const record = await readRecord(this.root, exportId)
+    if (record === undefined) return undefined
+    if (record.view.status !== 'PENDING') return { record, started: false }
+    const attemptedAt = this.now()
+    if (
+      record.view.delivery.nextRetryAt !== null
+      && Date.parse(record.view.delivery.nextRetryAt) > Date.parse(attemptedAt)
+    ) return { record, started: false }
     const view = exportStatusV1Schema.parse({
       ...record.view,
-      status: 'FAILED',
+      delivery: {
+        ...record.view.delivery,
+        attemptCount: Math.min(
+          record.view.delivery.attemptCount + 1,
+          EXPORT_DELIVERY_MAX_ATTEMPTS,
+        ),
+        lastAttemptAt: attemptedAt,
+        nextRetryAt: null,
+      },
+      updatedAt: attemptedAt,
+    })
+    const started = internalExportRecordV1Schema.parse({ ...record, view })
+    await replaceRecord(this.root, started)
+    return { record: started, started: true }
+  }
+
+  private async failAttempt(
+    record: InternalExportRecordV1,
+    code: ExportDeliveryAttemptFailureCodeV1,
+    retryable: boolean,
+  ): Promise<ExportStatusV1> {
+    const failedAt = this.now()
+    const exhausted = !retryable || record.view.delivery.attemptCount >= EXPORT_DELIVERY_MAX_ATTEMPTS
+    const retryDelay = EXPORT_DELIVERY_RETRY_DELAYS_MS[
+      Math.min(record.view.delivery.attemptCount - 1, EXPORT_DELIVERY_RETRY_DELAYS_MS.length - 1)
+    ] ?? 120_000
+    const nextRetryAt = exhausted
+      ? null
+      : new Date(Date.parse(failedAt) + retryDelay).toISOString()
+    const view = exportStatusV1Schema.parse({
+      ...record.view,
+      status: exhausted ? 'FAILED' : 'PENDING',
       artifact: null,
       expiresAt: null,
-      accessAction: { kind: 'NONE', reason: 'DELIVERY_FAILED' },
-      failure: { code: 'ARTIFACT_DELIVERY_FAILED' },
-      updatedAt,
+      delivery: {
+        ...record.view.delivery,
+        lastFailureAt: failedAt,
+        lastFailureCode: code,
+        nextRetryAt,
+      },
+      accessAction: exhausted
+        ? { kind: 'NONE', reason: 'DELIVERY_FAILED' }
+        : { kind: 'NONE', reason: 'DELIVERY_PENDING' },
+      failure: exhausted ? { code: 'ARTIFACT_DELIVERY_FAILED' } : null,
+      updatedAt: failedAt,
     })
     await replaceRecord(this.root, internalExportRecordV1Schema.parse({ ...record, view }))
     return view

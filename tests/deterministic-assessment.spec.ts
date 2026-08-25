@@ -5,8 +5,14 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import SecurityAssuranceService from '../src/index.ts'
-import type { AssessmentId, RepositoryId, SecurityInvocation } from '../src/index.ts'
+import SecurityAssuranceService, { EXPORT_DELIVERY_MAX_ATTEMPTS } from '../src/index.ts'
+import type {
+  AssessmentId,
+  ExportId,
+  ExportStatusV1,
+  RepositoryId,
+  SecurityInvocation,
+} from '../src/index.ts'
 import { ExportDeliveryModule } from '../src/internal/export-delivery.ts'
 import { referenceHostInvocation, referenceHostInvocationWithPermissions } from './support/reference-host.ts'
 
@@ -49,6 +55,20 @@ async function waitUntilSealed(
     revision = assessment.value.assessmentRevision
   }
   throw new Error('Assessment did not seal')
+}
+
+async function waitForExportStatus(
+  service: SecurityAssuranceService,
+  invocation: SecurityInvocation,
+  exportId: ExportId,
+  predicate: (status: ExportStatusV1) => boolean,
+): Promise<ExportStatusV1> {
+  for (let attempt = 0; attempt < 320; attempt += 1) {
+    const result = await service.getExport(invocation, { schemaVersion: 1, kind: 'STATUS', exportId })
+    if (result.ok && result.value.kind === 'STATUS' && predicate(result.value)) return result.value
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  throw new Error(`Export ${exportId} did not reach the expected status`)
 }
 
 describe('SecurityAssuranceService deterministic Assessment path', () => {
@@ -238,6 +258,9 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       })
       expect(JSON.stringify(preview)).not.toContain(dshHome)
       expect(JSON.stringify(preview)).not.toContain(repository)
+      if (!submission.ok || !preview.ok || preview.value.kind !== 'PREVIEW') {
+        throw new Error('sealed Export fixture values were unavailable')
+      }
 
       const exportRequest = {
         schemaVersion: 1 as const,
@@ -398,10 +421,111 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
         code: 'CAPABILITY_EXPIRED',
       })
 
+      const failedDeliveryHome = await mkdtemp(join(tmpdir(), 'dsh-security-failed-delivery-home-'))
+      temporaryRoots.push(failedDeliveryHome)
+      let failureClock = new Date().toISOString()
+      const failureModule = new ExportDeliveryModule(
+        join(failedDeliveryHome, 'security-assurance'),
+        () => failureClock,
+      )
+      const failedBegin = await failureModule.begin(deliveryAuthority, {
+        ...exportRequest,
+        idempotencyKey: 'deterministic-export-terminal-failure-1',
+      }, preview.value)
+      await mkdir(join(
+        failedDeliveryHome,
+        'security-assurance',
+        'delivery',
+        'destinations',
+        'local-audit',
+        `${failedBegin.record.receipt.exportId}.json`,
+      ), { recursive: true })
+      let failedStatus: ExportStatusV1 | undefined
+      for (let attempt = 1; attempt <= EXPORT_DELIVERY_MAX_ATTEMPTS; attempt += 1) {
+        failedStatus = await failureModule.deliver(failedBegin, submission.value)
+        expect(failedStatus.delivery.attemptCount).toBe(attempt)
+        expect(failedStatus.delivery.lastFailureCode).toBe('ARTIFACT_IO_ERROR')
+        if (failedStatus.status === 'PENDING') {
+          if (failedStatus.delivery.nextRetryAt === null) throw new Error('pending delivery lost retry schedule')
+          failureClock = failedStatus.delivery.nextRetryAt
+        }
+      }
+      expect(failedStatus).toMatchObject({
+        status: 'FAILED',
+        delivery: {
+          attemptCount: EXPORT_DELIVERY_MAX_ATTEMPTS,
+          lastFailureCode: 'ARTIFACT_IO_ERROR',
+          nextRetryAt: null,
+        },
+        accessAction: { kind: 'NONE', reason: 'DELIVERY_FAILED' },
+        failure: { code: 'ARTIFACT_DELIVERY_FAILED' },
+      })
+
+      const conflictingBegin = await failureModule.begin(deliveryAuthority, {
+        ...exportRequest,
+        idempotencyKey: 'deterministic-export-integrity-conflict-1',
+      }, preview.value)
+      await writeFile(join(
+        failedDeliveryHome,
+        'security-assurance',
+        'delivery',
+        'destinations',
+        'local-audit',
+        `${conflictingBegin.record.receipt.exportId}.json`,
+      ), '{"different":"canonical bytes"}', 'utf8')
+      expect(await failureModule.deliver(conflictingBegin, submission.value)).toMatchObject({
+        status: 'FAILED',
+        delivery: {
+          attemptCount: 1,
+          lastFailureCode: 'ARTIFACT_INTEGRITY_CONFLICT',
+          nextRetryAt: null,
+        },
+        failure: { code: 'ARTIFACT_DELIVERY_FAILED' },
+      })
+
       await fiber.dispose()
+      const recoveryBegin = await deliveryModule.begin(deliveryAuthority, {
+        ...exportRequest,
+        idempotencyKey: 'deterministic-export-crash-recovery-1',
+      }, preview.value)
+      const recoveryArtifact = join(
+        dshHome,
+        'security-assurance',
+        'delivery',
+        'destinations',
+        'local-audit',
+        `${recoveryBegin.record.receipt.exportId}.json`,
+      )
+      await mkdir(recoveryArtifact, { recursive: true })
       const restartedContext = new Context()
       fiber = await restartedContext.plugin(SecurityAssuranceService, { dshHome })
       const restartedInvocation = referenceHostInvocation(restartedContext.securityAssurance)
+      const retrying = await waitForExportStatus(
+        restartedContext.securityAssurance,
+        restartedInvocation,
+        recoveryBegin.record.receipt.exportId,
+        status => status.status === 'PENDING'
+          && status.delivery.attemptCount >= 1
+          && status.delivery.nextRetryAt !== null,
+      )
+      expect(retrying.delivery.lastFailureCode).toBe('ARTIFACT_IO_ERROR')
+      await rm(recoveryArtifact, { recursive: true })
+      const recovered = await waitForExportStatus(
+        restartedContext.securityAssurance,
+        restartedInvocation,
+        recoveryBegin.record.receipt.exportId,
+        status => status.status === 'DELIVERED',
+      )
+      expect(recovered).toMatchObject({
+        status: 'DELIVERED',
+        delivery: {
+          attemptCount: expect.any(Number),
+          lastFailureCode: 'ARTIFACT_IO_ERROR',
+          nextRetryAt: null,
+        },
+        failure: null,
+      })
+      expect(recovered.delivery.attemptCount).toBeGreaterThanOrEqual(2)
       expect(await restartedContext.securityAssurance.getExport(restartedInvocation, {
         schemaVersion: 1,
         kind: 'STATUS',

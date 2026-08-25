@@ -214,8 +214,10 @@ explicit expiring bounded-content disclosure, a governed Risk Decision form
 with Critical Dual Authority completion, and a read-only SEALED Bundle/Export
 readiness view are implemented. Service-derived Export Preview, `requestExport`,
 owner-bound `getExport` status, and durable delivery through the frozen
-`delivery/local-audit` adapter are also implemented. An explicit Workbench
-download resolves current Host authority again, atomically consumes a
+`delivery/local-audit` adapter are also implemented. Persisted attempt metadata,
+bounded backoff, startup recovery of unfinished work, terminal failure, and
+lifecycle-owned worker shutdown keep Delivery independent of the browser. An
+explicit Workbench download resolves current Host authority again, atomically consumes a
 process-local 60-second one-use capability, verifies the exact artifact digest,
 and discards content from Workbench state after invoking the browser download.
 This repository ships no production external
@@ -470,8 +472,13 @@ mandatory redactions, warnings, audience, format, media type, destination, and
 expiry. A matching Preview can be submitted with a fresh idempotency identity;
 the browser accepts only a bound Receipt and owner-bound `getExport` status. The
 current local-audit adapter writes a digest-bound artifact beneath the private
-Service home. Status projects `HOST_MANAGED` access unless current authority also
-has `export:download`; only then does it project `ONE_USE_DOWNLOAD`. The explicit
+Service home. Transient artifact I/O and sealed-source reads remain `PENDING`
+under a five-attempt Service-owned retry policy; status discloses bounded attempt
+count, last safe failure category, timestamps, and next retry time. The
+Workbench can explicitly refresh that status but never initiates a retry.
+Canonical-byte conflicts are terminal. Status projects `HOST_MANAGED` access
+unless current authority also has `export:download`; only then does it project
+`ONE_USE_DOWNLOAD`. The explicit
 download action reauthorizes through the Host Remote, binds Export, artifact, and
 Digest Envelope, mints and consumes a non-serializable process-local capability
 inside the same Service invocation, and returns an artifact of at most 16 MiB as

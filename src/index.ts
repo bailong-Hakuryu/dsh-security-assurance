@@ -166,6 +166,9 @@ import {
 export * from './contracts.ts'
 export * from './analyzer.ts'
 
+const EXPORT_DELIVERY_IDLE_SCAN_MS = 30_000
+const EXPORT_DELIVERY_WORKER_ERROR_RETRY_MS = 1_000
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     securityAssurance: SecurityAssuranceService
@@ -311,6 +314,10 @@ export class SecurityAssuranceService extends Service {
     readonly controller: AbortController
     readonly task: Promise<void>
   }>()
+  private readonly exportDeliveryWorkerController = new AbortController()
+  private exportDeliveryWorkerTask: Promise<void> | undefined
+  private exportDeliveryWakePending = false
+  private exportDeliveryWake: (() => void) | undefined
   private disposed = false
 
   constructor(ctx: Context, config: Config = {}) {
@@ -385,13 +392,19 @@ export class SecurityAssuranceService extends Service {
       for (const assessmentId of persistence.listCreatedAssessmentIds()) {
         this.launchAssessment(persistence, assessmentId)
       }
+      this.startExportDeliveryWorker()
     }).catch(() => {})
     ctx.effect(async () => {
       const persistence = await this.ready
       return async () => {
         this.disposed = true
         for (const running of this.runningAssessments.values()) running.controller.abort()
-        await Promise.allSettled([...this.runningAssessments.values()].map(running => running.task))
+        this.exportDeliveryWorkerController.abort()
+        this.wakeExportDeliveryWorker()
+        await Promise.allSettled([
+          ...[...this.runningAssessments.values()].map(running => running.task),
+          ...(this.exportDeliveryWorkerTask === undefined ? [] : [this.exportDeliveryWorkerTask]),
+        ])
         persistence?.close()
       }
     }, 'security assurance teardown')
@@ -1456,6 +1469,7 @@ export class SecurityAssuranceService extends Service {
         principalId: authority.principalId,
         authorityKind: authority.kind,
       }, parsed.data, preview)
+      this.wakeExportDeliveryWorker()
       await this.exportDelivery.deliver(begin, sealed.submission)
       return deepFreeze({ ok: true, value: begin.record.receipt })
     } catch (error) {
@@ -1530,6 +1544,76 @@ export class SecurityAssuranceService extends Service {
     } catch (error) {
       return this.exportFailure(error)
     }
+  }
+
+  private startExportDeliveryWorker(): void {
+    if (this.disposed || this.exportDeliveryWorkerTask !== undefined) return
+    this.exportDeliveryWorkerTask = this.runExportDeliveryWorker(this.exportDeliveryWorkerController.signal)
+  }
+
+  private async runExportDeliveryWorker(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      let waitMs = EXPORT_DELIVERY_IDLE_SCAN_MS
+      try {
+        const recoverable = await this.exportDelivery.listRecoverable()
+        const observedAt = Date.now()
+        let attempted = false
+        for (const delivery of recoverable) {
+          if (signal.aborted) return
+          const retryAt = delivery.nextRetryAt === null ? observedAt : Date.parse(delivery.nextRetryAt)
+          if (retryAt > observedAt) {
+            waitMs = Math.min(waitMs, retryAt - observedAt)
+            continue
+          }
+          attempted = true
+          let submission: SecurityAssuranceSubmissionV1 | undefined
+          try {
+            submission = (await this.verifiedSealedRecord(delivery.assessmentId))?.submission
+          } catch {
+            // A missing or unverifiable source is recorded through the same bounded attempt policy.
+          }
+          if (signal.aborted) return
+          if (submission === undefined) {
+            await this.exportDelivery.recordSourceUnavailable(delivery.exportId)
+          } else {
+            await this.exportDelivery.deliverPending(delivery.exportId, submission)
+          }
+        }
+        if (attempted) continue
+      } catch {
+        waitMs = EXPORT_DELIVERY_WORKER_ERROR_RETRY_MS
+      }
+      await this.waitForExportDeliveryWake(waitMs, signal)
+    }
+  }
+
+  private wakeExportDeliveryWorker(): void {
+    this.exportDeliveryWakePending = true
+    this.exportDeliveryWake?.()
+  }
+
+  private waitForExportDeliveryWake(delayMs: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve()
+    if (this.exportDeliveryWakePending) {
+      this.exportDeliveryWakePending = false
+      return Promise.resolve()
+    }
+    return new Promise(resolve => {
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        if (timer !== undefined) clearTimeout(timer)
+        signal.removeEventListener('abort', finish)
+        if (this.exportDeliveryWake === finish) this.exportDeliveryWake = undefined
+        this.exportDeliveryWakePending = false
+        resolve()
+      }
+      this.exportDeliveryWake = finish
+      signal.addEventListener('abort', finish, { once: true })
+      timer = setTimeout(finish, Math.max(0, delayMs))
+    })
   }
 
   private launchAssessment(persistence: SecurityPersistence, assessmentId: AssessmentId): void {

@@ -1943,6 +1943,12 @@ export const exportRequestReceiptV1Schema: z.ZodType<ExportRequestReceiptV1> = z
 })
 
 export type ExportDeliveryStatusV1 = 'PENDING' | 'DELIVERED' | 'FAILED' | 'EXPIRED'
+export const EXPORT_DELIVERY_MAX_ATTEMPTS = 5
+
+export type ExportDeliveryAttemptFailureCodeV1 =
+  | 'ARTIFACT_IO_ERROR'
+  | 'ARTIFACT_INTEGRITY_CONFLICT'
+  | 'SOURCE_SUBMISSION_UNAVAILABLE'
 
 export interface ExportStatusV1 {
   readonly schemaVersion: 1
@@ -1958,6 +1964,13 @@ export interface ExportStatusV1 {
     readonly digest: DigestEnvelopeV1
   }
   readonly expiresAt: string | null
+  readonly delivery: {
+    readonly attemptCount: number
+    readonly lastAttemptAt: string | null
+    readonly lastFailureAt: string | null
+    readonly lastFailureCode: ExportDeliveryAttemptFailureCodeV1 | null
+    readonly nextRetryAt: string | null
+  }
   readonly accessAction:
     | { readonly kind: 'NONE'; readonly reason: 'DELIVERY_PENDING' | 'DELIVERY_FAILED' | 'ARTIFACT_EXPIRED' }
     | { readonly kind: 'HOST_MANAGED'; readonly action: 'DELIVERED_TO_REGISTERED_DESTINATION' }
@@ -1986,6 +1999,17 @@ export const exportStatusV1Schema: z.ZodType<ExportStatusV1> = z.strictObject({
     digest: digestEnvelopeV1Schema,
   }).nullable(),
   expiresAt: z.iso.datetime({ offset: true }).nullable(),
+  delivery: z.strictObject({
+    attemptCount: z.number().int().min(0).max(EXPORT_DELIVERY_MAX_ATTEMPTS),
+    lastAttemptAt: z.iso.datetime({ offset: true }).nullable(),
+    lastFailureAt: z.iso.datetime({ offset: true }).nullable(),
+    lastFailureCode: z.enum([
+      'ARTIFACT_IO_ERROR',
+      'ARTIFACT_INTEGRITY_CONFLICT',
+      'SOURCE_SUBMISSION_UNAVAILABLE',
+    ]).nullable(),
+    nextRetryAt: z.iso.datetime({ offset: true }).nullable(),
+  }),
   accessAction: z.discriminatedUnion('kind', [
     z.strictObject({
       kind: z.literal('NONE'),
@@ -2011,6 +2035,22 @@ export const exportStatusV1Schema: z.ZodType<ExportStatusV1> = z.strictObject({
   }
   if ((view.status === 'FAILED') !== (view.failure !== null)) {
     context.addIssue({ code: 'custom', path: ['failure'], message: 'failure exists exactly for failed delivery' })
+  }
+  if (view.status !== 'PENDING' && view.delivery.nextRetryAt !== null) {
+    context.addIssue({ code: 'custom', path: ['delivery', 'nextRetryAt'], message: 'only pending delivery may retry' })
+  }
+  if (view.delivery.attemptCount === 0 && (
+    view.delivery.lastAttemptAt !== null
+    || view.delivery.lastFailureAt !== null
+    || view.delivery.lastFailureCode !== null
+  )) {
+    context.addIssue({ code: 'custom', path: ['delivery'], message: 'unattempted delivery has no attempt metadata' })
+  }
+  if (view.delivery.attemptCount > 0 && view.delivery.lastAttemptAt === null) {
+    context.addIssue({ code: 'custom', path: ['delivery', 'lastAttemptAt'], message: 'attempted delivery records its last attempt' })
+  }
+  if ((view.delivery.lastFailureAt === null) !== (view.delivery.lastFailureCode === null)) {
+    context.addIssue({ code: 'custom', path: ['delivery'], message: 'delivery failure time and code exist together' })
   }
 })
 

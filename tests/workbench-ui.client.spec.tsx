@@ -845,6 +845,7 @@ describe('Security Assurance Workbench UI', () => {
       canonicalization: 'raw-bytes' as const,
       value: exportDigestValue,
     }
+    let exportStatusReads = 0
     const exportPreview = {
       schemaVersion: 1,
       kind: 'PREVIEW',
@@ -924,26 +925,37 @@ describe('Security Assurance Workbench UI', () => {
             content: { encoding: 'base64', value: exportBytes.toString('base64') },
           } } })
         }
+        exportStatusReads += 1
+        const pending = exportStatusReads === 1
         return Promise.resolve({ ok: true, value: { ok: true, value: {
           schemaVersion: 1,
           kind: 'STATUS',
           exportId,
           assessmentId: id,
           assessmentRevision: 8,
-          status: 'DELIVERED',
+          status: pending ? 'PENDING' : 'DELIVERED',
           profile: exportPreview.profile,
           destination: exportPreview.destination,
-          artifact: { artifactId: `${exportId}/artifact`, digest: exportDigest },
-          expiresAt: '2026-08-26T00:09:00.000Z',
-          accessAction: {
-            kind: 'ONE_USE_DOWNLOAD',
-            action: 'REQUEST_ONE_USE_DOWNLOAD',
-            capabilityExpiresAfterSeconds: 60,
-            maxByteLength: 16 * 1024 * 1024,
+          artifact: pending ? null : { artifactId: `${exportId}/artifact`, digest: exportDigest },
+          expiresAt: pending ? null : '2026-08-26T00:09:00.000Z',
+          delivery: {
+            attemptCount: pending ? 1 : 2,
+            lastAttemptAt: pending ? '2026-08-25T00:09:01.000Z' : '2026-08-25T00:09:02.000Z',
+            lastFailureAt: '2026-08-25T00:09:01.000Z',
+            lastFailureCode: 'ARTIFACT_IO_ERROR',
+            nextRetryAt: pending ? '2026-08-25T00:09:02.000Z' : null,
           },
+          accessAction: pending
+            ? { kind: 'NONE', reason: 'DELIVERY_PENDING' }
+            : {
+                kind: 'ONE_USE_DOWNLOAD',
+                action: 'REQUEST_ONE_USE_DOWNLOAD',
+                capabilityExpiresAfterSeconds: 60,
+                maxByteLength: 16 * 1024 * 1024,
+              },
           failure: null,
           createdAt: '2026-08-25T00:09:00.000Z',
-          updatedAt: '2026-08-25T00:09:01.000Z',
+          updatedAt: pending ? '2026-08-25T00:09:01.000Z' : '2026-08-25T00:09:02.000Z',
         } } })
       }
       if (endpoint === 'securityAssuranceWorkbench/requestExport') {
@@ -1005,15 +1017,25 @@ describe('Security Assurance Workbench UI', () => {
       fireEvent.click(overlay.view.getByRole('button', { name: '请求并交付 Export' }))
     })
     expect(overlay.view.getByText(exportId)).toBeTruthy()
-    expect(overlay.view.getAllByText('DELIVERED').length).toBeGreaterThan(0)
-    expect(overlay.view.getByText('sec-00000000-0000-0000-0000-0000000000e1')).toBeTruthy()
-    expect(overlay.view.getByText(exportDigestValue)).toBeTruthy()
-    expect(overlay.view.getByRole('button', { name: '授权并下载一次' })).toBeTruthy()
+    expect(overlay.view.getAllByText('PENDING').length).toBeGreaterThan(0)
+    expect(overlay.view.getByText('ARTIFACT_IO_ERROR')).toBeTruthy()
+    expect(overlay.view.getAllByText('2026-08-25T00:09:02.000Z').length).toBeGreaterThan(0)
+    expect(overlay.view.getByRole('button', { name: '刷新 Delivery 状态' })).toBeTruthy()
+    expect(overlay.view.queryByRole('button', { name: '授权并下载一次' })).toBeNull()
     expect(endpoints.slice(-3)).toEqual([
       'securityAssuranceWorkbench/getExport',
       'securityAssuranceWorkbench/requestExport',
       'securityAssuranceWorkbench/getExport',
     ])
+
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '刷新 Delivery 状态' }))
+    })
+    expect(overlay.view.getAllByText('DELIVERED').length).toBeGreaterThan(0)
+    expect(overlay.view.getByText('sec-00000000-0000-0000-0000-0000000000e1')).toBeTruthy()
+    expect(overlay.view.getByText(exportDigestValue)).toBeTruthy()
+    expect(overlay.view.getByRole('button', { name: '授权并下载一次' })).toBeTruthy()
+    expect(endpoints.at(-1)).toBe('securityAssuranceWorkbench/getExport')
 
     const createObjectURL = vi.fn(() => 'blob:dsh-security-one-use')
     const revokeObjectURL = vi.fn()

@@ -26,6 +26,7 @@ import type {
   BundleManifestV1,
   DigestEnvelopeV1,
   ExportDownloadV1,
+  ExportDeliveryStatusV1,
   ExportPreviewV1,
   ExportRequestReceiptV1,
   ExportStatusV1,
@@ -687,6 +688,72 @@ export class SecurityAssuranceWorkbenchController extends Service {
         kind: 'STATUS_READY' as const,
         preview,
         receipt,
+        status,
+        download: EXPORT_DOWNLOAD_IDLE,
+      }),
+    })
+    this.publish(ready)
+    return ready
+  }
+
+  /** Re-read durable Delivery truth; this observes Service retry state and never performs a retry itself. */
+  async refreshExportStatus(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'BUNDLE_READY'
+      || current.export.kind !== 'STATUS_READY'
+    ) return current
+    const retained = current.export
+    let result: RemoteResult<SecurityResult<import('../contracts.ts').ExportViewV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.getExport(
+        session.contextId,
+        { schemaVersion: 1, kind: 'STATUS', exportId: retained.receipt.exportId },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (
+      !this.isActive(session)
+      || this.state.kind !== 'BUNDLE_READY'
+      || this.state.export !== retained
+    ) return this.state
+    const status = this.readRemoteResult(session, result)
+    if (status === undefined) return this.state
+    const allowedTransitions: Readonly<Record<
+      ExportDeliveryStatusV1,
+      readonly ExportDeliveryStatusV1[]
+    >> = {
+      PENDING: ['PENDING', 'DELIVERED', 'FAILED'],
+      DELIVERED: ['DELIVERED', 'EXPIRED'],
+      FAILED: ['FAILED'],
+      EXPIRED: ['EXPIRED'],
+    }
+    if (
+      status.kind !== 'STATUS'
+      || status.exportId !== retained.status.exportId
+      || status.assessmentId !== current.assessmentId
+      || status.assessmentRevision !== current.manifest.assessmentRevision
+      || status.profile.exportProfileId !== retained.preview.profile.exportProfileId
+      || status.destination.deliveryDestinationId !== retained.preview.destination.deliveryDestinationId
+      || status.createdAt !== retained.status.createdAt
+      || status.delivery.attemptCount < retained.status.delivery.attemptCount
+      || !allowedTransitions[retained.status.status].includes(status.status)
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'EXPORT_STATUS_PROTOCOL_VIOLATION',
+        message: 'The refreshed Export status regressed or changed its accepted identity.',
+        retryable: false,
+      })
+    }
+    const ready = Object.freeze({
+      ...current,
+      export: Object.freeze({
+        ...retained,
         status,
         download: EXPORT_DOWNLOAD_IDLE,
       }),
@@ -2509,6 +2576,7 @@ function installWorkbenchUi(
         previewExport: deliveryDestinationId => { void controller.previewExport(deliveryDestinationId) },
         recordRiskDecision: submission => { void controller.recordRiskDecision(submission) },
         refreshRuntimeHealth: () => { void controller.refreshRuntimeHealth() },
+        refreshExportStatus: () => { void controller.refreshExportStatus() },
         requestExport: () => { void controller.requestExport() },
         resumeAssessment: reason => { void controller.resumeAssessment(reason) },
         selectAssessment: assessmentId => { void controller.selectAssessment(assessmentId) },
