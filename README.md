@@ -214,8 +214,11 @@ explicit expiring bounded-content disclosure, a governed Risk Decision form
 with Critical Dual Authority completion, and a read-only SEALED Bundle/Export
 readiness view are implemented. Service-derived Export Preview, `requestExport`,
 owner-bound `getExport` status, and durable delivery through the frozen
-`delivery/local-audit` adapter are also implemented. Browser download
-capabilities remain unimplemented. This repository ships no production external
+`delivery/local-audit` adapter are also implemented. An explicit Workbench
+download resolves current Host authority again, atomically consumes a
+process-local 60-second one-use capability, verifies the exact artifact digest,
+and discards content from Workbench state after invoking the browser download.
+This repository ships no production external
 Qualification or external Analyzer
 effectiveness claim. Its external Candidate Validation path is deliberately
 limited to the exact `dsh/conformance/reference-control-validation-v1`
@@ -467,9 +470,16 @@ mandatory redactions, warnings, audience, format, media type, destination, and
 expiry. A matching Preview can be submitted with a fresh idempotency identity;
 the browser accepts only a bound Receipt and owner-bound `getExport` status. The
 current local-audit adapter writes a digest-bound artifact beneath the private
-Service home and exposes only `HOST_MANAGED` access metadata to the browser.
-Artifact paths, bytes, credentials, and direct download capabilities are never
-returned through the Workbench contract.
+Service home. Status projects `HOST_MANAGED` access unless current authority also
+has `export:download`; only then does it project `ONE_USE_DOWNLOAD`. The explicit
+download action reauthorizes through the Host Remote, binds Export, artifact, and
+Digest Envelope, mints and consumes a non-serializable process-local capability
+inside the same Service invocation, and returns an artifact of at most 16 MiB as
+verified base64. The Client verifies byte length and SHA-256 again before using a
+bounded Blob URL to invoke the browser download, then retains only filename,
+digest, size, and consumed time. No capability token, private path, credential,
+content, or Blob
+URL enters Workbench state, browser history, or storage.
 
 The Client entry also registers two additive Harness UI contributions. A
 launcher in `sidebar.footer.action` opens a frame-wide dialog in
@@ -477,7 +487,7 @@ launcher in `sidebar.footer.action` opens a frame-wide dialog in
 subscribes to the Controller through the Slot renderer's observable seam and
 renders `CLOSED`, `SELECTION_LOADING`, `SELECTION_READY`,
 `SELECTION_LOADING_MORE`, Runtime Health, Bundle/Export readiness, Export
-Preview/request/status,
+Preview/request/status/one-use download,
 Repository/Catalog/Preflight/Wizard states, `LOADING`,
 `READY`, and `FAILED` without duplicating
 Remote, polling, authorization, or revision logic. `READY` shows canonical machine IDs

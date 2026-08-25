@@ -25,6 +25,7 @@ import type {
   AssessmentSnapshotV1,
   BundleManifestV1,
   DigestEnvelopeV1,
+  ExportDownloadV1,
   ExportPreviewV1,
   ExportRequestReceiptV1,
   ExportStatusV1,
@@ -136,6 +137,18 @@ export type WorkbenchExportStateV1 =
       readonly preview: ExportPreviewV1
       readonly receipt: ExportRequestReceiptV1
       readonly status: ExportStatusV1
+      readonly download: WorkbenchExportDownloadStateV1
+    }
+
+export type WorkbenchExportDownloadStateV1 =
+  | { readonly kind: 'IDLE' }
+  | { readonly kind: 'DOWNLOADING' }
+  | {
+      readonly kind: 'COMPLETE'
+      readonly fileName: string
+      readonly byteLength: number
+      readonly digest: string
+      readonly consumedAt: string
     }
 
 /** Non-sensitive command progress retained beside one exact Finding revision. */
@@ -282,6 +295,7 @@ const RISK_DECISION_IDLE: WorkbenchRiskDecisionSubmissionStateV1 = Object.freeze
 const ASSESSMENT_COMMAND_IDLE: WorkbenchAssessmentCommandStateV1 = Object.freeze({ kind: 'IDLE' })
 const START_SUBMISSION_IDLE: WorkbenchStartSubmissionStateV1 = Object.freeze({ kind: 'IDLE' })
 const EXPORT_IDLE: WorkbenchExportStateV1 = Object.freeze({ kind: 'IDLE' })
+const EXPORT_DOWNLOAD_IDLE: WorkbenchExportDownloadStateV1 = Object.freeze({ kind: 'IDLE' })
 const LONG_POLL_TIMEOUT_MS = 25_000
 
 /**
@@ -669,7 +683,106 @@ export class SecurityAssuranceWorkbenchController extends Service {
     }
     const ready = Object.freeze({
       ...current,
-      export: Object.freeze({ kind: 'STATUS_READY' as const, preview, receipt, status }),
+      export: Object.freeze({
+        kind: 'STATUS_READY' as const,
+        preview,
+        receipt,
+        status,
+        download: EXPORT_DOWNLOAD_IDLE,
+      }),
+    })
+    this.publish(ready)
+    return ready
+  }
+
+  /** Reauthorize, atomically consume one Host-only capability, verify bytes, and invoke browser download. */
+  async downloadExport(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    const session = this.session
+    const current = this.state
+    if (
+      session === undefined
+      || current.kind !== 'BUNDLE_READY'
+      || current.export.kind !== 'STATUS_READY'
+      || current.export.status.status !== 'DELIVERED'
+      || current.export.status.artifact === null
+      || current.export.status.accessAction.kind !== 'ONE_USE_DOWNLOAD'
+      || current.export.download.kind === 'DOWNLOADING'
+    ) return current
+    const retainedExport = current.export
+    const artifact = retainedExport.status.artifact
+    if (artifact === null) return current
+    this.publish(Object.freeze({
+      ...current,
+      export: Object.freeze({ ...retainedExport, download: Object.freeze({ kind: 'DOWNLOADING' as const }) }),
+    }))
+    let result: RemoteResult<SecurityResult<import('../contracts.ts').ExportViewV1>>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbench.getExport(
+        session.contextId,
+        {
+          schemaVersion: 1,
+          kind: 'DOWNLOAD',
+          exportId: retainedExport.status.exportId,
+          artifactId: artifact.artifactId,
+          expectedDigest: artifact.digest,
+        },
+        session.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    if (
+      !this.isActive(session)
+      || this.state.kind !== 'BUNDLE_READY'
+      || this.state.export.kind !== 'STATUS_READY'
+      || this.state.export.status !== retainedExport.status
+      || this.state.export.download.kind !== 'DOWNLOADING'
+    ) return this.state
+    const view = this.readRemoteResult(session, result)
+    if (view === undefined) return this.state
+    if (
+      view.kind !== 'DOWNLOAD'
+      || view.exportId !== retainedExport.status.exportId
+      || view.assessmentId !== current.assessmentId
+      || view.assessmentRevision !== current.manifest.assessmentRevision
+      || view.artifactId !== artifact.artifactId
+      || view.mediaType !== artifact.digest.mediaType
+      || view.byteLength !== artifact.digest.byteLength
+      || view.digest.value !== artifact.digest.value
+      || view.digest.canonicalization !== 'raw-bytes'
+      || view.content.encoding !== 'base64'
+      || view.capability.kind !== 'CONSUMED_ONE_USE'
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'EXPORT_DOWNLOAD_PROTOCOL_VIOLATION',
+        message: 'The one-use Export download does not match the retained delivered artifact.',
+        retryable: false,
+      })
+    }
+    let bytes: Uint8Array
+    try {
+      bytes = decodeExportBase64(view.content.value)
+      if (
+        bytes.byteLength !== view.byteLength
+        || await browserSha256Hex(bytes) !== view.digest.value
+      ) throw new Error('Export download digest mismatch')
+      triggerExportDownload(view, bytes)
+    } catch (error) {
+      return this.failClient(session, error)
+    }
+    const ready = Object.freeze({
+      ...current,
+      export: Object.freeze({
+        ...retainedExport,
+        download: Object.freeze({
+          kind: 'COMPLETE' as const,
+          fileName: view.fileName,
+          byteLength: view.byteLength,
+          digest: view.digest.value,
+          consumedAt: view.capability.consumedAt,
+        }),
+      }),
     })
     this.publish(ready)
     return ready
@@ -2210,6 +2323,47 @@ function nextExportIdempotencyKey(): string {
   return `workbench-export:${globalThis.crypto.randomUUID()}`
 }
 
+function decodeExportBase64(value: string): Uint8Array {
+  const decoded = globalThis.atob(value)
+  return Uint8Array.from(decoded, character => character.charCodeAt(0))
+}
+
+async function browserSha256Hex(bytes: Uint8Array): Promise<string> {
+  if (typeof globalThis.crypto?.subtle?.digest !== 'function') {
+    throw new Error('The browser cannot verify the Export download digest.')
+  }
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', ownedArrayBuffer(bytes))
+  return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('')
+}
+
+function triggerExportDownload(download: ExportDownloadV1, bytes: Uint8Array): void {
+  if (
+    typeof document === 'undefined'
+    || typeof globalThis.URL?.createObjectURL !== 'function'
+    || typeof globalThis.URL?.revokeObjectURL !== 'function'
+  ) throw new Error('The Host browser download facility is unavailable.')
+  const blob = new Blob([ownedArrayBuffer(bytes)], { type: download.mediaType })
+  const objectUrl = globalThis.URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = download.fileName
+  anchor.rel = 'noopener'
+  anchor.hidden = true
+  document.body.appendChild(anchor)
+  try {
+    anchor.click()
+  } finally {
+    anchor.remove()
+    globalThis.setTimeout(() => { globalThis.URL.revokeObjectURL(objectUrl) }, 0)
+  }
+}
+
+function ownedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  return copy.buffer
+}
+
 function normalizeAssessmentCommandReason(
   reason: WorkbenchAssessmentCommandReasonV1,
 ): WorkbenchAssessmentCommandReasonV1 {
@@ -2344,6 +2498,7 @@ function installWorkbenchUi(
         closeWorkbench: () => { presentation.hide() },
         confirmStartAssessment: () => { void controller.confirmStartAssessment() },
         discloseEvidence: () => { void controller.discloseEvidence() },
+        downloadExport: () => { void controller.downloadExport() },
         hideEvidenceDisclosure: () => { controller.hideEvidenceDisclosure() },
         loadMoreAssessments: () => { void controller.loadMoreAssessments() },
         loadMoreFindings: () => { void controller.loadMoreFindings() },

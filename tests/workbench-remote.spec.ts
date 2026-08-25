@@ -135,7 +135,7 @@ async function harness(strictTypert = false, riskDecisionWindow = true): Promise
     }],
     [authorityContextId('workbench-session-export-reader'), {
       principalId: 'workbench-export-reader',
-      permissions: ['assessment:read', 'repository:read', 'export:read', 'export:request'],
+      permissions: ['assessment:read', 'repository:read', 'export:read', 'export:request', 'export:download'],
     }],
   ])
   const remoteFiber = await ctx.plugin(SecurityAssuranceWorkbenchRemote, {
@@ -275,26 +275,57 @@ describe('Security Assurance Workbench Remote', () => {
     })
     if (!requested.ok) throw new Error(`Export request failed: ${requested.error.code}`)
 
-    await expect(ctx.typertGateway.invoke({
+    const status = await ctx.typertGateway.invoke({
       namespace: 'securityAssuranceWorkbench',
       method: 'getExport',
       args: {
         securityAssuranceWorkbenchContextId: authorityId,
         request: { schemaVersion: 1, kind: 'STATUS', exportId: requested.value.exportId },
       },
-    })).resolves.toMatchObject({
+    }) as SecurityResult<import('../src/index.ts').ExportViewV1>
+    expect(status).toMatchObject({
       ok: true,
       value: {
         kind: 'STATUS',
         exportId: requested.value.exportId,
         status: 'DELIVERED',
         artifact: { digest: { mediaType: 'application/vnd.dsh.security.export+json' } },
-        accessAction: { kind: 'HOST_MANAGED' },
+        accessAction: { kind: 'ONE_USE_DOWNLOAD' },
       },
+    })
+    if (!status.ok || status.value.kind !== 'STATUS' || status.value.artifact === null) {
+      throw new Error('Export Delivery status did not expose downloadable artifact metadata')
+    }
+    const download = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getExport',
+      args: {
+        securityAssuranceWorkbenchContextId: authorityId,
+        request: {
+          schemaVersion: 1,
+          kind: 'DOWNLOAD',
+          exportId: requested.value.exportId,
+          artifactId: status.value.artifact.artifactId,
+          expectedDigest: status.value.artifact.digest,
+        },
+      },
+    }) as SecurityResult<import('../src/index.ts').ExportViewV1>
+    expect(download).toMatchObject({
+      ok: true,
+      value: {
+        kind: 'DOWNLOAD',
+        exportId: requested.value.exportId,
+        capability: { kind: 'CONSUMED_ONE_USE' },
+        content: { encoding: 'base64' },
+      },
+    })
+    if (!download.ok || download.value.kind !== 'DOWNLOAD') throw new Error('Export download failed')
+    expect(JSON.parse(Buffer.from(download.value.content.value, 'base64').toString('utf8'))).toMatchObject({
+      source: { assessmentId },
     })
     expect(JSON.stringify(preview)).not.toContain('privatePath')
     expect(JSON.stringify(requested)).not.toContain('privatePath')
-    expect(resolvedContextIds).toEqual([authorityId, authorityId, authorityId, authorityId, authorityId])
+    expect(resolvedContextIds).toEqual([authorityId, authorityId, authorityId, authorityId, authorityId, authorityId])
   })
 
   it('returns the bounded Runtime Health snapshot through freshly resolved Host authority', async () => {

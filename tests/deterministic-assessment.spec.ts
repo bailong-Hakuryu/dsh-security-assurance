@@ -7,7 +7,8 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import SecurityAssuranceService from '../src/index.ts'
 import type { AssessmentId, RepositoryId, SecurityInvocation } from '../src/index.ts'
-import { referenceHostInvocation } from './support/reference-host.ts'
+import { ExportDeliveryModule } from '../src/internal/export-delivery.ts'
+import { referenceHostInvocation, referenceHostInvocationWithPermissions } from './support/reference-host.ts'
 
 const run = promisify(execFile)
 const temporaryRoots: string[] = []
@@ -283,12 +284,44 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
               value: expect.stringMatching(/^[0-9a-f]{64}$/u),
             },
           },
-          accessAction: { kind: 'HOST_MANAGED', action: 'DELIVERED_TO_REGISTERED_DESTINATION' },
+          accessAction: { kind: 'ONE_USE_DOWNLOAD', action: 'REQUEST_ONE_USE_DOWNLOAD' },
           failure: null,
         },
       })
       expect(JSON.stringify(delivered)).not.toContain(dshHome)
       expect(JSON.stringify(delivered)).not.toContain(repository)
+      if (!delivered.ok || delivered.value.kind !== 'STATUS' || delivered.value.artifact === null) {
+        throw new Error('delivered Export did not expose artifact metadata')
+      }
+
+      const restrictedInvocation = referenceHostInvocationWithPermissions(
+        ctx.securityAssurance,
+        ['export:read'],
+      )
+      expect(await ctx.securityAssurance.getExport(restrictedInvocation, {
+        schemaVersion: 1,
+        kind: 'STATUS',
+        exportId: requested.value.exportId,
+      })).toMatchObject({
+        ok: true,
+        value: { accessAction: { kind: 'HOST_MANAGED', action: 'DELIVERED_TO_REGISTERED_DESTINATION' } },
+      })
+
+      const downloadRequest = {
+        schemaVersion: 1 as const,
+        kind: 'DOWNLOAD' as const,
+        exportId: requested.value.exportId,
+        artifactId: delivered.value.artifact.artifactId,
+        expectedDigest: delivered.value.artifact.digest,
+      }
+      expect(await ctx.securityAssurance.getExport(restrictedInvocation, downloadRequest)).toMatchObject({
+        ok: false,
+        error: { code: 'UNAUTHORIZED' },
+      })
+      expect(await ctx.securityAssurance.getExport(invocation, {
+        ...downloadRequest,
+        expectedDigest: { ...downloadRequest.expectedDigest, value: '0'.repeat(64) },
+      })).toMatchObject({ ok: false, error: { code: 'CONFLICT' } })
 
       const otherPrincipal = referenceHostInvocation(ctx.securityAssurance, 'other-reference-host-operator')
       expect(await ctx.securityAssurance.getExport(otherPrincipal, {
@@ -312,6 +345,58 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
         submission: { schemaVersion: 1 },
       })
       expect(deliveredBytes).not.toContain(repository)
+
+      const downloaded = await ctx.securityAssurance.getExport(invocation, downloadRequest)
+      expect(downloaded).toMatchObject({
+        ok: true,
+        value: {
+          kind: 'DOWNLOAD',
+          exportId: requested.value.exportId,
+          artifactId: delivered.value.artifact.artifactId,
+          mediaType: 'application/vnd.dsh.security.export+json',
+          byteLength: Buffer.byteLength(deliveredBytes),
+          digest: delivered.value.artifact.digest,
+          capability: { kind: 'CONSUMED_ONE_USE' },
+          content: { encoding: 'base64' },
+        },
+      })
+      if (!downloaded.ok || downloaded.value.kind !== 'DOWNLOAD') {
+        throw new Error('one-use Export download failed')
+      }
+      expect(Buffer.from(downloaded.value.content.value, 'base64').toString('utf8')).toBe(deliveredBytes)
+      expect(JSON.stringify(downloaded)).not.toContain(dshHome)
+      expect(JSON.stringify(downloaded)).not.toContain(repository)
+      expect(JSON.stringify(downloaded)).not.toMatch(/capability(Id|Token)|privatePath/iu)
+
+      const deliveryModule = new ExportDeliveryModule(join(dshHome, 'security-assurance'))
+      const deliveryAuthority = {
+        principalId: 'reference-host-operator',
+        authorityKind: 'host-operator' as const,
+      }
+      const ownerBoundCapability = await deliveryModule.authorizeDownload(deliveryAuthority, downloadRequest)
+      expect(JSON.stringify(ownerBoundCapability)).toBe('{}')
+      await expect(deliveryModule.consumeDownload({
+        ...deliveryAuthority,
+        principalId: 'other-reference-host-operator',
+      }, ownerBoundCapability)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+      await deliveryModule.consumeDownload(deliveryAuthority, ownerBoundCapability)
+
+      const oneUseCapability = await deliveryModule.authorizeDownload(deliveryAuthority, downloadRequest)
+      await deliveryModule.consumeDownload(deliveryAuthority, oneUseCapability)
+      await expect(deliveryModule.consumeDownload(deliveryAuthority, oneUseCapability)).rejects.toMatchObject({
+        code: 'CAPABILITY_CONSUMED',
+      })
+
+      let downloadClock = new Date().toISOString()
+      const expiringModule = new ExportDeliveryModule(
+        join(dshHome, 'security-assurance'),
+        () => downloadClock,
+      )
+      const expiringCapability = await expiringModule.authorizeDownload(deliveryAuthority, downloadRequest)
+      downloadClock = new Date(Date.parse(downloadClock) + 61_000).toISOString()
+      await expect(expiringModule.consumeDownload(deliveryAuthority, expiringCapability)).rejects.toMatchObject({
+        code: 'CAPABILITY_EXPIRED',
+      })
 
       await fiber.dispose()
       const restartedContext = new Context()

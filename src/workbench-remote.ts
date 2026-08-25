@@ -69,6 +69,7 @@ export type WorkbenchSecurityPermissionV1 =
   | 'assurance-submission:read'
   | 'export:request'
   | 'export:read'
+  | 'export:download'
   | 'risk:decide'
   | 'risk:break-glass'
 
@@ -287,7 +288,7 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
     )
   }
 
-  /** Preview a Service-owned Export selection or read its durable Delivery status. */
+  /** Preview, inspect, or explicitly consume one authorized Export download through fresh Host authority. */
   @Remote
   getExport(
     securityAssuranceWorkbenchContext: SecurityInvocation,

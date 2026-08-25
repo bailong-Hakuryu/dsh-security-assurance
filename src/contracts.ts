@@ -1765,6 +1765,8 @@ export const bundleManifestV1Schema: z.ZodType<BundleManifestV1> = z.strictObjec
 
 export const INTERNAL_JSON_EXPORT_PROFILE_ID = 'security/export/internal-json-v1' as const
 export const LOCAL_AUDIT_DELIVERY_DESTINATION_ID = 'delivery/local-audit' as const
+export const MAX_EXPORT_DOWNLOAD_BYTES = 16 * 1024 * 1024
+export const EXPORT_DOWNLOAD_CAPABILITY_LIFETIME_SECONDS = 60
 
 export const exportIdSchema = z.string().regex(/^export-[0-9a-f]{64}$/)
 export type ExportId = z.infer<typeof exportIdSchema>
@@ -1866,7 +1868,15 @@ export interface GetExportStatusRequest {
   readonly exportId: ExportId
 }
 
-export type GetExportRequest = GetExportPreviewRequest | GetExportStatusRequest
+export interface GetExportDownloadRequest {
+  readonly schemaVersion: 1
+  readonly kind: 'DOWNLOAD'
+  readonly exportId: ExportId
+  readonly artifactId: string
+  readonly expectedDigest: DigestEnvelopeV1
+}
+
+export type GetExportRequest = GetExportPreviewRequest | GetExportStatusRequest | GetExportDownloadRequest
 
 export const getExportRequestSchema: z.ZodType<GetExportRequest> = z.discriminatedUnion('kind', [
   z.strictObject({
@@ -1880,6 +1890,13 @@ export const getExportRequestSchema: z.ZodType<GetExportRequest> = z.discriminat
     schemaVersion: z.literal(1),
     kind: z.literal('STATUS'),
     exportId: exportIdSchema,
+  }),
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    kind: z.literal('DOWNLOAD'),
+    exportId: exportIdSchema,
+    artifactId: boundedBindingId,
+    expectedDigest: digestEnvelopeV1Schema,
   }),
 ])
 
@@ -1944,6 +1961,12 @@ export interface ExportStatusV1 {
   readonly accessAction:
     | { readonly kind: 'NONE'; readonly reason: 'DELIVERY_PENDING' | 'DELIVERY_FAILED' | 'ARTIFACT_EXPIRED' }
     | { readonly kind: 'HOST_MANAGED'; readonly action: 'DELIVERED_TO_REGISTERED_DESTINATION' }
+    | {
+        readonly kind: 'ONE_USE_DOWNLOAD'
+        readonly action: 'REQUEST_ONE_USE_DOWNLOAD'
+        readonly capabilityExpiresAfterSeconds: number
+        readonly maxByteLength: number
+      }
   readonly failure: null | { readonly code: 'ARTIFACT_DELIVERY_FAILED' }
   readonly createdAt: string
   readonly updatedAt: string
@@ -1972,6 +1995,12 @@ export const exportStatusV1Schema: z.ZodType<ExportStatusV1> = z.strictObject({
       kind: z.literal('HOST_MANAGED'),
       action: z.literal('DELIVERED_TO_REGISTERED_DESTINATION'),
     }),
+    z.strictObject({
+      kind: z.literal('ONE_USE_DOWNLOAD'),
+      action: z.literal('REQUEST_ONE_USE_DOWNLOAD'),
+      capabilityExpiresAfterSeconds: z.literal(EXPORT_DOWNLOAD_CAPABILITY_LIFETIME_SECONDS),
+      maxByteLength: z.literal(MAX_EXPORT_DOWNLOAD_BYTES),
+    }),
   ]),
   failure: z.strictObject({ code: z.literal('ARTIFACT_DELIVERY_FAILED') }).nullable(),
   createdAt: z.iso.datetime({ offset: true }),
@@ -1985,11 +2014,82 @@ export const exportStatusV1Schema: z.ZodType<ExportStatusV1> = z.strictObject({
   }
 })
 
-export type ExportViewV1 = ExportPreviewV1 | ExportStatusV1
+export interface ExportDownloadV1 {
+  readonly schemaVersion: 1
+  readonly kind: 'DOWNLOAD'
+  readonly exportId: ExportId
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly artifactId: string
+  readonly fileName: string
+  readonly mediaType: 'application/vnd.dsh.security.export+json'
+  readonly byteLength: number
+  readonly digest: DigestEnvelopeV1
+  readonly capability: {
+    readonly kind: 'CONSUMED_ONE_USE'
+    readonly issuedAt: string
+    readonly expiresAt: string
+    readonly consumedAt: string
+  }
+  readonly content: {
+    readonly encoding: 'base64'
+    readonly value: string
+  }
+}
+
+const MAX_EXPORT_DOWNLOAD_BASE64_CHARACTERS = Math.ceil(MAX_EXPORT_DOWNLOAD_BYTES / 3) * 4
+
+export const exportDownloadV1Schema: z.ZodType<ExportDownloadV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  kind: z.literal('DOWNLOAD'),
+  exportId: exportIdSchema,
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive(),
+  artifactId: boundedBindingId,
+  fileName: z.string().min(1).max(180).regex(/^[a-zA-Z0-9._-]+$/),
+  mediaType: z.literal('application/vnd.dsh.security.export+json'),
+  byteLength: z.number().int().positive().max(MAX_EXPORT_DOWNLOAD_BYTES),
+  digest: digestEnvelopeV1Schema,
+  capability: z.strictObject({
+    kind: z.literal('CONSUMED_ONE_USE'),
+    issuedAt: z.iso.datetime({ offset: true }),
+    expiresAt: z.iso.datetime({ offset: true }),
+    consumedAt: z.iso.datetime({ offset: true }),
+  }),
+  content: z.strictObject({
+    encoding: z.literal('base64'),
+    value: z.string().min(4).max(MAX_EXPORT_DOWNLOAD_BASE64_CHARACTERS)
+      .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+  }),
+}).superRefine((download, context) => {
+  if (
+    download.digest.mediaType !== download.mediaType
+    || download.digest.canonicalization !== 'raw-bytes'
+    || download.digest.byteLength !== download.byteLength
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['digest'],
+      message: 'download metadata must match the raw-byte Digest Envelope',
+    })
+  }
+  if (Date.parse(download.capability.expiresAt) <= Date.parse(download.capability.issuedAt)) {
+    context.addIssue({ code: 'custom', path: ['capability', 'expiresAt'], message: 'capability expiry must be future-bound' })
+  }
+  if (
+    Date.parse(download.capability.consumedAt) < Date.parse(download.capability.issuedAt)
+    || Date.parse(download.capability.consumedAt) > Date.parse(download.capability.expiresAt)
+  ) {
+    context.addIssue({ code: 'custom', path: ['capability', 'consumedAt'], message: 'capability must be consumed within its lifetime' })
+  }
+})
+
+export type ExportViewV1 = ExportPreviewV1 | ExportStatusV1 | ExportDownloadV1
 
 export const exportViewV1Schema: z.ZodType<ExportViewV1> = z.union([
   exportPreviewV1Schema,
   exportStatusV1Schema,
+  exportDownloadV1Schema,
 ])
 
 export const securitySubmissionJsonV1Schema = z.json()

@@ -36,6 +36,7 @@ const fullPermissions = [
   'assurance-submission:read',
   'export:request',
   'export:read',
+  'export:download',
   'risk:decide',
   'risk:break-glass',
 ]
@@ -652,7 +653,7 @@ async function runBrowserScenario() {
   )
   const exportId = deliveredExport.export.status.exportId
   assert.match(exportId, /^export-[0-9a-f]{64}$/u)
-  assert.equal(deliveredExport.export.status.accessAction.kind, 'HOST_MANAGED')
+  assert.equal(deliveredExport.export.status.accessAction.kind, 'ONE_USE_DOWNLOAD')
   assert.equal(deliveredExport.export.status.artifact?.digest.mediaType, 'application/vnd.dsh.security.export+json')
   const deliveredArtifact = await readFile(join(
     dshHome,
@@ -666,6 +667,22 @@ async function runBrowserScenario() {
   assert.equal(deliveredArtifactValue.source.assessmentId, assessmentId)
   assert.equal(deliveredArtifactValue.exportProfileId, 'security/export/internal-json-v1')
   assert.equal(deliveredArtifact.includes(normalizedPath(repositoryRoot)), false)
+  const hrefBeforeDownload = page.url()
+  const browserDownloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Authorize and download once' }).click()
+  const browserDownload = await browserDownloadPromise
+  const downloadedExport = await waitForWorkbenchState(
+    page,
+    'state => state.kind === "BUNDLE_READY" && state.export.kind === "STATUS_READY" && state.export.download.kind === "COMPLETE"',
+  )
+  const downloadedPath = await browserDownload.path()
+  assert.notEqual(downloadedPath, null, 'browser download must produce a temporary file')
+  const downloadedBytes = await readFile(downloadedPath)
+  assert.equal(downloadedBytes.equals(Buffer.from(deliveredArtifact, 'utf8')), true)
+  assert.equal(browserDownload.suggestedFilename(), downloadedExport.export.download.fileName)
+  assert.equal(downloadedExport.export.download.digest, deliveredExport.export.status.artifact.digest.value)
+  assert.equal(JSON.stringify(downloadedExport).includes(Buffer.from(deliveredArtifact).toString('base64')), false)
+  assert.equal(page.url(), hrefBeforeDownload, 'one-use download must not enter navigation or history')
 
   await setWorkbenchLocale(page, 'zh')
   await page.getByRole('dialog', { name: '安全保障工作台' }).waitFor()
@@ -744,7 +761,13 @@ async function runBrowserScenario() {
   await context.close()
   await browser.close()
   browser = undefined
-  return { assessmentId, exportId, requestCount: requestUrls.length, consoleCount: consoleEntries.length }
+  return {
+    assessmentId,
+    exportId,
+    downloadFileName: browserDownload.suggestedFilename(),
+    requestCount: requestUrls.length,
+    consoleCount: consoleEntries.length,
+  }
 }
 
 async function stopHost() {

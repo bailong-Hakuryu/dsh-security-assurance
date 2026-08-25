@@ -1480,13 +1480,31 @@ export class SecurityAssuranceService extends Service {
       if (!parsed.success) {
         return failure('INVALID_REQUEST', 'The request does not match getExport schema version 1.')
       }
+      if (parsed.data.kind === 'DOWNLOAD') {
+        if (!authority.permissions.has('export:download')) {
+          return failure('UNAUTHORIZED', 'The caller is not authorized to download Exports.')
+        }
+        const downloadAuthority = {
+          principalId: authority.principalId,
+          authorityKind: authority.kind,
+        }
+        const capability = await this.exportDelivery.authorizeDownload(downloadAuthority, parsed.data)
+        const download = await this.exportDelivery.consumeDownload(downloadAuthority, capability)
+        return deepFreeze({ ok: true, value: download })
+      }
       if (parsed.data.kind === 'STATUS') {
         const view = await this.exportDelivery.get(parsed.data.exportId, {
           principalId: authority.principalId,
           authorityKind: authority.kind,
         })
         if (view === undefined) return failure('NOT_FOUND', 'The Export does not exist.')
-        return deepFreeze({ ok: true, value: view })
+        return deepFreeze({
+          ok: true,
+          value: this.exportDelivery.projectAuthorizedAccess(
+            view,
+            authority.permissions.has('export:download'),
+          ),
+        })
       }
       const sealed = await this.verifiedSealedRecord(parsed.data.assessmentId)
       if (sealed === undefined) {
@@ -1834,6 +1852,13 @@ export class SecurityAssuranceService extends Service {
         return failure('CONFLICT', 'The Export idempotency key conflicts with a different request.')
       }
       if (error.code === 'NOT_FOUND') return failure('NOT_FOUND', 'The Export does not exist.')
+      if (
+        error.code === 'CONFLICT'
+        || error.code === 'CAPABILITY_CONSUMED'
+        || error.code === 'CAPABILITY_EXPIRED'
+      ) {
+        return failure('CONFLICT', 'The one-use Export download is no longer available.')
+      }
       return failure('UNAVAILABLE', 'Export delivery state is unavailable.', true)
     }
     if (error instanceof SecurityPersistenceError) {

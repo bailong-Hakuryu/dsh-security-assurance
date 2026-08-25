@@ -12,6 +12,7 @@ export type SecurityPermission =
   | 'assurance-submission:read'
   | 'export:request'
   | 'export:read'
+  | 'export:download'
   | 'risk:decide'
   | 'risk:break-glass'
 export type SecurityCallerChannelKind = 'harness-session' | 'host-operator' | 'control-plane'
@@ -57,6 +58,7 @@ export class SecurityAuthorityResolver {
       'assurance-submission:read',
       'export:request',
       'export:read',
+      'export:download',
       'risk:decide',
       'risk:break-glass',
     ])

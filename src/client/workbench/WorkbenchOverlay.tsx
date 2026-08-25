@@ -52,6 +52,7 @@ export interface WorkbenchOverlayInjected {
   readonly cancelStartPreflight: () => void
   readonly cancelAssessment: (reason: WorkbenchAssessmentCommandReasonV1) => void
   readonly confirmStartAssessment: () => void
+  readonly downloadExport: () => void
   readonly loadMoreAssessments: () => void
   readonly loadMoreFindings: () => void
   readonly openFindings: () => void
@@ -91,6 +92,7 @@ export function WorkbenchOverlay({
   cancelStartPreflight,
   cancelAssessment,
   confirmStartAssessment,
+  downloadExport,
   loadMoreAssessments,
   loadMoreFindings,
   openFindings,
@@ -213,6 +215,7 @@ export function WorkbenchOverlay({
               deliveryDestinationIds={state.deliveryDestinationIds}
               exportState={state.export}
               backToAssessmentDetail={backToAssessmentDetail}
+              downloadExport={downloadExport}
               previewExport={previewExport}
               requestExport={requestExport}
               t={t}
@@ -837,6 +840,7 @@ function BundleExportView({
   deliveryDestinationIds,
   exportState,
   backToAssessmentDetail,
+  downloadExport,
   previewExport,
   requestExport,
   t,
@@ -845,6 +849,7 @@ function BundleExportView({
   readonly deliveryDestinationIds: readonly string[]
   readonly exportState: WorkbenchExportStateV1
   readonly backToAssessmentDetail: () => void
+  readonly downloadExport: () => void
   readonly previewExport: (deliveryDestinationId: string) => void
   readonly requestExport: () => void
   readonly t: WorkbenchOverlayProps['t']
@@ -1004,6 +1009,30 @@ function BundleExportView({
               />
               <Fact label={t('exports.accessAction')} value={exportState.status.accessAction.kind} machine />
             </dl>
+          )}
+          {exportState.kind === 'STATUS_READY'
+            && exportState.status.accessAction.kind === 'ONE_USE_DOWNLOAD' && (
+            <div className="dsh-security-section__action">
+              <button
+                type="button"
+                className="dsh-security-primary-action"
+                disabled={exportState.download.kind === 'DOWNLOADING'}
+                onClick={downloadExport}
+              >
+                {exportState.download.kind === 'DOWNLOADING'
+                  ? t('exports.downloadAuthorizing')
+                  : t('exports.downloadAction')}
+              </button>
+              <p className="dsh-security-readonly-note">{t('exports.downloadBoundary')}</p>
+            </div>
+          )}
+          {exportState.kind === 'STATUS_READY' && exportState.download.kind === 'COMPLETE' && (
+            <div role="status" className="dsh-security-preflight__digest">
+              <strong>{t('exports.downloadComplete')}</strong>
+              <code>{exportState.download.fileName}</code>
+              <code>{exportState.download.digest}</code>
+              <span>{exportState.download.byteLength} B · {exportState.download.consumedAt}</span>
+            </div>
           )}
         </section>
       )}

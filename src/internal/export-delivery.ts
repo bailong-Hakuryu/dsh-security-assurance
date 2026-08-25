@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import {
   chmod,
   mkdir,
+  open,
   readFile,
   rename,
   rm,
@@ -10,20 +11,25 @@ import {
 import { join } from 'node:path'
 import { z } from 'zod'
 import {
+  EXPORT_DOWNLOAD_CAPABILITY_LIFETIME_SECONDS,
   exportDestinationViewV1Schema,
+  exportDownloadV1Schema,
   exportIdSchema,
   exportProfileViewV1Schema,
   exportRequestReceiptV1Schema,
   exportStatusV1Schema,
   INTERNAL_JSON_EXPORT_PROFILE_ID,
   LOCAL_AUDIT_DELIVERY_DESTINATION_ID,
+  MAX_EXPORT_DOWNLOAD_BYTES,
 } from '../contracts.ts'
 import type {
   ExportDestinationViewV1,
+  ExportDownloadV1,
   ExportId,
   ExportPreviewV1,
   ExportProfileViewV1,
   ExportStatusV1,
+  GetExportDownloadRequest,
   RequestExportRequest,
   SecurityAssuranceSubmissionV1,
 } from '../contracts.ts'
@@ -84,11 +90,70 @@ export interface BeginExportResultV1 {
 
 export class ExportDeliveryError extends Error {
   constructor(
-    readonly code: 'IDEMPOTENCY_CONFLICT' | 'NOT_FOUND' | 'UNAVAILABLE',
+    readonly code:
+      | 'IDEMPOTENCY_CONFLICT'
+      | 'NOT_FOUND'
+      | 'CONFLICT'
+      | 'CAPABILITY_CONSUMED'
+      | 'CAPABILITY_EXPIRED'
+      | 'UNAVAILABLE',
     message: string,
   ) {
     super(message)
     this.name = 'ExportDeliveryError'
+  }
+}
+
+/** Non-serializable process-local authority for exactly one bounded artifact read. */
+export class OneUseExportDownloadCapability {
+  readonly #owner: ExportDeliveryAuthorityV1
+  readonly #view: ExportStatusV1
+  readonly #artifactFile: string
+  readonly #issuedAt: string
+  readonly #expiresAt: string
+  #consumed = false
+
+  constructor(
+    owner: ExportDeliveryAuthorityV1,
+    view: ExportStatusV1,
+    artifactFile: string,
+    issuedAt: string,
+    expiresAt: string,
+  ) {
+    this.#owner = owner
+    this.#view = view
+    this.#artifactFile = artifactFile
+    this.#issuedAt = issuedAt
+    this.#expiresAt = expiresAt
+  }
+
+  claim(authority: ExportDeliveryAuthorityV1, now: string): {
+    readonly view: ExportStatusV1
+    readonly artifactFile: string
+    readonly issuedAt: string
+    readonly expiresAt: string
+    readonly consumedAt: string
+  } {
+    if (
+      this.#owner.principalId !== authority.principalId
+      || this.#owner.authorityKind !== authority.authorityKind
+    ) {
+      throw new ExportDeliveryError('NOT_FOUND', 'Export download capability is not visible to this authority')
+    }
+    if (Date.parse(now) >= Date.parse(this.#expiresAt)) {
+      throw new ExportDeliveryError('CAPABILITY_EXPIRED', 'Export download capability expired')
+    }
+    if (this.#consumed) {
+      throw new ExportDeliveryError('CAPABILITY_CONSUMED', 'Export download capability was already consumed')
+    }
+    this.#consumed = true
+    return {
+      view: this.#view,
+      artifactFile: this.#artifactFile,
+      issuedAt: this.#issuedAt,
+      expiresAt: this.#expiresAt,
+      consumedAt: now,
+    }
   }
 }
 
@@ -119,7 +184,7 @@ export function buildExportPreview(input: {
     expiresAfterSeconds: EXPORT_ARTIFACT_LIFETIME_SECONDS,
     warnings: [
       'The artifact is delivered by the Service; no private Store path or credential is disclosed.',
-      'Browser download requires a separate short-lived Host capability and is not included in this delivery action.',
+      'Browser download requires fresh Host authority and a separate short-lived one-use capability.',
     ],
   }
 }
@@ -134,6 +199,33 @@ function recordPath(root: string, exportId: ExportId): string {
 
 function artifactPath(root: string, exportId: ExportId): string {
   return join(root, 'destinations', 'local-audit', `${exportId}.json`)
+}
+
+async function readBoundedArtifact(path: string, expectedByteLength: number): Promise<Buffer> {
+  const handle = await open(path, 'r')
+  try {
+    const metadata = await handle.stat()
+    if (
+      metadata.size !== expectedByteLength
+      || metadata.size <= 0
+      || metadata.size > MAX_EXPORT_DOWNLOAD_BYTES
+    ) {
+      throw new ExportDeliveryError('UNAVAILABLE', 'The delivered Export artifact has an invalid bounded size')
+    }
+    const bounded = Buffer.alloc(metadata.size + 1)
+    let offset = 0
+    while (offset < bounded.byteLength) {
+      const { bytesRead } = await handle.read(bounded, offset, bounded.byteLength - offset, offset)
+      if (bytesRead === 0) break
+      offset += bytesRead
+    }
+    if (offset !== metadata.size) {
+      throw new ExportDeliveryError('UNAVAILABLE', 'The delivered Export artifact changed during its bounded read')
+    }
+    return bounded.subarray(0, metadata.size)
+  } finally {
+    await handle.close()
+  }
 }
 
 function exportIdFor(authority: ExportDeliveryAuthorityV1, request: RequestExportRequest): ExportId {
@@ -324,6 +416,105 @@ export class ExportDeliveryModule {
       })
     }
     return record.view
+  }
+
+  projectAuthorizedAccess(view: ExportStatusV1, mayDownload: boolean): ExportStatusV1 {
+    if (
+      !mayDownload
+      || view.status !== 'DELIVERED'
+      || view.artifact === null
+      || view.artifact.digest.byteLength > MAX_EXPORT_DOWNLOAD_BYTES
+    ) return view
+    return exportStatusV1Schema.parse({
+      ...view,
+      accessAction: {
+        kind: 'ONE_USE_DOWNLOAD',
+        action: 'REQUEST_ONE_USE_DOWNLOAD',
+        capabilityExpiresAfterSeconds: EXPORT_DOWNLOAD_CAPABILITY_LIFETIME_SECONDS,
+        maxByteLength: MAX_EXPORT_DOWNLOAD_BYTES,
+      },
+    })
+  }
+
+  async authorizeDownload(
+    authority: ExportDeliveryAuthorityV1,
+    request: GetExportDownloadRequest,
+  ): Promise<OneUseExportDownloadCapability> {
+    const view = await this.get(request.exportId, authority)
+    if (view === undefined) throw new ExportDeliveryError('NOT_FOUND', 'The Export does not exist')
+    if (view.status !== 'DELIVERED' || view.artifact === null || view.expiresAt === null) {
+      throw new ExportDeliveryError('CONFLICT', 'The Export artifact is not available for download')
+    }
+    if (
+      view.artifact.artifactId !== request.artifactId
+      || canonicalJson(view.artifact.digest) !== canonicalJson(request.expectedDigest)
+    ) {
+      throw new ExportDeliveryError('CONFLICT', 'The download request does not match the delivered artifact')
+    }
+    if (view.artifact.digest.byteLength > MAX_EXPORT_DOWNLOAD_BYTES) {
+      throw new ExportDeliveryError('CONFLICT', 'The Export artifact exceeds the bounded browser download limit')
+    }
+    const issuedAt = this.now()
+    const expiresAt = new Date(Math.min(
+      Date.parse(view.expiresAt),
+      Date.parse(issuedAt) + EXPORT_DOWNLOAD_CAPABILITY_LIFETIME_SECONDS * 1000,
+    )).toISOString()
+    if (Date.parse(expiresAt) <= Date.parse(issuedAt)) {
+      throw new ExportDeliveryError('CAPABILITY_EXPIRED', 'The Export download capability cannot outlive its artifact')
+    }
+    return new OneUseExportDownloadCapability(
+      authority,
+      view,
+      artifactPath(this.root, request.exportId),
+      issuedAt,
+      expiresAt,
+    )
+  }
+
+  async consumeDownload(
+    authority: ExportDeliveryAuthorityV1,
+    capability: OneUseExportDownloadCapability,
+  ): Promise<ExportDownloadV1> {
+    const claim = capability.claim(authority, this.now())
+    let bytes: Buffer
+    try {
+      const expectedByteLength = claim.view.artifact?.digest.byteLength
+      if (expectedByteLength === undefined) {
+        throw new ExportDeliveryError('UNAVAILABLE', 'The delivered Export record lost its artifact')
+      }
+      bytes = await readBoundedArtifact(claim.artifactFile, expectedByteLength)
+    } catch (error) {
+      if (error instanceof ExportDeliveryError) throw error
+      throw new ExportDeliveryError('UNAVAILABLE', 'The delivered Export artifact is unavailable')
+    }
+    const artifact = claim.view.artifact
+    if (artifact === null) throw new ExportDeliveryError('UNAVAILABLE', 'The delivered Export record lost its artifact')
+    const actualDigest = binaryDigest('application/vnd.dsh.security.export+json', bytes)
+    if (canonicalJson(actualDigest) !== canonicalJson(artifact.digest)) {
+      throw new ExportDeliveryError('UNAVAILABLE', 'The delivered Export artifact failed digest verification')
+    }
+    if (bytes.byteLength > MAX_EXPORT_DOWNLOAD_BYTES) {
+      throw new ExportDeliveryError('CONFLICT', 'The Export artifact exceeds the bounded browser download limit')
+    }
+    return exportDownloadV1Schema.parse({
+      schemaVersion: 1,
+      kind: 'DOWNLOAD',
+      exportId: claim.view.exportId,
+      assessmentId: claim.view.assessmentId,
+      assessmentRevision: claim.view.assessmentRevision,
+      artifactId: artifact.artifactId,
+      fileName: `dsh-security-${claim.view.assessmentId}-${claim.view.exportId.slice(7, 19)}.json`,
+      mediaType: 'application/vnd.dsh.security.export+json',
+      byteLength: bytes.byteLength,
+      digest: actualDigest,
+      capability: {
+        kind: 'CONSUMED_ONE_USE',
+        issuedAt: claim.issuedAt,
+        expiresAt: claim.expiresAt,
+        consumedAt: claim.consumedAt,
+      },
+      content: { encoding: 'base64', value: bytes.toString('base64') },
+    })
   }
 
   private replay(

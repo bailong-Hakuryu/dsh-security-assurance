@@ -173,6 +173,7 @@ if (
   || typeof contracts.requestExportRequestSchema?.parse !== 'function'
   || typeof contracts.exportPreviewV1Schema?.parse !== 'function'
   || typeof contracts.exportStatusV1Schema?.parse !== 'function'
+  || typeof contracts.exportDownloadV1Schema?.parse !== 'function'
   || typeof contracts.exportRequestReceiptResultSchema?.parse !== 'function'
   || typeof contracts.exportViewResultSchema?.parse !== 'function'
   || contracts.CRITICAL_BREAK_GLASS_CONTROL_ID !== 'security/critical-break-glass-v1'
@@ -280,6 +281,7 @@ if (
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openBundle !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.previewExport !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.requestExport !== 'function'
+    || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.downloadExport !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.backToAssessmentDetail !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.openRepositories !== 'function'
     || typeof workbenchClient.SecurityAssuranceWorkbenchController.prototype.selectRepository !== 'function'
@@ -340,6 +342,7 @@ const workbenchFiber = ctx.plugin(workbenchRemote.default, {
         'risk:decide',
         'export:read',
         'export:request',
+        'export:download',
       ],
     }
   },
@@ -429,6 +432,27 @@ const missingExportRequest = await ctx.typertGateway.invoke({
     },
   },
 })
+const missingExportDownload = await ctx.typertGateway.invoke({
+  namespace: 'securityAssuranceWorkbench',
+  method: 'getExport',
+  args: {
+    securityAssuranceWorkbenchContextId: 'packed-workbench-context-v1',
+    request: {
+      schemaVersion: 1,
+      kind: 'DOWNLOAD',
+      exportId: 'export-${'0'.repeat(64)}',
+      artifactId: 'export-${'0'.repeat(64)}/artifact',
+      expectedDigest: {
+        schemaVersion: 1,
+        algorithm: 'sha256',
+        mediaType: 'application/vnd.dsh.security.export+json',
+        byteLength: 1,
+        canonicalization: 'raw-bytes',
+        value: '${'0'.repeat(64)}',
+      },
+    },
+  },
+})
 if (
   missingBundle?.ok !== false
   || missingBundle.error?.code !== 'NOT_FOUND'
@@ -438,6 +462,8 @@ if (
   || missingExportPreview.error?.code !== 'NOT_FOUND'
   || missingExportRequest?.ok !== false
   || missingExportRequest.error?.code !== 'NOT_FOUND'
+  || missingExportDownload?.ok !== false
+  || missingExportDownload.error?.code !== 'NOT_FOUND'
 ) {
   throw new Error('packed strict Workbench Remote did not delegate Bundle, Repository, and Export operations')
 }

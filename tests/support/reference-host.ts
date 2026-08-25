@@ -16,6 +16,7 @@ const fullReferenceHostPermissions = [
   'assurance-submission:read',
   'export:request',
   'export:read',
+  'export:download',
   'risk:decide',
   'risk:break-glass',
 ] as const satisfies readonly SecurityPermission[]

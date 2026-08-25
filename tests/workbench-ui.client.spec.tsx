@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createHash } from 'node:crypto'
 import { act, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -791,7 +792,7 @@ describe('Security Assurance Workbench UI', () => {
     await b.runtime.dispose()
   })
 
-  it('renders a bilingual Service-owned Export Preview, Receipt, and registered Delivery status', async () => {
+  it('renders a bilingual Service-owned Export loop and consumes one digest-bound browser download', async () => {
     const id = assessmentId('asm-00000000-0000-0000-0000-0000000000c1')
     const digest = {
       schemaVersion: 1 as const,
@@ -835,11 +836,14 @@ describe('Security Assurance Workbench UI', () => {
       digest,
     }
     const exportId = `export-${'e'.repeat(64)}`
+    const exportBytes = Buffer.from(JSON.stringify({ schemaVersion: 1, source: { assessmentId: id } }), 'utf8')
+    const exportDigestValue = createHash('sha256').update(exportBytes).digest('hex')
     const exportDigest = {
       ...digest,
       mediaType: 'application/vnd.dsh.security.export+json',
+      byteLength: exportBytes.byteLength,
       canonicalization: 'raw-bytes' as const,
-      value: 'e'.repeat(64),
+      value: exportDigestValue,
     }
     const exportPreview = {
       schemaVersion: 1,
@@ -894,10 +898,31 @@ describe('Security Assurance Workbench UI', () => {
       }
       if (endpoint === 'securityAssuranceWorkbench/getExport') {
         const request = (payload as {
-          readonly args: { readonly request: { readonly kind: 'PREVIEW' | 'STATUS' } }
+          readonly args: { readonly request: { readonly kind: 'PREVIEW' | 'STATUS' | 'DOWNLOAD' } }
         }).args.request
         if (request.kind === 'PREVIEW') {
           return Promise.resolve({ ok: true, value: { ok: true, value: exportPreview } })
+        }
+        if (request.kind === 'DOWNLOAD') {
+          return Promise.resolve({ ok: true, value: { ok: true, value: {
+            schemaVersion: 1,
+            kind: 'DOWNLOAD',
+            exportId,
+            assessmentId: id,
+            assessmentRevision: 8,
+            artifactId: `${exportId}/artifact`,
+            fileName: 'dsh-security-export.json',
+            mediaType: 'application/vnd.dsh.security.export+json',
+            byteLength: exportBytes.byteLength,
+            digest: exportDigest,
+            capability: {
+              kind: 'CONSUMED_ONE_USE',
+              issuedAt: '2026-08-25T00:09:02.000Z',
+              expiresAt: '2026-08-25T00:10:02.000Z',
+              consumedAt: '2026-08-25T00:09:02.001Z',
+            },
+            content: { encoding: 'base64', value: exportBytes.toString('base64') },
+          } } })
         }
         return Promise.resolve({ ok: true, value: { ok: true, value: {
           schemaVersion: 1,
@@ -910,7 +935,12 @@ describe('Security Assurance Workbench UI', () => {
           destination: exportPreview.destination,
           artifact: { artifactId: `${exportId}/artifact`, digest: exportDigest },
           expiresAt: '2026-08-26T00:09:00.000Z',
-          accessAction: { kind: 'HOST_MANAGED', action: 'DELIVERED_TO_REGISTERED_DESTINATION' },
+          accessAction: {
+            kind: 'ONE_USE_DOWNLOAD',
+            action: 'REQUEST_ONE_USE_DOWNLOAD',
+            capabilityExpiresAfterSeconds: 60,
+            maxByteLength: 16 * 1024 * 1024,
+          },
           failure: null,
           createdAt: '2026-08-25T00:09:00.000Z',
           updatedAt: '2026-08-25T00:09:01.000Z',
@@ -977,17 +1007,37 @@ describe('Security Assurance Workbench UI', () => {
     expect(overlay.view.getByText(exportId)).toBeTruthy()
     expect(overlay.view.getAllByText('DELIVERED').length).toBeGreaterThan(0)
     expect(overlay.view.getByText('sec-00000000-0000-0000-0000-0000000000e1')).toBeTruthy()
-    expect(overlay.view.getByText('e'.repeat(64))).toBeTruthy()
-    expect(overlay.view.queryByRole('button', { name: /下载/u })).toBeNull()
+    expect(overlay.view.getByText(exportDigestValue)).toBeTruthy()
+    expect(overlay.view.getByRole('button', { name: '授权并下载一次' })).toBeTruthy()
     expect(endpoints.slice(-3)).toEqual([
       'securityAssuranceWorkbench/getExport',
       'securityAssuranceWorkbench/requestExport',
       'securityAssuranceWorkbench/getExport',
     ])
 
+    const createObjectURL = vi.fn(() => 'blob:dsh-security-one-use')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(globalThis.URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(globalThis.URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    await act(async () => {
+      fireEvent.click(overlay.view.getByRole('button', { name: '授权并下载一次' }))
+    })
+    expect(endpoints.at(-1)).toBe('securityAssuranceWorkbench/getExport')
+    expect(createObjectURL).toHaveBeenCalledOnce()
+    expect(anchorClick).toHaveBeenCalledOnce()
+    expect(overlay.view.getByRole('status').textContent).toContain('一次性下载已完成')
+    expect(overlay.view.getByText('dsh-security-export.json')).toBeTruthy()
+    expect(JSON.stringify(b.controller.getState())).not.toContain(exportBytes.toString('base64'))
+    expect(window.location.href).not.toContain('blob:dsh-security-one-use')
+    await waitFor(() => { expect(revokeObjectURL).toHaveBeenCalledWith('blob:dsh-security-one-use') })
+    anchorClick.mockRestore()
+    delete (globalThis.URL as { createObjectURL?: unknown }).createObjectURL
+    delete (globalThis.URL as { revokeObjectURL?: unknown }).revokeObjectURL
+
     act(() => { b.locale.setLocale('en') })
     expect(overlay.view.getByRole('heading', { name: 'Bundle and Export Readiness' })).toBeTruthy()
-    expect(overlay.view.getByText(/no path, credential, or artifact bytes enter the browser/u)).toBeTruthy()
+    expect(overlay.view.getByText(/no path, credential, or preloaded artifact bytes enter the browser/u)).toBeTruthy()
     await act(async () => {
       fireEvent.click(overlay.view.getByRole('button', { name: 'Back to Assessment detail' }))
     })
