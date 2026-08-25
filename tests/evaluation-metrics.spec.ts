@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AIR_GAPPED_EVALUATION_ENGINE_ID,
+  AirGappedEvaluationInputError,
+  type AirGappedEvaluationAssemblyRequestV1,
+  airGappedEvaluationAssemblyV1Schema,
+  airGappedRunnerInputV1Schema,
+  airGappedRunnerResultV1Schema,
+  assembleAirGappedEvaluationV1,
   calculateEffectivenessMetricsV1,
   calculatePairedArmComparisonV1,
   calculateUtilityMetricsV1,
@@ -825,6 +832,296 @@ describe('Effectiveness Metrics Engine v1', () => {
     ]) {
       expect(effectivenessMetricsRequestV1Schema.safeParse({ ...candidate, ...extra }).success).toBe(false)
     }
+  })
+})
+
+describe('Air-gapped Evaluation Engine v1', () => {
+  function digest(character: string) {
+    return {
+      schemaVersion: 1 as const,
+      algorithm: 'sha256' as const,
+      mediaType: 'application/json',
+      byteLength: 128,
+      canonicalization: 'dsh-canonical-json-v1' as const,
+      value: character.repeat(64),
+    }
+  }
+
+  function baseAssemblyRequest(): AirGappedEvaluationAssemblyRequestV1 {
+    const subjectDigest = digest('a')
+    const runnerInput = (executionGrantId: string) => ({
+      schemaVersion: 1 as const,
+      runId: 'run-air-gap',
+      caseId: 'case-hidden',
+      opaqueSubjectHandleId: 'subject-handle',
+      subjectDigest,
+      assessmentMode: 'CHANGE' as const,
+      supportedEcosystem: 'node',
+      executionGrantId,
+      admittedAtEpochMs: 100,
+    })
+    return {
+      schemaVersion: 1,
+      engineId: AIR_GAPPED_EVALUATION_ENGINE_ID,
+      runId: 'run-air-gap',
+      evaluatorId: 'independent-evaluator',
+      evaluatorAuthorizationRecordId: 'authority/evaluator-1',
+      declaredArmIds: ['baseline-arm', 'candidate-arm'],
+      severityWeights,
+      stratumDefinitions: sufficientStratumDefinitions.map(item => ({ ...item })),
+      matchingContract: {
+        contractId: 'matching-contract-v1',
+        registrationRecordId: 'qualification/matching-contract-v1',
+        registeredAtEpochMs: 50,
+        contractDigest: digest('b'),
+      },
+      groundTruthManifest: {
+        manifestId: 'ground-truth-manifest-v1',
+        corpusVersionId: 'qualification-corpus-v1',
+        sealedAtEpochMs: 25,
+        manifestDigest: digest('c'),
+        canaryMarkerIds: ['canary-hidden-1'],
+        cases: [{
+          caseId: 'case-hidden',
+          subjectDigest,
+          disposition: 'INCLUDED',
+          assessmentMode: 'CHANGE',
+          supportedEcosystem: 'node',
+          expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
+          groundTruthDefects: [{
+            defectId: 'defect-high',
+            severity: 'HIGH',
+            weaknessFamily: 'cwe-79',
+            policyBlocking: true,
+          }],
+        }],
+      },
+      groundTruthOpenedAtEpochMs: 400,
+      sealedArmResults: [
+        {
+          sealedResultId: 'sealed-baseline',
+          armId: 'baseline-arm',
+          runnerInput: runnerInput('grant-opaque-a'),
+          result: {
+            kind: 'COMPLETED',
+            verdict: 'SATISFIED',
+            coverageStatus: 'COMPLETE',
+            findings: [{ findingId: 'finding-baseline' }],
+          },
+          sealedAtEpochMs: 200,
+          resultDigest: digest('d'),
+        },
+        {
+          sealedResultId: 'sealed-candidate',
+          armId: 'candidate-arm',
+          runnerInput: runnerInput('grant-opaque-b'),
+          result: {
+            kind: 'COMPLETED',
+            verdict: 'FAILED',
+            coverageStatus: 'GAP',
+            findings: [{ findingId: 'finding-candidate' }],
+          },
+          sealedAtEpochMs: 300,
+          resultDigest: digest('e'),
+        },
+      ],
+      adjudications: [
+        {
+          armId: 'baseline-arm',
+          caseId: 'case-hidden',
+          findingId: 'finding-baseline',
+          adjudication: { status: 'NOT_MATCHED' },
+          adjudicationRecordId: 'adjudication-baseline',
+        },
+        {
+          armId: 'candidate-arm',
+          caseId: 'case-hidden',
+          findingId: 'finding-candidate',
+          adjudication: { status: 'MATCHED', defectId: 'defect-high' },
+          adjudicationRecordId: 'adjudication-candidate',
+        },
+      ],
+      airGapAudit: {
+        auditId: 'air-gap-audit-v1',
+        completedAtEpochMs: 500,
+        auditedArmIds: ['baseline-arm', 'candidate-arm'],
+        auditedSealedResultIds: ['sealed-baseline', 'sealed-candidate'],
+        violations: [],
+      },
+    }
+  }
+
+  it('keeps Ground Truth, Arm labels, seeds, and matching rules outside Runner input', () => {
+    const runnerInput = baseAssemblyRequest().sealedArmResults[0]?.runnerInput
+    expect(runnerInput).toBeDefined()
+    expect(airGappedRunnerInputV1Schema.parse(runnerInput)).toEqual(runnerInput)
+    for (const forbidden of [
+      { armId: 'candidate-arm' },
+      { groundTruthDefects: [] },
+      { expectedFindings: ['defect-high'] },
+      { matchingContractId: 'matching-contract-v1' },
+      { randomSeed: 'benchmark-seed' },
+    ]) {
+      expect(airGappedRunnerInputV1Schema.safeParse({
+        ...runnerInput,
+        ...forbidden,
+      }).success).toBe(false)
+    }
+    expect(airGappedRunnerResultV1Schema.safeParse({
+      kind: 'COMPLETED',
+      verdict: 'FAILED',
+      coverageStatus: 'GAP',
+      findings: [{
+        findingId: 'finding-forged',
+        adjudication: { status: 'MATCHED', defectId: 'defect-high' },
+      }],
+    }).success).toBe(false)
+  })
+
+  it('joins Ground Truth only after every Arm result is sealed', () => {
+    const result = assembleAirGappedEvaluationV1(baseAssemblyRequest())
+
+    expect(AIR_GAPPED_EVALUATION_ENGINE_ID).toBe('security/air-gapped-evaluation/v1')
+    expect(airGappedEvaluationAssemblyV1Schema.parse(result)).toEqual(result)
+    expect(result).toMatchObject({
+      status: 'READY',
+      runId: 'run-air-gap',
+      groundTruthManifestId: 'ground-truth-manifest-v1',
+      matchingContractId: 'matching-contract-v1',
+      reasonCodes: [],
+      affectedArmIds: ['baseline-arm', 'candidate-arm'],
+    })
+    expect(result.status).toBe('READY')
+    if (result.status !== 'READY') return
+    expect(result.arms.map(item => item.armId)).toEqual(['baseline-arm', 'candidate-arm'])
+    expect(result.arms[0]?.metrics.metrics.criticalHighValidatedRecall).toMatchObject({
+      status: 'MEASURED', value: 0,
+    })
+    expect(result.arms[1]?.metrics.metrics.criticalHighValidatedRecall).toMatchObject({
+      status: 'MEASURED', value: 1,
+    })
+    expect(result.arms[1]?.metricsRequest.cases[0]).toMatchObject({
+      caseId: 'case-hidden',
+      groundTruthDefects: [{ defectId: 'defect-high' }],
+      result: {
+        findings: [{
+          findingId: 'finding-candidate',
+          adjudication: { status: 'MATCHED', defectId: 'defect-high' },
+        }],
+      },
+    })
+    expect(Object.isFrozen(result)).toBe(true)
+    expect(Object.isFrozen(result.arms[0]?.metricsRequest)).toBe(true)
+  })
+
+  it('invalidates every Arm when any leakage or canary observation is detected', () => {
+    const request = baseAssemblyRequest()
+    request.airGapAudit.violations.push({
+      type: 'CANARY_MARKER_OBSERVED',
+      evidenceDigest: digest('f'),
+      armId: 'candidate-arm',
+      caseId: 'case-hidden',
+    })
+    const result = assembleAirGappedEvaluationV1(request)
+
+    expect(result).toEqual({
+      schemaVersion: 1,
+      engineId: AIR_GAPPED_EVALUATION_ENGINE_ID,
+      status: 'INVALIDATED',
+      runId: 'run-air-gap',
+      evaluatorId: 'independent-evaluator',
+      evaluatorAuthorizationRecordId: 'authority/evaluator-1',
+      groundTruthManifestId: 'ground-truth-manifest-v1',
+      matchingContractId: 'matching-contract-v1',
+      airGapAuditId: 'air-gap-audit-v1',
+      reasonCodes: ['GROUND_TRUTH_LEAKAGE_DETECTED'],
+      affectedArmIds: ['baseline-arm', 'candidate-arm'],
+      arms: null,
+    })
+  })
+
+  it('invalidates premature disclosure, post-hoc contracts, and incomplete proof', () => {
+    const premature = baseAssemblyRequest()
+    premature.groundTruthOpenedAtEpochMs = 300
+    premature.matchingContract.registeredAtEpochMs = 100
+    const prematureResult = assembleAirGappedEvaluationV1(premature)
+    expect(prematureResult).toMatchObject({
+      status: 'INVALIDATED',
+      reasonCodes: [
+        'GROUND_TRUTH_OPENED_BEFORE_ALL_RESULTS_SEALED',
+        'POST_HOC_MATCHING_CONTRACT',
+      ],
+      arms: null,
+    })
+
+    const incompleteAudit = baseAssemblyRequest()
+    incompleteAudit.airGapAudit.auditedSealedResultIds.pop()
+    expect(assembleAirGappedEvaluationV1(incompleteAudit)).toMatchObject({
+      status: 'INVALIDATED',
+      reasonCodes: ['INCOMPLETE_AIR_GAP_AUDIT'],
+    })
+
+    const incompleteResults = baseAssemblyRequest()
+    incompleteResults.sealedArmResults.pop()
+    incompleteResults.adjudications = incompleteResults.adjudications.filter(
+      item => item.armId !== 'candidate-arm',
+    )
+    incompleteResults.airGapAudit.auditedSealedResultIds = ['sealed-baseline']
+    expect(assembleAirGappedEvaluationV1(incompleteResults)).toMatchObject({
+      status: 'INVALIDATED',
+      reasonCodes: ['INCOMPLETE_SEALED_ARM_RESULTS'],
+      affectedArmIds: ['baseline-arm', 'candidate-arm'],
+    })
+
+    const undeclared = baseAssemblyRequest()
+    undeclared.sealedArmResults.push({
+      sealedResultId: 'sealed-undeclared-case',
+      armId: 'baseline-arm',
+      runnerInput: {
+        ...undeclared.sealedArmResults[0]!.runnerInput,
+        caseId: 'case-not-in-manifest',
+        executionGrantId: 'grant-undeclared',
+      },
+      result: { kind: 'PRODUCT_FAILURE', failure: 'CRASH' },
+      sealedAtEpochMs: 250,
+      resultDigest: digest('9'),
+    })
+    undeclared.airGapAudit.auditedSealedResultIds.push('sealed-undeclared-case')
+    expect(assembleAirGappedEvaluationV1(undeclared)).toMatchObject({
+      status: 'INVALIDATED',
+      reasonCodes: ['UNDECLARED_RUNNER_CASE'],
+      arms: null,
+    })
+  })
+
+  it('keeps missing adjudication inconclusive and rejects forged joins', () => {
+    const missing = baseAssemblyRequest()
+    missing.adjudications = missing.adjudications.filter(
+      item => item.armId !== 'candidate-arm',
+    )
+    const missingResult = assembleAirGappedEvaluationV1(missing)
+    expect(missingResult.status).toBe('READY')
+    if (missingResult.status === 'READY') {
+      expect(missingResult.arms[1]?.metrics).toMatchObject({
+        conclusion: 'INCONCLUSIVE',
+        reasonCodes: ['UNADJUDICATED_FINDINGS'],
+      })
+    }
+
+    const forged = baseAssemblyRequest()
+    const candidateAdjudication = forged.adjudications.find(
+      item => item.armId === 'candidate-arm',
+    )
+    if (candidateAdjudication?.adjudication.status === 'MATCHED') {
+      candidateAdjudication.adjudication.defectId = 'defect-not-in-manifest'
+    }
+    expect(() => assembleAirGappedEvaluationV1(forged)).toThrow(
+      AirGappedEvaluationInputError,
+    )
+    expect(() => assembleAirGappedEvaluationV1({
+      ...baseAssemblyRequest(),
+      repositoryPath: 'C:\\private\\holdout',
+    })).toThrow(AirGappedEvaluationInputError)
   })
 })
 

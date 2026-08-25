@@ -390,6 +390,100 @@ const packedPairedUtilityComparison = evaluation.calculatePairedArmComparisonV1(
     utilityEvidence: packedUtilityEvidence(true),
   },
 })
+const packedEvaluationDigest = character => ({
+  schemaVersion: 1,
+  algorithm: 'sha256',
+  mediaType: 'application/json',
+  byteLength: 128,
+  canonicalization: 'dsh-canonical-json-v1',
+  value: character.repeat(64),
+})
+const packedAirGapRequest = () => ({
+  schemaVersion: 1,
+  engineId: 'security/air-gapped-evaluation/v1',
+  runId: 'packed-air-gap-run',
+  evaluatorId: 'packed-independent-evaluator',
+  evaluatorAuthorizationRecordId: 'packed/evaluator-authority',
+  declaredArmIds: ['packed-candidate-arm'],
+  severityWeights: { CRITICAL: 8, HIGH: 5, MEDIUM: 3, LOW: 2, INFORMATIONAL: 1 },
+  stratumDefinitions: packedStratumDefinitions,
+  matchingContract: {
+    contractId: 'packed-matching-contract',
+    registrationRecordId: 'packed/matching-registration',
+    registeredAtEpochMs: 50,
+    contractDigest: packedEvaluationDigest('1'),
+  },
+  groundTruthManifest: {
+    manifestId: 'packed-ground-truth',
+    corpusVersionId: 'packed-corpus-v1',
+    sealedAtEpochMs: 25,
+    manifestDigest: packedEvaluationDigest('2'),
+    canaryMarkerIds: ['packed-canary'],
+    cases: [{
+      caseId: 'packed-hidden-case',
+      subjectDigest: packedEvaluationDigest('3'),
+      disposition: 'INCLUDED',
+      assessmentMode: 'CHANGE',
+      supportedEcosystem: 'node',
+      expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
+      groundTruthDefects: [{
+        defectId: 'packed-hidden-defect',
+        severity: 'HIGH',
+        weaknessFamily: 'cwe-79',
+        policyBlocking: true,
+      }],
+    }],
+  },
+  groundTruthOpenedAtEpochMs: 400,
+  sealedArmResults: [{
+    sealedResultId: 'packed-sealed-result',
+    armId: 'packed-candidate-arm',
+    runnerInput: {
+      schemaVersion: 1,
+      runId: 'packed-air-gap-run',
+      caseId: 'packed-hidden-case',
+      opaqueSubjectHandleId: 'packed-subject-handle',
+      subjectDigest: packedEvaluationDigest('3'),
+      assessmentMode: 'CHANGE',
+      supportedEcosystem: 'node',
+      executionGrantId: 'packed-opaque-grant',
+      admittedAtEpochMs: 100,
+    },
+    result: {
+      kind: 'COMPLETED',
+      verdict: 'FAILED',
+      coverageStatus: 'GAP',
+      findings: [{ findingId: 'packed-finding' }],
+    },
+    sealedAtEpochMs: 300,
+    resultDigest: packedEvaluationDigest('4'),
+  }],
+  adjudications: [{
+    armId: 'packed-candidate-arm',
+    caseId: 'packed-hidden-case',
+    findingId: 'packed-finding',
+    adjudication: { status: 'MATCHED', defectId: 'packed-hidden-defect' },
+    adjudicationRecordId: 'packed-adjudication',
+  }],
+  airGapAudit: {
+    auditId: 'packed-air-gap-audit',
+    completedAtEpochMs: 500,
+    auditedArmIds: ['packed-candidate-arm'],
+    auditedSealedResultIds: ['packed-sealed-result'],
+    violations: [],
+  },
+})
+const packedAirGapReady = evaluation.assembleAirGappedEvaluationV1(packedAirGapRequest())
+const packedLeakedAirGapRequest = packedAirGapRequest()
+packedLeakedAirGapRequest.airGapAudit.violations.push({
+  type: 'CANARY_MARKER_OBSERVED',
+  evidenceDigest: packedEvaluationDigest('5'),
+  armId: 'packed-candidate-arm',
+  caseId: 'packed-hidden-case',
+})
+const packedAirGapInvalidated = evaluation.assembleAirGappedEvaluationV1(
+  packedLeakedAirGapRequest,
+)
 if (
   evaluation.EFFECTIVENESS_METRICS_ENGINE_ID !== 'security/effectiveness-metrics/v1'
   || typeof evaluation.benchmarkStratumDefinitionV1Schema?.parse !== 'function'
@@ -404,6 +498,10 @@ if (
   || typeof evaluation.utilityMetricsV1Schema?.parse !== 'function'
   || typeof evaluation.pairedUtilityComparisonV1Schema?.parse !== 'function'
   || typeof evaluation.calculateUtilityMetricsV1 !== 'function'
+  || evaluation.AIR_GAPPED_EVALUATION_ENGINE_ID !== 'security/air-gapped-evaluation/v1'
+  || typeof evaluation.airGappedRunnerInputV1Schema?.parse !== 'function'
+  || typeof evaluation.airGappedEvaluationAssemblyV1Schema?.parse !== 'function'
+  || typeof evaluation.assembleAirGappedEvaluationV1 !== 'function'
   || typeof evaluation.calculatePairedArmComparisonV1 !== 'function'
   || typeof evaluation.effectivenessMetricsRequestV1Schema?.parse !== 'function'
   || typeof evaluation.effectivenessMetricsV1Schema?.parse !== 'function'
@@ -429,6 +527,11 @@ if (
   || packedPairedUtilityComparison.utilityComparison?.conclusion !== 'MEASURED'
   || packedPairedUtilityComparison.utilityComparison.metrics
     .validatedFindingYieldPerRuntimeHour.outcome !== 'IMPROVED'
+  || packedAirGapReady.status !== 'READY'
+  || packedAirGapReady.arms[0]?.metrics.metrics.criticalHighValidatedRecall.value !== 1
+  || packedAirGapInvalidated.status !== 'INVALIDATED'
+  || packedAirGapInvalidated.arms !== null
+  || packedAirGapInvalidated.reasonCodes[0] !== 'GROUND_TRUTH_LEAKAGE_DETECTED'
 ) {
   throw new Error('packed Evaluation entry did not execute the versioned Metrics Engine')
 }

@@ -81,6 +81,8 @@
     "lib/types/analyzer.d.ts.map",
     "lib/types/evaluation.d.ts",
     "lib/types/evaluation.d.ts.map",
+    "lib/types/digest-envelope.d.ts",
+    "lib/types/digest-envelope.d.ts.map",
     "lib/types/tools.d.ts",
     "lib/types/tools.d.ts.map",
     "lib/types/control-plane-provider.d.ts",

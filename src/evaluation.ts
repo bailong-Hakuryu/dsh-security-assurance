@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { digestEnvelopeV1Schema } from './digest-envelope.ts'
 
 export const EFFECTIVENESS_METRICS_ENGINE_ID = 'security/effectiveness-metrics/v1' as const
 
@@ -143,6 +144,173 @@ export const effectivenessMetricsRequestV1Schema = z.strictObject({
 
 export type EffectivenessMetricsRequestV1 = z.infer<
   typeof effectivenessMetricsRequestV1Schema
+>
+
+export const AIR_GAPPED_EVALUATION_ENGINE_ID = 'security/air-gapped-evaluation/v1' as const
+
+const evaluationEpochMsSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+
+export const airGappedRunnerInputV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  runId: boundedEvaluationIdSchema,
+  caseId: boundedEvaluationIdSchema,
+  repetitionId: boundedEvaluationIdSchema.optional(),
+  opaqueSubjectHandleId: boundedEvaluationIdSchema,
+  subjectDigest: digestEnvelopeV1Schema,
+  assessmentMode: evaluationAssessmentModeSchema,
+  supportedEcosystem: boundedEvaluationIdSchema,
+  executionGrantId: boundedEvaluationIdSchema,
+  admittedAtEpochMs: evaluationEpochMsSchema,
+})
+
+export type AirGappedRunnerInputV1 = z.infer<typeof airGappedRunnerInputV1Schema>
+
+export const airGappedRunnerResultV1Schema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('COMPLETED'),
+    verdict: z.enum(['SATISFIED', 'FAILED', 'INDETERMINATE']),
+    coverageStatus: z.enum(['COMPLETE', 'GAP']),
+    findings: z.array(z.strictObject({
+      findingId: boundedEvaluationIdSchema,
+    })).max(10_000),
+  }),
+  evaluationProductFailureV1Schema,
+])
+
+export type AirGappedRunnerResultV1 = z.infer<typeof airGappedRunnerResultV1Schema>
+
+export const sealedAirGappedArmResultV1Schema = z.strictObject({
+  sealedResultId: boundedEvaluationIdSchema,
+  armId: boundedEvaluationIdSchema,
+  runnerInput: airGappedRunnerInputV1Schema,
+  result: airGappedRunnerResultV1Schema,
+  sealedAtEpochMs: evaluationEpochMsSchema,
+  resultDigest: digestEnvelopeV1Schema,
+}).superRefine((value, context) => {
+  if (value.sealedAtEpochMs < value.runnerInput.admittedAtEpochMs) {
+    context.addIssue({ code: 'custom', message: 'Arm result was sealed before admission.' })
+  }
+  if (
+    value.result.kind === 'COMPLETED'
+    && new Set(value.result.findings.map(item => item.findingId)).size
+      !== value.result.findings.length
+  ) {
+    context.addIssue({ code: 'custom', message: 'Duplicate sealed Finding identity.' })
+  }
+})
+
+export type SealedAirGappedArmResultV1 = z.infer<
+  typeof sealedAirGappedArmResultV1Schema
+>
+
+export const sealedGroundTruthManifestV1Schema = z.strictObject({
+  manifestId: boundedEvaluationIdSchema,
+  corpusVersionId: boundedEvaluationIdSchema,
+  sealedAtEpochMs: evaluationEpochMsSchema,
+  manifestDigest: digestEnvelopeV1Schema,
+  canaryMarkerIds: z.array(boundedEvaluationIdSchema).min(1).max(1_000),
+  cases: z.array(z.strictObject({
+    caseId: boundedEvaluationIdSchema,
+    repetitionId: boundedEvaluationIdSchema.optional(),
+    subjectDigest: digestEnvelopeV1Schema,
+    disposition: z.enum(['INCLUDED', 'BENCHMARK_INVALID']),
+    assessmentMode: evaluationAssessmentModeSchema,
+    supportedEcosystem: boundedEvaluationIdSchema,
+    expectedCoverage: z.enum(['COMPLETE', 'INCOMPLETE_OR_UNSUPPORTED']),
+    groundTruthDefects: z.array(evaluationGroundTruthDefectV1Schema).max(10_000),
+  })).min(1).max(10_000),
+}).superRefine((value, context) => {
+  const caseKeys = value.cases.map(item => (
+    `${item.repetitionId ?? ''}\0${item.caseId}`
+  ))
+  if (new Set(caseKeys).size !== caseKeys.length) {
+    context.addIssue({ code: 'custom', message: 'Duplicate Ground Truth Case identity.' })
+  }
+  if (new Set(value.canaryMarkerIds).size !== value.canaryMarkerIds.length) {
+    context.addIssue({ code: 'custom', message: 'Duplicate Ground Truth canary identity.' })
+  }
+})
+
+export type SealedGroundTruthManifestV1 = z.infer<
+  typeof sealedGroundTruthManifestV1Schema
+>
+
+export const preRegisteredMatchingContractV1Schema = z.strictObject({
+  contractId: boundedEvaluationIdSchema,
+  registrationRecordId: boundedEvaluationIdSchema,
+  registeredAtEpochMs: evaluationEpochMsSchema,
+  contractDigest: digestEnvelopeV1Schema,
+})
+
+export type PreRegisteredMatchingContractV1 = z.infer<
+  typeof preRegisteredMatchingContractV1Schema
+>
+
+export const airGappedFindingAdjudicationV1Schema = z.strictObject({
+  armId: boundedEvaluationIdSchema,
+  caseId: boundedEvaluationIdSchema,
+  repetitionId: boundedEvaluationIdSchema.optional(),
+  findingId: boundedEvaluationIdSchema,
+  adjudication: findingAdjudicationV1Schema,
+  adjudicationRecordId: boundedEvaluationIdSchema,
+})
+
+export type AirGappedFindingAdjudicationV1 = z.infer<
+  typeof airGappedFindingAdjudicationV1Schema
+>
+
+const airGapViolationTypeV1Schema = z.enum([
+  'GROUND_TRUTH_ACCESS',
+  'EXPECTED_FINDING_ACCESS',
+  'SEED_METADATA_ACCESS',
+  'MATCHING_RULE_ACCESS',
+  'ARM_LABEL_ACCESS',
+  'CANARY_MARKER_OBSERVED',
+  'BENCHMARK_HINT_DETECTED',
+])
+
+export const airGapAccessAuditV1Schema = z.strictObject({
+  auditId: boundedEvaluationIdSchema,
+  completedAtEpochMs: evaluationEpochMsSchema,
+  auditedArmIds: z.array(boundedEvaluationIdSchema).min(1).max(1_000),
+  auditedSealedResultIds: z.array(boundedEvaluationIdSchema).min(1).max(10_000),
+  violations: z.array(z.strictObject({
+    type: airGapViolationTypeV1Schema,
+    evidenceDigest: digestEnvelopeV1Schema,
+    armId: boundedEvaluationIdSchema.optional(),
+    caseId: boundedEvaluationIdSchema.optional(),
+  })).max(10_000),
+}).superRefine((value, context) => {
+  if (
+    new Set(value.auditedArmIds).size !== value.auditedArmIds.length
+    || new Set(value.auditedSealedResultIds).size !== value.auditedSealedResultIds.length
+  ) {
+    context.addIssue({ code: 'custom', message: 'Duplicate air-gap audit coverage.' })
+  }
+})
+
+export type AirGapAccessAuditV1 = z.infer<typeof airGapAccessAuditV1Schema>
+
+export const airGappedEvaluationAssemblyRequestV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(AIR_GAPPED_EVALUATION_ENGINE_ID),
+  runId: boundedEvaluationIdSchema,
+  evaluatorId: boundedEvaluationIdSchema,
+  evaluatorAuthorizationRecordId: boundedEvaluationIdSchema,
+  declaredArmIds: z.array(boundedEvaluationIdSchema).min(1).max(1_000),
+  severityWeights: effectivenessMetricsRequestV1Schema.shape.severityWeights,
+  stratumDefinitions: z.array(benchmarkStratumDefinitionV1Schema).min(4).max(10_000),
+  repetitionPlan: benchmarkRepetitionPlanV1Schema.optional(),
+  matchingContract: preRegisteredMatchingContractV1Schema,
+  groundTruthManifest: sealedGroundTruthManifestV1Schema,
+  groundTruthOpenedAtEpochMs: evaluationEpochMsSchema,
+  sealedArmResults: z.array(sealedAirGappedArmResultV1Schema).min(1).max(100_000),
+  adjudications: z.array(airGappedFindingAdjudicationV1Schema).max(100_000),
+  airGapAudit: airGapAccessAuditV1Schema,
+})
+
+export type AirGappedEvaluationAssemblyRequestV1 = z.infer<
+  typeof airGappedEvaluationAssemblyRequestV1Schema
 >
 
 export const effectivenessRatioMetricV1Schema = z.discriminatedUnion('status', [
@@ -373,6 +541,62 @@ export const effectivenessMetricsV1Schema = z.strictObject({
 })
 
 export type EffectivenessMetricsV1 = z.infer<typeof effectivenessMetricsV1Schema>
+
+const airGappedInvalidationReasonV1Schema = z.enum([
+  'GROUND_TRUTH_LEAKAGE_DETECTED',
+  'GROUND_TRUTH_OPENED_BEFORE_ALL_RESULTS_SEALED',
+  'POST_HOC_MATCHING_CONTRACT',
+  'INCOMPLETE_AIR_GAP_AUDIT',
+  'INCOMPLETE_SEALED_ARM_RESULTS',
+  'UNDECLARED_RUNNER_CASE',
+])
+
+export const airGappedEvaluationAssemblyV1Schema = z.discriminatedUnion('status', [
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    engineId: z.literal(AIR_GAPPED_EVALUATION_ENGINE_ID),
+    status: z.literal('READY'),
+    runId: boundedEvaluationIdSchema,
+    evaluatorId: boundedEvaluationIdSchema,
+    evaluatorAuthorizationRecordId: boundedEvaluationIdSchema,
+    groundTruthManifestId: boundedEvaluationIdSchema,
+    matchingContractId: boundedEvaluationIdSchema,
+    airGapAuditId: boundedEvaluationIdSchema,
+    reasonCodes: z.array(airGappedInvalidationReasonV1Schema).length(0),
+    affectedArmIds: z.array(boundedEvaluationIdSchema).min(1).max(1_000),
+    arms: z.array(z.strictObject({
+      armId: boundedEvaluationIdSchema,
+      metricsRequest: effectivenessMetricsRequestV1Schema,
+      metrics: effectivenessMetricsV1Schema,
+    })).min(1).max(1_000),
+  }).superRefine((value, context) => {
+    const armIds = value.arms.map(item => item.armId)
+    if (
+      new Set(armIds).size !== armIds.length
+      || JSON.stringify(armIds) !== JSON.stringify(value.affectedArmIds)
+    ) {
+      context.addIssue({ code: 'custom', message: 'Inconsistent assembled Arm identities.' })
+    }
+  }),
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    engineId: z.literal(AIR_GAPPED_EVALUATION_ENGINE_ID),
+    status: z.literal('INVALIDATED'),
+    runId: boundedEvaluationIdSchema,
+    evaluatorId: boundedEvaluationIdSchema,
+    evaluatorAuthorizationRecordId: boundedEvaluationIdSchema,
+    groundTruthManifestId: boundedEvaluationIdSchema,
+    matchingContractId: boundedEvaluationIdSchema,
+    airGapAuditId: boundedEvaluationIdSchema,
+    reasonCodes: z.array(airGappedInvalidationReasonV1Schema).min(1).max(6),
+    affectedArmIds: z.array(boundedEvaluationIdSchema).min(1).max(1_000),
+    arms: z.null(),
+  }),
+])
+
+export type AirGappedEvaluationAssemblyV1 = z.infer<
+  typeof airGappedEvaluationAssemblyV1Schema
+>
 
 export const PAIRED_ARM_COMPARISON_ENGINE_ID = 'security/paired-arm-comparison/v1' as const
 
@@ -936,6 +1160,16 @@ export class EvaluationMetricsInputError extends Error {
   constructor() {
     super('Evaluation evidence does not match Effectiveness Metrics Engine v1.')
     this.name = 'EvaluationMetricsInputError'
+  }
+}
+
+/** Stable, detail-free rejection for malformed air-gapped Evaluation evidence. */
+export class AirGappedEvaluationInputError extends Error {
+  readonly code = 'INVALID_AIR_GAPPED_EVALUATION_EVIDENCE' as const
+
+  constructor() {
+    super('Evidence does not match Air-gapped Evaluation Engine v1.')
+    this.name = 'AirGappedEvaluationInputError'
   }
 }
 
@@ -1593,6 +1827,221 @@ export function calculateEffectivenessMetricsV1(input: unknown): EffectivenessMe
     repetitionAnalysis,
   }
   return deepFreeze(effectivenessMetricsV1Schema.parse(result))
+}
+
+function invalidAirGappedEvaluationEvidence(): never {
+  throw new AirGappedEvaluationInputError()
+}
+
+function airGapCaseKey(value: { caseId: string, repetitionId?: string | undefined }): string {
+  return `${value.repetitionId ?? ''}\0${value.caseId}`
+}
+
+function sameDigest(
+  left: z.infer<typeof digestEnvelopeV1Schema>,
+  right: z.infer<typeof digestEnvelopeV1Schema>,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+/**
+ * Join already-sealed Arm outputs with Ground Truth only after scanning has
+ * ended. Any detected leakage invalidates every declared Arm in the Run.
+ */
+export function assembleAirGappedEvaluationV1(
+  input: unknown,
+): AirGappedEvaluationAssemblyV1 {
+  const parsed = airGappedEvaluationAssemblyRequestV1Schema.safeParse(input)
+  if (!parsed.success) return invalidAirGappedEvaluationEvidence()
+  const request = parsed.data
+  const affectedArmIds = [...request.declaredArmIds].sort(compareIds)
+  if (
+    new Set(affectedArmIds).size !== affectedArmIds.length
+    || new Set(request.sealedArmResults.map(item => item.sealedResultId)).size
+      !== request.sealedArmResults.length
+  ) {
+    return invalidAirGappedEvaluationEvidence()
+  }
+  const declaredArmIds = new Set(affectedArmIds)
+  const manifestCases = new Map(
+    request.groundTruthManifest.cases.map(item => [airGapCaseKey(item), item]),
+  )
+  if (
+    request.groundTruthManifest.sealedAtEpochMs > request.groundTruthOpenedAtEpochMs
+    || request.sealedArmResults.some(item => (
+      item.runnerInput.runId !== request.runId
+      || !declaredArmIds.has(item.armId)
+    ))
+  ) {
+    return invalidAirGappedEvaluationEvidence()
+  }
+
+  let undeclaredRunnerCase = false
+  const resultsByArm = new Map<string, Map<string, SealedAirGappedArmResultV1>>()
+  for (const armId of affectedArmIds) resultsByArm.set(armId, new Map())
+  for (const sealedResult of request.sealedArmResults) {
+    const key = airGapCaseKey(sealedResult.runnerInput)
+    const manifestCase = manifestCases.get(key)
+    if (manifestCase === undefined) {
+      undeclaredRunnerCase = true
+      continue
+    }
+    if (
+      manifestCase.assessmentMode !== sealedResult.runnerInput.assessmentMode
+      || manifestCase.supportedEcosystem !== sealedResult.runnerInput.supportedEcosystem
+      || !sameDigest(manifestCase.subjectDigest, sealedResult.runnerInput.subjectDigest)
+    ) {
+      return invalidAirGappedEvaluationEvidence()
+    }
+    const armResults = resultsByArm.get(sealedResult.armId) as Map<
+      string,
+      SealedAirGappedArmResultV1
+    >
+    if (armResults.has(key)) return invalidAirGappedEvaluationEvidence()
+    armResults.set(key, sealedResult)
+  }
+
+  const adjudications = new Map<string, AirGappedFindingAdjudicationV1>()
+  for (const adjudication of request.adjudications) {
+    if (!declaredArmIds.has(adjudication.armId)) return invalidAirGappedEvaluationEvidence()
+    const caseKey = airGapCaseKey(adjudication)
+    const sealedResult = resultsByArm.get(adjudication.armId)?.get(caseKey)
+    const manifestCase = manifestCases.get(caseKey)
+    const matchedDefectId = adjudication.adjudication.status === 'MATCHED'
+      ? adjudication.adjudication.defectId
+      : null
+    if (
+      sealedResult?.result.kind !== 'COMPLETED'
+      || manifestCase === undefined
+      || !sealedResult.result.findings.some(item => item.findingId === adjudication.findingId)
+      || (matchedDefectId !== null
+        && !manifestCase.groundTruthDefects.some(
+          item => item.defectId === matchedDefectId,
+        ))
+    ) {
+      return invalidAirGappedEvaluationEvidence()
+    }
+    const key = `${adjudication.armId}\0${caseKey}\0${adjudication.findingId}`
+    if (adjudications.has(key)) return invalidAirGappedEvaluationEvidence()
+    adjudications.set(key, adjudication)
+  }
+
+  const expectedCaseKeys = [...manifestCases.keys()].sort(compareIds)
+  const incompleteResults = affectedArmIds.some((armId) => {
+    const observedKeys = [...(resultsByArm.get(armId)?.keys() ?? [])].sort(compareIds)
+    return JSON.stringify(observedKeys) !== JSON.stringify(expectedCaseKeys)
+  })
+  const expectedResultIds = request.sealedArmResults
+    .map(item => item.sealedResultId)
+    .sort(compareIds)
+  const auditedResultIds = [...request.airGapAudit.auditedSealedResultIds].sort(compareIds)
+  const auditedArmIds = [...request.airGapAudit.auditedArmIds].sort(compareIds)
+  const incompleteAudit = (
+    JSON.stringify(auditedArmIds) !== JSON.stringify(affectedArmIds)
+    || JSON.stringify(auditedResultIds) !== JSON.stringify(expectedResultIds)
+    || request.airGapAudit.completedAtEpochMs < request.groundTruthOpenedAtEpochMs
+  )
+  const sealedTimes = request.sealedArmResults.map(item => item.sealedAtEpochMs)
+  const admittedTimes = request.sealedArmResults.map(item => item.runnerInput.admittedAtEpochMs)
+  const latestSeal = sealedTimes.length === 0 ? 0 : Math.max(...sealedTimes)
+  const earliestAdmission = admittedTimes.length === 0
+    ? Number.MAX_SAFE_INTEGER
+    : Math.min(...admittedTimes)
+  const reasonCodes: Array<z.infer<typeof airGappedInvalidationReasonV1Schema>> = []
+  if (request.airGapAudit.violations.length > 0) {
+    reasonCodes.push('GROUND_TRUTH_LEAKAGE_DETECTED')
+  }
+  if (request.groundTruthOpenedAtEpochMs <= latestSeal) {
+    reasonCodes.push('GROUND_TRUTH_OPENED_BEFORE_ALL_RESULTS_SEALED')
+  }
+  if (request.matchingContract.registeredAtEpochMs >= earliestAdmission) {
+    reasonCodes.push('POST_HOC_MATCHING_CONTRACT')
+  }
+  if (incompleteAudit) reasonCodes.push('INCOMPLETE_AIR_GAP_AUDIT')
+  if (incompleteResults) reasonCodes.push('INCOMPLETE_SEALED_ARM_RESULTS')
+  if (undeclaredRunnerCase) reasonCodes.push('UNDECLARED_RUNNER_CASE')
+
+  const provenance = {
+    schemaVersion: 1 as const,
+    engineId: AIR_GAPPED_EVALUATION_ENGINE_ID,
+    runId: request.runId,
+    evaluatorId: request.evaluatorId,
+    evaluatorAuthorizationRecordId: request.evaluatorAuthorizationRecordId,
+    groundTruthManifestId: request.groundTruthManifest.manifestId,
+    matchingContractId: request.matchingContract.contractId,
+    airGapAuditId: request.airGapAudit.auditId,
+    affectedArmIds,
+  }
+  if (reasonCodes.length > 0) {
+    return deepFreeze(airGappedEvaluationAssemblyV1Schema.parse({
+      ...provenance,
+      status: 'INVALIDATED',
+      reasonCodes,
+      arms: null,
+    }))
+  }
+
+  const arms: Extract<AirGappedEvaluationAssemblyV1, { status: 'READY' }>['arms'] = []
+  for (const armId of affectedArmIds) {
+    const armResults = resultsByArm.get(armId) as Map<string, SealedAirGappedArmResultV1>
+    const cases: EvaluationCaseV1[] = expectedCaseKeys.map((caseKey) => {
+      const manifestCase = manifestCases.get(caseKey) as SealedGroundTruthManifestV1['cases'][number]
+      const sealedResult = armResults.get(caseKey) as SealedAirGappedArmResultV1
+      const result: EvaluationCaseV1['result'] = sealedResult.result.kind === 'PRODUCT_FAILURE'
+        ? sealedResult.result
+        : {
+            kind: 'COMPLETED',
+            verdict: sealedResult.result.verdict,
+            coverageStatus: sealedResult.result.coverageStatus,
+            findings: sealedResult.result.findings.map((finding) => {
+              const adjudicationKey = `${armId}\0${caseKey}\0${finding.findingId}`
+              return {
+                findingId: finding.findingId,
+                adjudication: adjudications.get(adjudicationKey)?.adjudication
+                  ?? { status: 'UNADJUDICATED' },
+              }
+            }),
+          }
+      return {
+        caseId: manifestCase.caseId,
+        ...(manifestCase.repetitionId === undefined
+          ? {}
+          : { repetitionId: manifestCase.repetitionId }),
+        disposition: manifestCase.disposition,
+        assessmentMode: manifestCase.assessmentMode,
+        supportedEcosystem: manifestCase.supportedEcosystem,
+        expectedCoverage: manifestCase.expectedCoverage,
+        groundTruthDefects: manifestCase.groundTruthDefects,
+        result,
+      }
+    })
+    const metricsRequest: EffectivenessMetricsRequestV1 = {
+      schemaVersion: 1,
+      engineId: EFFECTIVENESS_METRICS_ENGINE_ID,
+      severityWeights: request.severityWeights,
+      stratumDefinitions: request.stratumDefinitions,
+      ...(request.repetitionPlan === undefined
+        ? {}
+        : { repetitionPlan: request.repetitionPlan }),
+      cases,
+    }
+    let metrics: EffectivenessMetricsV1
+    try {
+      metrics = calculateEffectivenessMetricsV1(metricsRequest)
+    } catch (error) {
+      if (error instanceof EvaluationMetricsInputError) {
+        return invalidAirGappedEvaluationEvidence()
+      }
+      throw error
+    }
+    arms.push({ armId, metricsRequest, metrics })
+  }
+  return deepFreeze(airGappedEvaluationAssemblyV1Schema.parse({
+    ...provenance,
+    status: 'READY',
+    reasonCodes: [],
+    arms,
+  }))
 }
 
 type UtilityMetricReasonV1 = z.infer<typeof utilityMetricReasonV1Schema>

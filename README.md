@@ -390,6 +390,18 @@ the engine reports unweighted and severity-weighted recall distributions for
 that exact Stratum and makes the Stratum inconclusive when either bound is
 unavailable or too wide.
 
+`assembleAirGappedEvaluationV1` exposes a strict Runner input containing only an
+opaque Case and Subject handle, Subject digest, execution grant, mode, ecosystem,
+and admission time. Arm labels, Ground Truth, expected Findings, seed metadata,
+matching rules, and runner-authored adjudication are not representable through
+that interface. A separately authorized evaluator may join a sealed Ground Truth
+Manifest only after every declared Arm result is sealed and only under a matching
+contract registered before Runner admission. The assembler requires exact audit
+coverage, preserves evaluator and seal provenance, converts absent adjudications
+to explicit `UNADJUDICATED` outcomes, and invokes the same Metrics Engine itself.
+Any access, canary, hint, or timing violation invalidates the complete Evaluation
+Run and returns no per-Arm metric output.
+
 `calculatePairedArmComparisonV1` accepts complete baseline and candidate Arm
 evidence, verifies that their frozen Evaluation design is identical, calculates
 direction-aware deltas for all five primary metrics, and retains both Arm
@@ -419,9 +431,9 @@ timing, unavailable denominators, incomplete adjudication, and inapplicable
 Control Plane evidence fail closed instead of becoming zero-value claims.
 Satisfaction surveys are intentionally outside this proof contract.
 
-These slices are not an Effectiveness, Utility, or release claim. Ground Truth
-air-gap execution, Release Constitution thresholds, Scorecards, and the Release
-Evidence Manifest remain separate future proof slices.
+These slices are not an Effectiveness, Utility, or release claim. Release
+Constitution thresholds, Scorecards, and the Release Evidence Manifest remain
+separate future proof slices.
 
 ## Model-facing Assessment operations
 

@@ -1,4 +1,13 @@
 import { z } from 'zod'
+import {
+  digestEnvelopeV1Schema,
+  type DigestEnvelopeV1,
+} from './digest-envelope.ts'
+
+export {
+  digestEnvelopeV1Schema,
+  type DigestEnvelopeV1,
+} from './digest-envelope.ts'
 
 /** Public product identity of this development slice. */
 export const SECURITY_ASSURANCE_PRODUCT_NAME = 'dsh-security-assurance' as const
@@ -332,24 +341,6 @@ export const repositoryListResultSchema: z.ZodType<SecurityResult<RepositoryList
     z.strictObject({ ok: z.literal(true), value: repositoryListSnapshotV1Schema }),
     z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
   ])
-
-export interface DigestEnvelopeV1 {
-  readonly schemaVersion: 1
-  readonly algorithm: 'sha256'
-  readonly mediaType: string
-  readonly byteLength: number
-  readonly canonicalization: 'raw-bytes' | 'dsh-canonical-json-v1'
-  readonly value: string
-}
-
-export const digestEnvelopeV1Schema: z.ZodType<DigestEnvelopeV1> = z.strictObject({
-  schemaVersion: z.literal(1),
-  algorithm: z.literal('sha256'),
-  mediaType: z.string().regex(/^application\/[a-z0-9.+-]+$|^text\/[a-z0-9.+-]+$/).max(128),
-  byteLength: z.number().int().nonnegative(),
-  canonicalization: z.enum(['raw-bytes', 'dsh-canonical-json-v1']),
-  value: z.string().regex(/^[0-9a-f]{64}$/),
-})
 
 const exactGitCommitSchema = z.string().regex(/^[0-9a-f]{40}$/)
 
