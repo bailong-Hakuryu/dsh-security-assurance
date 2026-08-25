@@ -10,6 +10,7 @@ import {
   calculateEffectivenessMetricsV1,
   calculatePairedArmComparisonV1,
   calculateUtilityMetricsV1,
+  assembleReleaseEvidenceManifestV1,
   EFFECTIVENESS_METRICS_ENGINE_ID,
   effectivenessMetricsRequestV1Schema,
   effectivenessMetricsV1Schema,
@@ -22,6 +23,11 @@ import {
   type PublicSecurityScorecardRequestV1,
   publicSecurityScorecardV1Schema,
   PublicSecurityScorecardInputError,
+  RELEASE_EVIDENCE_MANIFEST_ENGINE_ID,
+  RELEASE_EVIDENCE_PROOF_KINDS,
+  type ReleaseEvidenceManifestRequestV1,
+  releaseEvidenceManifestV1Schema,
+  ReleaseEvidenceManifestInputError,
   RELEASE_CONSTITUTION_CHECK_IDS,
   RELEASE_CONSTITUTION_ENGINE_ID,
   type ReleaseConstitutionEvaluationRequestV1,
@@ -2064,6 +2070,232 @@ describe('Paired Arm Comparison Engine v1', () => {
         ...result,
         limitations: [...result.limitations, 'NOT_A_STABLE_RELEASE_CLAIM'],
       })).toThrow()
+    })
+
+    function baseManifestRequest(): ReleaseEvidenceManifestRequestV1 {
+      const releaseEvaluation = baseReleaseRequest()
+      const scorecardRequest = baseScorecardRequest()
+      scorecardRequest.releaseEvaluation = releaseEvaluation
+      const publicScorecard = renderPublicSecurityScorecardV1(scorecardRequest)
+      const artifactDigest = releaseEvaluation.candidate.candidateArtifactDigest
+      return {
+        schemaVersion: 1,
+        engineId: RELEASE_EVIDENCE_MANIFEST_ENGINE_ID,
+        manifestId: 'release-evidence-manifest-v1',
+        assembledAtEpochMs: 500,
+        sourceRevision: '1'.repeat(40),
+        dependencyLocks: [{
+          lockKind: 'PNPM_LOCK',
+          lockDigest: releaseDigest('7'),
+        }],
+        releaseEvaluation,
+        publicScorecard,
+        proofs: RELEASE_EVIDENCE_PROOF_KINDS.map((proofKind, index) => {
+          let evidenceId = `proof/${proofKind.toLowerCase().replaceAll('_', '-')}`
+          let evidenceDigest: ReleaseEvidenceManifestRequestV1['proofs'][number]['evidenceDigest']
+            = releaseDigest(String(index % 10))
+          if ([
+            'CAPABILITY_CONFORMANCE',
+            'SELF_SECURITY',
+            'GROUND_TRUTH_AIR_GAP',
+            'DETERMINISTIC_FAILURES',
+            'RISK_ACCEPTANCES',
+          ].includes(proofKind)) {
+            evidenceId = releaseEvaluation.candidate.hardSafetyEvidence.evidenceId
+            evidenceDigest = releaseEvaluation.candidate.hardSafetyEvidence.evidenceDigest
+          } else if (proofKind.endsWith('_PLATFORM')) {
+            const platform = proofKind.replace('_PLATFORM', '')
+            const platformProof = releaseEvaluation.candidate.platformProofs.find(
+              item => item.platform === platform,
+            )
+            if (platformProof !== undefined) {
+              evidenceId = platformProof.evidenceId
+              evidenceDigest = platformProof.evidenceDigest
+            }
+          } else if (proofKind === 'EVALUATION_RUN_BUNDLE') {
+            evidenceId = releaseEvaluation.candidate.evidenceSetId
+            evidenceDigest = releaseEvaluation.candidate.evidenceSetDigest
+          } else if (proofKind === 'RELEASE_CONSTITUTION') {
+            evidenceId = releaseEvaluation.constitution.constitutionId
+            evidenceDigest = releaseEvaluation.constitution.constitutionDigest
+          }
+          return {
+            proofKind,
+            evidenceId,
+            evidenceDigest,
+            reportedStatus: 'PASSED',
+            candidateArtifactDigest: artifactDigest,
+            completedAtEpochMs: 350,
+          }
+        }),
+        evaluationRunBundles: [
+          {
+            role: 'PRIOR_STABLE',
+            bundleId: 'evaluation-bundle/prior-stable',
+            bundleDigest: releaseDigest('8'),
+            artifactDigest: releaseDigest('f'),
+          },
+          {
+            role: 'CANDIDATE',
+            bundleId: 'evaluation-bundle/candidate',
+            bundleDigest: releaseDigest('9'),
+            artifactDigest,
+          },
+        ],
+        riskAcceptances: [{
+          riskAcceptanceId: 'risk-acceptance/medium-1',
+          decisionDigest: releaseDigest('d'),
+          status: 'ACTIVE',
+          expiresAtEpochMs: 1_000,
+          compensationEvidenceDigest: releaseDigest('e'),
+          adrId: 'adr/medium-risk-acceptance-1',
+        }],
+      }
+    }
+
+    it('assembles one fixed digest-bound Release Evidence Manifest', () => {
+      const result = assembleReleaseEvidenceManifestV1(baseManifestRequest())
+
+      expect(RELEASE_EVIDENCE_MANIFEST_ENGINE_ID).toBe(
+        'security/release-evidence-manifest/v1',
+      )
+      expect(releaseEvidenceManifestV1Schema.parse(result)).toEqual(result)
+      expect(result).toMatchObject({
+        manifestId: 'release-evidence-manifest-v1',
+        releaseCandidateId: 'security-assurance-0.1.0-rc.1',
+        harnessTargetVersion: '0.1.1-rc.2',
+        dependencyLocks: [{ lockKind: 'PNPM_LOCK' }],
+        verification: {
+          decision: 'VERIFIED',
+          reasonCodes: [],
+          failedProofKinds: [],
+          inconclusiveProofKinds: [],
+          mismatchedProofKinds: [],
+        },
+      })
+      expect(result.proofs.map(item => item.proofKind)).toEqual(
+        RELEASE_EVIDENCE_PROOF_KINDS,
+      )
+      expect(result.proofs.every(item => item.verificationStatus === 'PASSED')).toBe(true)
+      expect(result.knownLimitations).toEqual(result.publicScorecard.limitationCodes)
+      expect(Object.isFrozen(result)).toBe(true)
+      expect(Object.isFrozen(result.proofs)).toBe(true)
+    })
+
+    it('makes every missing required proof explicitly inconclusive', () => {
+      const request = baseManifestRequest()
+      request.proofs = request.proofs.filter(item => item.proofKind !== 'WORKBENCH')
+      const result = assembleReleaseEvidenceManifestV1(request)
+      const workbench = result.proofs.find(item => item.proofKind === 'WORKBENCH')
+
+      expect(result.verification.decision).toBe('INCONCLUSIVE')
+      expect(result.verification.reasonCodes).toEqual(['PROOF_MISSING'])
+      expect(result.verification.inconclusiveProofKinds).toEqual(['WORKBENCH'])
+      expect(workbench).toMatchObject({
+        reportedStatus: 'MISSING',
+        evidenceId: null,
+        evidenceDigest: null,
+        artifactBinding: 'MISSING',
+        constitutionAlignment: 'MISSING',
+        sourceEvidenceAlignment: 'MISSING',
+        verificationStatus: 'INCONCLUSIVE',
+      })
+    })
+
+    it('blocks a reported failure even when other proof passes', () => {
+      const request = baseManifestRequest()
+      const raceProof = request.proofs.find(item => item.proofKind === 'RACE')
+      if (raceProof !== undefined) raceProof.reportedStatus = 'FAILED'
+      const result = assembleReleaseEvidenceManifestV1(request)
+
+      expect(result.verification.decision).toBe('BLOCKED')
+      expect(result.verification.reasonCodes).toEqual(['PROOF_FAILED'])
+      expect(result.verification.failedProofKinds).toEqual(['RACE'])
+    })
+
+    it('blocks proof produced for a different candidate artifact', () => {
+      const request = baseManifestRequest()
+      const mutationProof = request.proofs.find(item => item.proofKind === 'MUTATION')
+      if (mutationProof !== undefined) mutationProof.candidateArtifactDigest = releaseDigest('f')
+      const result = assembleReleaseEvidenceManifestV1(request)
+
+      expect(result.verification.decision).toBe('BLOCKED')
+      expect(result.verification.reasonCodes).toEqual([
+        'PROOF_FAILED',
+        'PROOF_ARTIFACT_MISMATCH',
+      ])
+      expect(result.verification.mismatchedProofKinds).toEqual(['MUTATION'])
+    })
+
+    it('blocks proof that substitutes a different source Evidence digest', () => {
+      const request = baseManifestRequest()
+      const conformanceProof = request.proofs.find(
+        item => item.proofKind === 'CAPABILITY_CONFORMANCE',
+      )
+      if (conformanceProof !== undefined) conformanceProof.evidenceDigest = releaseDigest('f')
+      const result = assembleReleaseEvidenceManifestV1(request)
+
+      expect(result.verification.decision).toBe('BLOCKED')
+      expect(result.verification.reasonCodes).toEqual([
+        'PROOF_FAILED',
+        'PROOF_EVIDENCE_MISMATCH',
+      ])
+      expect(result.verification.mismatchedProofKinds).toEqual(['CAPABILITY_CONFORMANCE'])
+    })
+
+    it('blocks stale Scorecard and proof claims that contradict the Constitution', () => {
+      const request = baseManifestRequest()
+      request.releaseEvaluation.candidate.hardSafetyEvidence.unauthorizedNetworkEgressCount = 1
+      const result = assembleReleaseEvidenceManifestV1(request)
+
+      expect(result.releaseConstitution.decision).toBe('BLOCKED')
+      expect(result.verification.decision).toBe('BLOCKED')
+      expect(result.verification.reasonCodes).toEqual([
+        'RELEASE_CONSTITUTION_BLOCKED',
+        'PROOF_FAILED',
+        'PROOF_CONSTITUTION_MISMATCH',
+        'PUBLIC_SCORECARD_MISMATCH',
+      ])
+      expect(result.verification.mismatchedProofKinds).toEqual(['RELEASE_CONSTITUTION'])
+    })
+
+    it('blocks a candidate Evaluation Bundle bound to another artifact', () => {
+      const request = baseManifestRequest()
+      const candidateBundle = request.evaluationRunBundles.find(
+        item => item.role === 'CANDIDATE',
+      )
+      if (candidateBundle !== undefined) candidateBundle.artifactDigest = releaseDigest('f')
+      const result = assembleReleaseEvidenceManifestV1(request)
+
+      expect(result.verification.decision).toBe('BLOCKED')
+      expect(result.verification.reasonCodes).toEqual([
+        'EVALUATION_BUNDLE_ARTIFACT_MISMATCH',
+      ])
+    })
+
+    it('rejects duplicate, expired, extended, or malformed Manifest input', () => {
+      const duplicateProof = baseManifestRequest()
+      duplicateProof.proofs[1] = { ...duplicateProof.proofs[0]! }
+      expect(() => assembleReleaseEvidenceManifestV1(duplicateProof)).toThrow(
+        ReleaseEvidenceManifestInputError,
+      )
+
+      const expiredRisk = baseManifestRequest()
+      expiredRisk.riskAcceptances[0]!.expiresAtEpochMs = expiredRisk.assembledAtEpochMs
+      expect(() => assembleReleaseEvidenceManifestV1(expiredRisk)).toThrow(
+        ReleaseEvidenceManifestInputError,
+      )
+
+      const badRevision = baseManifestRequest()
+      badRevision.sourceRevision = 'main'
+      expect(() => assembleReleaseEvidenceManifestV1(badRevision)).toThrow(
+        ReleaseEvidenceManifestInputError,
+      )
+
+      expect(() => assembleReleaseEvidenceManifestV1({
+        ...baseManifestRequest(),
+        ciBadge: 'passing',
+      })).toThrow(ReleaseEvidenceManifestInputError)
     })
   })
 })

@@ -455,8 +455,30 @@ Evidence; and private vulnerabilities have no output fields. Public tokens are
 path-free and bounded, stable limitation and failure codes are derived rather
 than caller-authored, and invalid or extended publication input fails closed.
 
-These slices are not an Effectiveness, Utility, or release claim. The Release
-Evidence Manifest remains a separate future proof slice.
+`assembleReleaseEvidenceManifestV1` is the sole pure Release Evidence Manifest
+interface. It binds the exact candidate, qualified, and proposed-promotion
+artifact digests to source revision, Harness target, dependency-lock digests,
+the recomputed Release Constitution, the matching public Scorecard, Evaluation
+Run Bundle identities, known limitations, Risk Acceptances, and a fixed ordered
+catalogue of twenty-three required proof kinds. The catalogue covers artifact
+identity, packed Capability Conformance, Windows/Linux/macOS, Workbench,
+lifecycle, fault, race, Mutation, Resource, Effectiveness, Utility,
+non-inferiority, Dogfood, self-security, Ground Truth air gap, deterministic
+failures, Support Matrix, Risk Acceptances, Evaluation Bundles, Scorecard, and
+Constitution evidence.
+
+Every supplied proof records its Evidence ID and digest, reported status,
+candidate-artifact digest, and completion time. Assembly independently checks
+artifact binding, Constitution status alignment, and direct source-Evidence
+identity where the Constitution input already names that Evidence. Missing
+proof is explicit `INCONCLUSIVE`; any reported failure, substituted digest,
+stale Scorecard, contradictory status, or candidate Evaluation Bundle bound to
+another artifact is `BLOCKED`. A CI URL, badge, README checklist, or test count
+is not accepted as proof.
+
+These contracts are not themselves an Effectiveness, Utility, or release claim.
+The first Candidate still requires running the complete qualification and
+Holdout program and populating the Manifest with real packed-release Evidence.
 
 ## Model-facing Assessment operations
 

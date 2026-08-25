@@ -3646,3 +3646,682 @@ export function renderPublicSecurityScorecardV1(
   }
   return deepFreeze(publicSecurityScorecardV1Schema.parse(result))
 }
+
+export const RELEASE_EVIDENCE_MANIFEST_ENGINE_ID =
+  'security/release-evidence-manifest/v1' as const
+
+export const RELEASE_EVIDENCE_PROOF_KINDS = [
+  'ARTIFACT_IDENTITY',
+  'CAPABILITY_CONFORMANCE',
+  'WINDOWS_PLATFORM',
+  'LINUX_PLATFORM',
+  'MACOS_PLATFORM',
+  'WORKBENCH',
+  'LIFECYCLE',
+  'FAULT',
+  'RACE',
+  'MUTATION',
+  'RESOURCE',
+  'EFFECTIVENESS',
+  'UTILITY',
+  'NON_INFERIORITY',
+  'DOGFOOD',
+  'SELF_SECURITY',
+  'GROUND_TRUTH_AIR_GAP',
+  'DETERMINISTIC_FAILURES',
+  'SECURITY_SUPPORT_MATRIX',
+  'RISK_ACCEPTANCES',
+  'EVALUATION_RUN_BUNDLE',
+  'PUBLIC_SCORECARD',
+  'RELEASE_CONSTITUTION',
+] as const
+
+export type ReleaseEvidenceProofKind = typeof RELEASE_EVIDENCE_PROOF_KINDS[number]
+
+const releaseEvidenceReportedStatusV1Schema = z.enum(['PASSED', 'FAILED', 'INCONCLUSIVE'])
+
+export const releaseEvidenceProofV1Schema = z.strictObject({
+  proofKind: z.enum(RELEASE_EVIDENCE_PROOF_KINDS),
+  evidenceId: boundedEvaluationIdSchema,
+  evidenceDigest: digestEnvelopeV1Schema,
+  reportedStatus: releaseEvidenceReportedStatusV1Schema,
+  candidateArtifactDigest: digestEnvelopeV1Schema,
+  completedAtEpochMs: evaluationEpochMsSchema,
+})
+
+export type ReleaseEvidenceProofV1 = z.infer<typeof releaseEvidenceProofV1Schema>
+
+const releaseDependencyLockV1Schema = z.strictObject({
+  lockKind: z.enum([
+    'NPM_PACKAGE_LOCK',
+    'NPM_SHRINKWRAP',
+    'PNPM_LOCK',
+    'YARN_LOCK',
+    'OTHER_CANONICAL_LOCK',
+  ]),
+  lockDigest: digestEnvelopeV1Schema,
+})
+
+const releaseEvaluationRunBundleReferenceV1Schema = z.strictObject({
+  role: z.enum(['CANDIDATE', 'PRIOR_STABLE']),
+  bundleId: boundedEvaluationIdSchema,
+  bundleDigest: digestEnvelopeV1Schema,
+  artifactDigest: digestEnvelopeV1Schema,
+})
+
+const releaseRiskAcceptanceReferenceV1Schema = z.strictObject({
+  riskAcceptanceId: boundedEvaluationIdSchema,
+  decisionDigest: digestEnvelopeV1Schema,
+  status: z.enum(['ACTIVE', 'EXPIRED', 'REVOKED']),
+  expiresAtEpochMs: evaluationEpochMsSchema,
+  compensationEvidenceDigest: digestEnvelopeV1Schema,
+  adrId: boundedEvaluationIdSchema,
+})
+
+export const releaseEvidenceManifestRequestV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(RELEASE_EVIDENCE_MANIFEST_ENGINE_ID),
+  manifestId: boundedEvaluationIdSchema,
+  assembledAtEpochMs: evaluationEpochMsSchema,
+  sourceRevision: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+  dependencyLocks: z.array(releaseDependencyLockV1Schema).min(1).max(5),
+  releaseEvaluation: releaseConstitutionEvaluationRequestV1Schema,
+  publicScorecard: publicSecurityScorecardV1Schema,
+  proofs: z.array(releaseEvidenceProofV1Schema)
+    .max(RELEASE_EVIDENCE_PROOF_KINDS.length),
+  evaluationRunBundles: z.array(releaseEvaluationRunBundleReferenceV1Schema)
+    .min(2)
+    .max(1_000),
+  riskAcceptances: z.array(releaseRiskAcceptanceReferenceV1Schema).max(1_000),
+}).superRefine((value, context) => {
+  const proofKinds = value.proofs.map(item => item.proofKind)
+  const lockKinds = value.dependencyLocks.map(item => item.lockKind)
+  const bundleIds = value.evaluationRunBundles.map(item => item.bundleId)
+  const riskAcceptanceIds = value.riskAcceptances.map(item => item.riskAcceptanceId)
+  const bundleRoles = new Set(value.evaluationRunBundles.map(item => item.role))
+  if (
+    new Set(proofKinds).size !== proofKinds.length
+    || new Set(lockKinds).size !== lockKinds.length
+    || new Set(bundleIds).size !== bundleIds.length
+    || new Set(riskAcceptanceIds).size !== riskAcceptanceIds.length
+    || !bundleRoles.has('CANDIDATE')
+    || !bundleRoles.has('PRIOR_STABLE')
+    || value.publicScorecard.publishedAtEpochMs > value.assembledAtEpochMs
+    || value.proofs.some(item => item.completedAtEpochMs > value.assembledAtEpochMs)
+    || value.riskAcceptances.some(item => (
+      item.status === 'ACTIVE' && item.expiresAtEpochMs <= value.assembledAtEpochMs
+    ))
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent Release Evidence input.' })
+  }
+})
+
+export type ReleaseEvidenceManifestRequestV1 = z.infer<
+  typeof releaseEvidenceManifestRequestV1Schema
+>
+
+const normalizedReleaseEvidenceProofV1Schema = z.strictObject({
+  proofKind: z.enum(RELEASE_EVIDENCE_PROOF_KINDS),
+  evidenceId: boundedEvaluationIdSchema.nullable(),
+  evidenceDigest: digestEnvelopeV1Schema.nullable(),
+  reportedStatus: z.enum(['PASSED', 'FAILED', 'INCONCLUSIVE', 'MISSING']),
+  candidateArtifactDigest: digestEnvelopeV1Schema.nullable(),
+  completedAtEpochMs: evaluationEpochMsSchema.nullable(),
+  artifactBinding: z.enum(['MATCHED', 'MISMATCH', 'MISSING']),
+  constitutionAlignment: z.enum(['MATCHED', 'MISMATCH', 'NOT_APPLICABLE', 'MISSING']),
+  sourceEvidenceAlignment: z.enum(['MATCHED', 'MISMATCH', 'NOT_APPLICABLE', 'MISSING']),
+  verificationStatus: z.enum(['PASSED', 'FAILED', 'INCONCLUSIVE']),
+}).superRefine((value, context) => {
+  const missing = value.reportedStatus === 'MISSING'
+  const missingFields = value.evidenceId === null
+    && value.evidenceDigest === null
+    && value.candidateArtifactDigest === null
+    && value.completedAtEpochMs === null
+  const expectedVerification = missing
+    ? 'INCONCLUSIVE'
+    : value.reportedStatus === 'FAILED'
+      || value.artifactBinding === 'MISMATCH'
+      || value.constitutionAlignment === 'MISMATCH'
+      || value.sourceEvidenceAlignment === 'MISMATCH'
+      ? 'FAILED'
+      : value.reportedStatus === 'INCONCLUSIVE' ? 'INCONCLUSIVE' : 'PASSED'
+  if (
+    (missing && (
+      !missingFields
+      || value.artifactBinding !== 'MISSING'
+      || value.constitutionAlignment !== 'MISSING'
+      || value.sourceEvidenceAlignment !== 'MISSING'
+    ))
+    || (!missing && (
+      !value.evidenceId
+      || !value.evidenceDigest
+      || !value.candidateArtifactDigest
+      || value.completedAtEpochMs === null
+      || value.artifactBinding === 'MISSING'
+      || value.constitutionAlignment === 'MISSING'
+      || value.sourceEvidenceAlignment === 'MISSING'
+    ))
+    || value.verificationStatus !== expectedVerification
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent normalized Release proof.' })
+  }
+})
+
+export type NormalizedReleaseEvidenceProofV1 = z.infer<
+  typeof normalizedReleaseEvidenceProofV1Schema
+>
+
+export const RELEASE_EVIDENCE_MANIFEST_REASON_CODES = [
+  'RELEASE_CONSTITUTION_BLOCKED',
+  'RELEASE_CONSTITUTION_INCONCLUSIVE',
+  'PROOF_FAILED',
+  'PROOF_MISSING',
+  'PROOF_INCONCLUSIVE',
+  'PROOF_ARTIFACT_MISMATCH',
+  'PROOF_CONSTITUTION_MISMATCH',
+  'PROOF_EVIDENCE_MISMATCH',
+  'PUBLIC_SCORECARD_MISMATCH',
+  'EVALUATION_BUNDLE_ARTIFACT_MISMATCH',
+] as const
+
+export type ReleaseEvidenceManifestReasonCode =
+  typeof RELEASE_EVIDENCE_MANIFEST_REASON_CODES[number]
+
+const releaseEvidenceManifestReasonCodeSchema = z.enum(
+  RELEASE_EVIDENCE_MANIFEST_REASON_CODES,
+)
+
+const releaseEvidenceScorecardReferenceV1Schema = z.strictObject({
+  engineId: z.literal(PUBLIC_SECURITY_SCORECARD_ENGINE_ID),
+  publishedAtEpochMs: evaluationEpochMsSchema,
+  releaseVersion: publicSemanticVersionSchema,
+  harnessTargetVersion: publicSemanticVersionSchema,
+  candidateArtifactDigest: digestEnvelopeV1Schema,
+  decision: releaseConstitutionDecisionV1Schema.shape.decision,
+  reasonCodes: releaseConstitutionDecisionV1Schema.shape.reasonCodes,
+  checks: releaseConstitutionDecisionV1Schema.shape.checks,
+  limitationCodes: z.array(publicSecurityScorecardLimitationCodeSchema)
+    .min(6)
+    .max(PUBLIC_SECURITY_SCORECARD_LIMITATION_CODES.length),
+})
+
+const releaseConstitutionEvidenceReferencesV1Schema = z.strictObject({
+  constitution: z.strictObject({
+    evidenceId: boundedEvaluationIdSchema,
+    evidenceDigest: digestEnvelopeV1Schema,
+  }),
+  hardSafety: z.strictObject({
+    evidenceId: boundedEvaluationIdSchema,
+    evidenceDigest: digestEnvelopeV1Schema,
+  }),
+  evidenceSet: z.strictObject({
+    evidenceId: boundedEvaluationIdSchema,
+    evidenceDigest: digestEnvelopeV1Schema,
+  }),
+  platforms: z.array(z.strictObject({
+    platform: z.enum(['WINDOWS', 'LINUX', 'MACOS']),
+    evidenceId: boundedEvaluationIdSchema,
+    evidenceDigest: digestEnvelopeV1Schema,
+  })).max(3),
+})
+
+const releaseEvidenceManifestVerificationV1Schema = z.strictObject({
+  decision: z.enum(['VERIFIED', 'BLOCKED', 'INCONCLUSIVE']),
+  reasonCodes: z.array(releaseEvidenceManifestReasonCodeSchema)
+    .max(RELEASE_EVIDENCE_MANIFEST_REASON_CODES.length),
+  failedProofKinds: z.array(z.enum(RELEASE_EVIDENCE_PROOF_KINDS))
+    .max(RELEASE_EVIDENCE_PROOF_KINDS.length),
+  inconclusiveProofKinds: z.array(z.enum(RELEASE_EVIDENCE_PROOF_KINDS))
+    .max(RELEASE_EVIDENCE_PROOF_KINDS.length),
+  mismatchedProofKinds: z.array(z.enum(RELEASE_EVIDENCE_PROOF_KINDS))
+    .max(RELEASE_EVIDENCE_PROOF_KINDS.length),
+})
+
+export const releaseEvidenceManifestV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(RELEASE_EVIDENCE_MANIFEST_ENGINE_ID),
+  manifestId: boundedEvaluationIdSchema,
+  assembledAtEpochMs: evaluationEpochMsSchema,
+  releaseCandidateId: boundedEvaluationIdSchema,
+  sourceRevision: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+  harnessTargetVersion: publicSemanticVersionSchema,
+  candidateArtifactDigest: digestEnvelopeV1Schema,
+  qualifiedArtifactDigest: digestEnvelopeV1Schema,
+  proposedPromotionArtifactDigest: digestEnvelopeV1Schema,
+  dependencyLocks: z.array(releaseDependencyLockV1Schema).min(1).max(5),
+  releaseConstitution: releaseConstitutionDecisionV1Schema,
+  constitutionEvidence: releaseConstitutionEvidenceReferencesV1Schema,
+  publicScorecard: releaseEvidenceScorecardReferenceV1Schema,
+  proofs: z.array(normalizedReleaseEvidenceProofV1Schema)
+    .length(RELEASE_EVIDENCE_PROOF_KINDS.length),
+  evaluationRunBundles: z.array(releaseEvaluationRunBundleReferenceV1Schema)
+    .min(2)
+    .max(1_000),
+  knownLimitations: z.array(publicSecurityScorecardLimitationCodeSchema)
+    .min(6)
+    .max(PUBLIC_SECURITY_SCORECARD_LIMITATION_CODES.length),
+  riskAcceptances: z.array(releaseRiskAcceptanceReferenceV1Schema).max(1_000),
+  verification: releaseEvidenceManifestVerificationV1Schema,
+}).superRefine((value, context) => {
+  const actualKinds = value.proofs.map(item => item.proofKind)
+  const expectedLocks = [...value.dependencyLocks]
+    .sort((left, right) => left.lockKind.localeCompare(right.lockKind))
+  const expectedBundles = [...value.evaluationRunBundles].sort(compareReleaseBundleReferences)
+  const expectedRiskAcceptances = [...value.riskAcceptances]
+    .sort((left, right) => left.riskAcceptanceId.localeCompare(right.riskAcceptanceId))
+  const expectedPlatforms = [...value.constitutionEvidence.platforms]
+    .sort((left, right) => left.platform.localeCompare(right.platform))
+  const expectedVerification = releaseEvidenceManifestVerification({
+    releaseConstitution: value.releaseConstitution,
+    publicScorecard: value.publicScorecard,
+    proofs: value.proofs,
+    evaluationRunBundles: value.evaluationRunBundles,
+    candidateArtifactDigest: value.candidateArtifactDigest,
+  })
+  const proofAlignmentMismatch = value.proofs.some(proof => {
+    if (proof.reportedStatus === 'MISSING') return false
+    const expectedStatus = expectedConstitutionProofStatus(
+      proof.proofKind,
+      value.releaseConstitution,
+    )
+    const expectedAlignment = expectedStatus === null
+      ? 'NOT_APPLICABLE'
+      : proof.reportedStatus === expectedStatus ? 'MATCHED' : 'MISMATCH'
+    const expectedSource = expectedProofSourceEvidence(
+      proof.proofKind,
+      value.constitutionEvidence,
+    )
+    const expectedSourceAlignment = expectedSource === undefined
+      ? 'NOT_APPLICABLE'
+      : expectedSource === null
+        ? 'MISMATCH'
+        : proof.evidenceId === expectedSource.evidenceId
+          && sameDigest(
+            proof.evidenceDigest as z.infer<typeof digestEnvelopeV1Schema>,
+            expectedSource.evidenceDigest,
+          )
+          ? 'MATCHED'
+          : 'MISMATCH'
+    const expectedBinding = sameDigest(
+      proof.candidateArtifactDigest as z.infer<typeof digestEnvelopeV1Schema>,
+      value.candidateArtifactDigest,
+    ) ? 'MATCHED' : 'MISMATCH'
+    return proof.constitutionAlignment !== expectedAlignment
+      || proof.artifactBinding !== expectedBinding
+      || proof.sourceEvidenceAlignment !== expectedSourceAlignment
+  })
+  if (
+    JSON.stringify(actualKinds) !== JSON.stringify(RELEASE_EVIDENCE_PROOF_KINDS)
+    || JSON.stringify(value.dependencyLocks) !== JSON.stringify(expectedLocks)
+    || JSON.stringify(value.evaluationRunBundles) !== JSON.stringify(expectedBundles)
+    || JSON.stringify(value.riskAcceptances) !== JSON.stringify(expectedRiskAcceptances)
+    || JSON.stringify(value.constitutionEvidence.platforms)
+      !== JSON.stringify(expectedPlatforms)
+    || new Set(value.constitutionEvidence.platforms.map(item => item.platform)).size
+      !== value.constitutionEvidence.platforms.length
+    || JSON.stringify(value.knownLimitations)
+      !== JSON.stringify(value.publicScorecard.limitationCodes)
+    || value.releaseCandidateId !== value.releaseConstitution.releaseCandidateId
+    || value.harnessTargetVersion !== value.publicScorecard.harnessTargetVersion
+    || !sameDigest(
+      value.candidateArtifactDigest,
+      value.releaseConstitution.candidateArtifactDigest,
+    )
+    || !sameDigest(
+      value.qualifiedArtifactDigest,
+      value.releaseConstitution.qualifiedArtifactDigest,
+    )
+    || !sameDigest(
+      value.proposedPromotionArtifactDigest,
+      value.releaseConstitution.proposedPromotionArtifactDigest,
+    )
+    || value.constitutionEvidence.constitution.evidenceId
+      !== value.releaseConstitution.constitutionId
+    || !sameDigest(
+      value.constitutionEvidence.constitution.evidenceDigest,
+      value.releaseConstitution.constitutionDigest,
+    )
+    || value.constitutionEvidence.evidenceSet.evidenceId
+      !== value.releaseConstitution.evidenceSetId
+    || !sameDigest(
+      value.constitutionEvidence.evidenceSet.evidenceDigest,
+      value.releaseConstitution.evidenceSetDigest,
+    )
+    || value.publicScorecard.publishedAtEpochMs > value.assembledAtEpochMs
+    || value.riskAcceptances.some(item => (
+      item.status === 'ACTIVE' && item.expiresAtEpochMs <= value.assembledAtEpochMs
+    ))
+    || proofAlignmentMismatch
+    || JSON.stringify(value.verification) !== JSON.stringify(expectedVerification)
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent Release Evidence Manifest.' })
+  }
+})
+
+export type ReleaseEvidenceManifestV1 = z.infer<typeof releaseEvidenceManifestV1Schema>
+
+/** Stable, detail-free rejection for malformed Release Evidence Manifest input. */
+export class ReleaseEvidenceManifestInputError extends Error {
+  readonly code = 'INVALID_RELEASE_EVIDENCE_MANIFEST_INPUT' as const
+
+  constructor() {
+    super('Evidence does not match Release Evidence Manifest v1.')
+    this.name = 'ReleaseEvidenceManifestInputError'
+  }
+}
+
+type ReleaseProofReportedStatus = z.infer<typeof releaseEvidenceReportedStatusV1Schema>
+
+function aggregateReleaseCheckStatus(
+  decision: ReleaseConstitutionDecisionV1,
+  checkIds: readonly ReleaseConstitutionCheckId[],
+): ReleaseProofReportedStatus {
+  const statuses = checkIds.map(checkId => (
+    decision.checks.find(item => item.checkId === checkId)?.status ?? 'INCONCLUSIVE'
+  ))
+  return statuses.some(status => status === 'FAILED')
+    ? 'FAILED'
+    : statuses.some(status => status === 'INCONCLUSIVE') ? 'INCONCLUSIVE' : 'PASSED'
+}
+
+function expectedConstitutionProofStatus(
+  proofKind: ReleaseEvidenceProofKind,
+  decision: ReleaseConstitutionDecisionV1,
+): ReleaseProofReportedStatus | null {
+  switch (proofKind) {
+    case 'ARTIFACT_IDENTITY':
+      return aggregateReleaseCheckStatus(decision, ['EXACT_QUALIFIED_ARTIFACT'])
+    case 'CAPABILITY_CONFORMANCE':
+      return aggregateReleaseCheckStatus(decision, ['COMPLETE_CAPABILITY_CONFORMANCE'])
+    case 'WINDOWS_PLATFORM':
+      return aggregateReleaseCheckStatus(decision, ['WINDOWS_PACKED_CONFORMANCE'])
+    case 'LINUX_PLATFORM':
+      return aggregateReleaseCheckStatus(decision, ['LINUX_PACKED_CONFORMANCE'])
+    case 'MACOS_PLATFORM':
+      return aggregateReleaseCheckStatus(decision, ['MACOS_PACKED_CONFORMANCE'])
+    case 'EFFECTIVENESS':
+      return aggregateReleaseCheckStatus(decision, RELEASE_CONSTITUTION_CHECK_IDS.slice(20, 25))
+    case 'UTILITY':
+      return aggregateReleaseCheckStatus(decision, RELEASE_CONSTITUTION_CHECK_IDS.slice(25))
+    case 'NON_INFERIORITY':
+      return aggregateReleaseCheckStatus(decision, ['MANDATORY_STRATA_NON_INFERIOR'])
+    case 'SELF_SECURITY':
+      return aggregateReleaseCheckStatus(decision, [
+        'SELF_SECURITY_CRITICAL_HIGH_CLEAR',
+        'SELF_SECURITY_BLOCKING_MEDIUM_CLEAR',
+      ])
+    case 'GROUND_TRUTH_AIR_GAP':
+      return aggregateReleaseCheckStatus(decision, ['NO_GROUND_TRUTH_LEAKAGE'])
+    case 'DETERMINISTIC_FAILURES':
+      return aggregateReleaseCheckStatus(decision, ['NO_UNRESOLVED_DETERMINISTIC_FAILURES'])
+    case 'SECURITY_SUPPORT_MATRIX':
+      return aggregateReleaseCheckStatus(decision, [
+        'WINDOWS_PACKED_CONFORMANCE',
+        'LINUX_PACKED_CONFORMANCE',
+        'MACOS_PACKED_CONFORMANCE',
+      ])
+    case 'RISK_ACCEPTANCES':
+      return aggregateReleaseCheckStatus(decision, ['NO_UNAUTHORIZED_RISK_ACCEPTANCE'])
+    case 'EVALUATION_RUN_BUNDLE':
+      return aggregateReleaseCheckStatus(decision, ['PAIRED_EVIDENCE_CONCLUSIVE'])
+    case 'RELEASE_CONSTITUTION':
+      return decision.decision === 'PROMOTE'
+        ? 'PASSED'
+        : decision.decision === 'BLOCKED' ? 'FAILED' : 'INCONCLUSIVE'
+    default:
+      return null
+  }
+}
+
+type ReleaseConstitutionEvidenceReferencesV1 = z.infer<
+  typeof releaseConstitutionEvidenceReferencesV1Schema
+>
+
+interface ExpectedProofSourceEvidence {
+  readonly evidenceId: string
+  readonly evidenceDigest: z.infer<typeof digestEnvelopeV1Schema>
+}
+
+function expectedProofSourceEvidence(
+  proofKind: ReleaseEvidenceProofKind,
+  references: ReleaseConstitutionEvidenceReferencesV1,
+): ExpectedProofSourceEvidence | null | undefined {
+  switch (proofKind) {
+    case 'CAPABILITY_CONFORMANCE':
+    case 'SELF_SECURITY':
+    case 'GROUND_TRUTH_AIR_GAP':
+    case 'DETERMINISTIC_FAILURES':
+    case 'RISK_ACCEPTANCES':
+      return references.hardSafety
+    case 'WINDOWS_PLATFORM':
+    case 'LINUX_PLATFORM':
+    case 'MACOS_PLATFORM': {
+      const platform = proofKind.replace('_PLATFORM', '') as 'WINDOWS' | 'LINUX' | 'MACOS'
+      return references.platforms.find(item => item.platform === platform) ?? null
+    }
+    case 'EVALUATION_RUN_BUNDLE':
+      return references.evidenceSet
+    case 'RELEASE_CONSTITUTION':
+      return references.constitution
+    default:
+      return undefined
+  }
+}
+
+function compareReleaseBundleReferences(
+  left: z.infer<typeof releaseEvaluationRunBundleReferenceV1Schema>,
+  right: z.infer<typeof releaseEvaluationRunBundleReferenceV1Schema>,
+): number {
+  return left.role.localeCompare(right.role) || left.bundleId.localeCompare(right.bundleId)
+}
+
+interface ReleaseEvidenceVerificationInput {
+  readonly releaseConstitution: ReleaseConstitutionDecisionV1
+  readonly publicScorecard: z.infer<typeof releaseEvidenceScorecardReferenceV1Schema>
+  readonly proofs: readonly NormalizedReleaseEvidenceProofV1[]
+  readonly evaluationRunBundles: readonly z.infer<
+    typeof releaseEvaluationRunBundleReferenceV1Schema
+  >[]
+  readonly candidateArtifactDigest: z.infer<typeof digestEnvelopeV1Schema>
+}
+
+function scorecardMatchesRelease(input: ReleaseEvidenceVerificationInput): boolean {
+  const { publicScorecard, releaseConstitution } = input
+  return sameDigest(
+    publicScorecard.candidateArtifactDigest,
+    releaseConstitution.candidateArtifactDigest,
+  )
+    && publicScorecard.decision === releaseConstitution.decision
+    && JSON.stringify(publicScorecard.reasonCodes)
+      === JSON.stringify(releaseConstitution.reasonCodes)
+    && JSON.stringify(publicScorecard.checks) === JSON.stringify(releaseConstitution.checks)
+}
+
+function releaseEvidenceManifestVerification(
+  input: ReleaseEvidenceVerificationInput,
+): z.infer<typeof releaseEvidenceManifestVerificationV1Schema> {
+  const failedProofKinds = input.proofs
+    .filter(item => item.verificationStatus === 'FAILED')
+    .map(item => item.proofKind)
+  const inconclusiveProofKinds = input.proofs
+    .filter(item => item.verificationStatus === 'INCONCLUSIVE')
+    .map(item => item.proofKind)
+  const mismatchedProofKinds = input.proofs
+    .filter(item => (
+      item.artifactBinding === 'MISMATCH'
+      || item.constitutionAlignment === 'MISMATCH'
+      || item.sourceEvidenceAlignment === 'MISMATCH'
+    ))
+    .map(item => item.proofKind)
+  const missingProof = input.proofs.some(item => item.reportedStatus === 'MISSING')
+  const inconclusiveProof = input.proofs.some(item => item.reportedStatus === 'INCONCLUSIVE')
+  const artifactMismatch = input.proofs.some(item => item.artifactBinding === 'MISMATCH')
+  const constitutionMismatch = input.proofs.some(
+    item => item.constitutionAlignment === 'MISMATCH',
+  )
+  const evidenceMismatch = input.proofs.some(
+    item => item.sourceEvidenceAlignment === 'MISMATCH',
+  )
+  const scorecardMismatch = !scorecardMatchesRelease(input)
+  const bundleArtifactMismatch = input.evaluationRunBundles.some(item => (
+    item.role === 'CANDIDATE'
+    && !sameDigest(item.artifactDigest, input.candidateArtifactDigest)
+  ))
+  const reasonCodes: ReleaseEvidenceManifestReasonCode[] = []
+  if (input.releaseConstitution.decision === 'BLOCKED') {
+    reasonCodes.push('RELEASE_CONSTITUTION_BLOCKED')
+  }
+  if (input.releaseConstitution.decision === 'INCONCLUSIVE') {
+    reasonCodes.push('RELEASE_CONSTITUTION_INCONCLUSIVE')
+  }
+  if (failedProofKinds.length > 0) reasonCodes.push('PROOF_FAILED')
+  if (missingProof) reasonCodes.push('PROOF_MISSING')
+  if (inconclusiveProof) reasonCodes.push('PROOF_INCONCLUSIVE')
+  if (artifactMismatch) reasonCodes.push('PROOF_ARTIFACT_MISMATCH')
+  if (constitutionMismatch) reasonCodes.push('PROOF_CONSTITUTION_MISMATCH')
+  if (evidenceMismatch) reasonCodes.push('PROOF_EVIDENCE_MISMATCH')
+  if (scorecardMismatch) reasonCodes.push('PUBLIC_SCORECARD_MISMATCH')
+  if (bundleArtifactMismatch) reasonCodes.push('EVALUATION_BUNDLE_ARTIFACT_MISMATCH')
+  const blocked = input.releaseConstitution.decision === 'BLOCKED'
+    || failedProofKinds.length > 0
+    || scorecardMismatch
+    || bundleArtifactMismatch
+  const inconclusive = input.releaseConstitution.decision === 'INCONCLUSIVE'
+    || inconclusiveProofKinds.length > 0
+  return {
+    decision: blocked ? 'BLOCKED' : inconclusive ? 'INCONCLUSIVE' : 'VERIFIED',
+    reasonCodes,
+    failedProofKinds,
+    inconclusiveProofKinds,
+    mismatchedProofKinds,
+  }
+}
+
+/** Assemble and verify the digest-bound proof index for one exact release candidate. */
+export function assembleReleaseEvidenceManifestV1(
+  input: unknown,
+): ReleaseEvidenceManifestV1 {
+  const parsed = releaseEvidenceManifestRequestV1Schema.safeParse(input)
+  if (!parsed.success) throw new ReleaseEvidenceManifestInputError()
+  const request = parsed.data
+  const releaseConstitution = evaluateReleaseConstitutionV1(request.releaseEvaluation)
+  const candidateArtifactDigest = releaseConstitution.candidateArtifactDigest
+  const constitutionEvidence: ReleaseConstitutionEvidenceReferencesV1 = {
+    constitution: {
+      evidenceId: request.releaseEvaluation.constitution.constitutionId,
+      evidenceDigest: request.releaseEvaluation.constitution.constitutionDigest,
+    },
+    hardSafety: {
+      evidenceId: request.releaseEvaluation.candidate.hardSafetyEvidence.evidenceId,
+      evidenceDigest: request.releaseEvaluation.candidate.hardSafetyEvidence.evidenceDigest,
+    },
+    evidenceSet: {
+      evidenceId: request.releaseEvaluation.candidate.evidenceSetId,
+      evidenceDigest: request.releaseEvaluation.candidate.evidenceSetDigest,
+    },
+    platforms: request.releaseEvaluation.candidate.platformProofs.map(item => ({
+      platform: item.platform,
+      evidenceId: item.evidenceId,
+      evidenceDigest: item.evidenceDigest,
+    })).sort((left, right) => left.platform.localeCompare(right.platform)),
+  }
+  const suppliedProofs = new Map(request.proofs.map(item => [item.proofKind, item]))
+  const proofs: NormalizedReleaseEvidenceProofV1[] = RELEASE_EVIDENCE_PROOF_KINDS.map(
+    proofKind => {
+      const supplied = suppliedProofs.get(proofKind)
+      if (supplied === undefined) {
+        return {
+          proofKind,
+          evidenceId: null,
+          evidenceDigest: null,
+          reportedStatus: 'MISSING',
+          candidateArtifactDigest: null,
+          completedAtEpochMs: null,
+          artifactBinding: 'MISSING',
+          constitutionAlignment: 'MISSING',
+          sourceEvidenceAlignment: 'MISSING',
+          verificationStatus: 'INCONCLUSIVE',
+        }
+      }
+      const artifactBinding = sameDigest(
+        supplied.candidateArtifactDigest,
+        candidateArtifactDigest,
+      ) ? 'MATCHED' : 'MISMATCH'
+      const expectedStatus = expectedConstitutionProofStatus(proofKind, releaseConstitution)
+      const constitutionAlignment = expectedStatus === null
+        ? 'NOT_APPLICABLE'
+        : supplied.reportedStatus === expectedStatus ? 'MATCHED' : 'MISMATCH'
+      const expectedSource = expectedProofSourceEvidence(proofKind, constitutionEvidence)
+      const sourceEvidenceAlignment = expectedSource === undefined
+        ? 'NOT_APPLICABLE'
+        : expectedSource === null
+          ? 'MISMATCH'
+          : supplied.evidenceId === expectedSource.evidenceId
+            && sameDigest(supplied.evidenceDigest, expectedSource.evidenceDigest)
+            ? 'MATCHED'
+            : 'MISMATCH'
+      const verificationStatus = supplied.reportedStatus === 'FAILED'
+        || artifactBinding === 'MISMATCH'
+        || constitutionAlignment === 'MISMATCH'
+        || sourceEvidenceAlignment === 'MISMATCH'
+        ? 'FAILED'
+        : supplied.reportedStatus === 'INCONCLUSIVE' ? 'INCONCLUSIVE' : 'PASSED'
+      return {
+        proofKind,
+        evidenceId: supplied.evidenceId,
+        evidenceDigest: supplied.evidenceDigest,
+        reportedStatus: supplied.reportedStatus,
+        candidateArtifactDigest: supplied.candidateArtifactDigest,
+        completedAtEpochMs: supplied.completedAtEpochMs,
+        artifactBinding,
+        constitutionAlignment,
+        sourceEvidenceAlignment,
+        verificationStatus,
+      }
+    },
+  )
+  const publicScorecard = {
+    engineId: request.publicScorecard.engineId,
+    publishedAtEpochMs: request.publicScorecard.publishedAtEpochMs,
+    releaseVersion: request.publicScorecard.release.releaseVersion,
+    harnessTargetVersion: request.publicScorecard.scope.harnessTargetVersion,
+    candidateArtifactDigest: request.publicScorecard.release.candidateArtifactDigest,
+    decision: request.publicScorecard.release.decision,
+    reasonCodes: request.publicScorecard.release.reasonCodes,
+    checks: request.publicScorecard.release.checks,
+    limitationCodes: request.publicScorecard.limitations,
+  }
+  const evaluationRunBundles = [...request.evaluationRunBundles]
+    .sort(compareReleaseBundleReferences)
+  const verification = releaseEvidenceManifestVerification({
+    releaseConstitution,
+    publicScorecard,
+    proofs,
+    evaluationRunBundles,
+    candidateArtifactDigest,
+  })
+  const result: ReleaseEvidenceManifestV1 = {
+    schemaVersion: 1,
+    engineId: RELEASE_EVIDENCE_MANIFEST_ENGINE_ID,
+    manifestId: request.manifestId,
+    assembledAtEpochMs: request.assembledAtEpochMs,
+    releaseCandidateId: releaseConstitution.releaseCandidateId,
+    sourceRevision: request.sourceRevision,
+    harnessTargetVersion: request.publicScorecard.scope.harnessTargetVersion,
+    candidateArtifactDigest,
+    qualifiedArtifactDigest: releaseConstitution.qualifiedArtifactDigest,
+    proposedPromotionArtifactDigest: releaseConstitution.proposedPromotionArtifactDigest,
+    dependencyLocks: [...request.dependencyLocks]
+      .sort((left, right) => left.lockKind.localeCompare(right.lockKind)),
+    releaseConstitution,
+    constitutionEvidence,
+    publicScorecard,
+    proofs,
+    evaluationRunBundles,
+    knownLimitations: request.publicScorecard.limitations,
+    riskAcceptances: [...request.riskAcceptances]
+      .sort((left, right) => left.riskAcceptanceId.localeCompare(right.riskAcceptanceId)),
+    verification,
+  }
+  return deepFreeze(releaseEvidenceManifestV1Schema.parse(result))
+}

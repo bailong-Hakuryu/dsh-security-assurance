@@ -617,6 +617,96 @@ const packedBlockedScorecard = evaluation.renderPublicSecurityScorecardV1(
   packedScorecardRequest(packedBlockedScorecardRelease),
 )
 const packedScorecardJson = JSON.stringify(packedPublicScorecard)
+const packedManifestRequest = () => {
+  const releaseEvaluation = packedReleaseRequest()
+  const publicScorecard = evaluation.renderPublicSecurityScorecardV1(
+    packedScorecardRequest(releaseEvaluation),
+  )
+  const artifactDigest = releaseEvaluation.candidate.candidateArtifactDigest
+  return {
+    schemaVersion: 1,
+    engineId: 'security/release-evidence-manifest/v1',
+    manifestId: 'packed-release-evidence-manifest-v1',
+    assembledAtEpochMs: 500,
+    sourceRevision: '1'.repeat(40),
+    dependencyLocks: [{
+      lockKind: 'PNPM_LOCK',
+      lockDigest: packedEvaluationDigest('f'),
+    }],
+    releaseEvaluation,
+    publicScorecard,
+    proofs: evaluation.RELEASE_EVIDENCE_PROOF_KINDS.map((proofKind, index) => {
+      let evidenceId = 'packed-proof/' + proofKind.toLowerCase().replaceAll('_', '-')
+      let evidenceDigest = packedEvaluationDigest(String(index % 10))
+      if ([
+        'CAPABILITY_CONFORMANCE',
+        'SELF_SECURITY',
+        'GROUND_TRUTH_AIR_GAP',
+        'DETERMINISTIC_FAILURES',
+        'RISK_ACCEPTANCES',
+      ].includes(proofKind)) {
+        evidenceId = releaseEvaluation.candidate.hardSafetyEvidence.evidenceId
+        evidenceDigest = releaseEvaluation.candidate.hardSafetyEvidence.evidenceDigest
+      } else if (proofKind.endsWith('_PLATFORM')) {
+        const platform = proofKind.replace('_PLATFORM', '')
+        const platformProof = releaseEvaluation.candidate.platformProofs.find(
+          item => item.platform === platform,
+        )
+        if (platformProof) {
+          evidenceId = platformProof.evidenceId
+          evidenceDigest = platformProof.evidenceDigest
+        }
+      } else if (proofKind === 'EVALUATION_RUN_BUNDLE') {
+        evidenceId = releaseEvaluation.candidate.evidenceSetId
+        evidenceDigest = releaseEvaluation.candidate.evidenceSetDigest
+      } else if (proofKind === 'RELEASE_CONSTITUTION') {
+        evidenceId = releaseEvaluation.constitution.constitutionId
+        evidenceDigest = releaseEvaluation.constitution.constitutionDigest
+      }
+      return {
+        proofKind,
+        evidenceId,
+        evidenceDigest,
+        reportedStatus: 'PASSED',
+        candidateArtifactDigest: artifactDigest,
+        completedAtEpochMs: 350,
+      }
+    }),
+    evaluationRunBundles: [
+      {
+        role: 'PRIOR_STABLE',
+        bundleId: 'packed-evaluation-bundle/prior-stable',
+        bundleDigest: packedEvaluationDigest('8'),
+        artifactDigest: packedEvaluationDigest('e'),
+      },
+      {
+        role: 'CANDIDATE',
+        bundleId: 'packed-evaluation-bundle/candidate',
+        bundleDigest: packedEvaluationDigest('9'),
+        artifactDigest,
+      },
+    ],
+    riskAcceptances: [],
+  }
+}
+const packedReleaseManifest = evaluation.assembleReleaseEvidenceManifestV1(
+  packedManifestRequest(),
+)
+const packedMissingManifestRequest = packedManifestRequest()
+packedMissingManifestRequest.proofs = packedMissingManifestRequest.proofs.filter(
+  proof => proof.proofKind !== 'WORKBENCH',
+)
+const packedMissingReleaseManifest = evaluation.assembleReleaseEvidenceManifestV1(
+  packedMissingManifestRequest,
+)
+const packedMismatchedManifestRequest = packedManifestRequest()
+const packedMutationProof = packedMismatchedManifestRequest.proofs.find(
+  proof => proof.proofKind === 'MUTATION',
+)
+if (packedMutationProof) packedMutationProof.candidateArtifactDigest = packedEvaluationDigest('e')
+const packedMismatchedReleaseManifest = evaluation.assembleReleaseEvidenceManifestV1(
+  packedMismatchedManifestRequest,
+)
 if (
   evaluation.EFFECTIVENESS_METRICS_ENGINE_ID !== 'security/effectiveness-metrics/v1'
   || typeof evaluation.benchmarkStratumDefinitionV1Schema?.parse !== 'function'
@@ -641,6 +731,10 @@ if (
   || evaluation.PUBLIC_SECURITY_SCORECARD_ENGINE_ID !== 'security/public-scorecard/v1'
   || typeof evaluation.publicSecurityScorecardV1Schema?.parse !== 'function'
   || typeof evaluation.renderPublicSecurityScorecardV1 !== 'function'
+  || evaluation.RELEASE_EVIDENCE_MANIFEST_ENGINE_ID
+    !== 'security/release-evidence-manifest/v1'
+  || typeof evaluation.releaseEvidenceManifestV1Schema?.parse !== 'function'
+  || typeof evaluation.assembleReleaseEvidenceManifestV1 !== 'function'
   || typeof evaluation.calculatePairedArmComparisonV1 !== 'function'
   || typeof evaluation.effectivenessMetricsRequestV1Schema?.parse !== 'function'
   || typeof evaluation.effectivenessMetricsV1Schema?.parse !== 'function'
@@ -684,6 +778,14 @@ if (
   || packedBlockedScorecard.release.decision !== 'BLOCKED'
   || !packedBlockedScorecard.failures.failedReleaseChecks.includes(
     'NO_UNAUTHORIZED_NETWORK_EGRESS',
+  )
+  || packedReleaseManifest.verification.decision !== 'VERIFIED'
+  || packedReleaseManifest.proofs.length !== evaluation.RELEASE_EVIDENCE_PROOF_KINDS.length
+  || packedMissingReleaseManifest.verification.decision !== 'INCONCLUSIVE'
+  || !packedMissingReleaseManifest.verification.reasonCodes.includes('PROOF_MISSING')
+  || packedMismatchedReleaseManifest.verification.decision !== 'BLOCKED'
+  || !packedMismatchedReleaseManifest.verification.reasonCodes.includes(
+    'PROOF_ARTIFACT_MISMATCH',
   )
 ) {
   throw new Error('packed Evaluation entry did not execute the versioned Metrics Engine')
