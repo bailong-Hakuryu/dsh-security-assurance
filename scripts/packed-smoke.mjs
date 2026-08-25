@@ -355,6 +355,7 @@ await modelToolsFiber
 const packedStartTool = ctx.tools.get('security_assessment_start')
 const packedStatusTool = ctx.tools.get('security_assessment_status')
 const packedFindingsTool = ctx.tools.get('security_assessment_findings')
+const packedResumeTool = ctx.tools.get('security_assessment_resume')
 const packedStartMode = ctx.tools.executionMode({
   callId: 'packed-security-start-mode',
   name: 'security_assessment_start',
@@ -384,15 +385,28 @@ const packedFindingsMode = ctx.tools.executionMode({
   },
   signal: new AbortController().signal,
 })
+const packedResumeMode = ctx.tools.executionMode({
+  callId: 'packed-security-resume-mode',
+  name: 'security_assessment_resume',
+  arguments: {
+    assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+    expected_assessment_revision: 3,
+    idempotency_key: 'packed-security-resume-mode-v1',
+    reason: { code: 'OPERATOR_RETRY', summary: 'Retry the interrupted assessment.' },
+  },
+  signal: new AbortController().signal,
+})
 if (
   packedStartTool?.name !== 'security_assessment_start'
   || packedStatusTool?.name !== 'security_assessment_status'
   || packedFindingsTool?.name !== 'security_assessment_findings'
+  || packedResumeTool?.name !== 'security_assessment_resume'
   || packedStartMode.kind !== 'exclusive'
   || packedStatusMode.kind !== 'parallel'
   || packedFindingsMode.kind !== 'parallel'
+  || packedResumeMode.kind !== 'exclusive'
 ) {
-  throw new Error('packed model Tool entry did not register start, status, and findings modes')
+  throw new Error('packed model Tool entry did not register start, status, findings, and resume modes')
 }
 const packedAgentlessFindings = await ctx.tools.execute({
   callId: 'packed-security-findings-agentless',
@@ -782,6 +796,7 @@ if (
   ctx.tools.get('security_assessment_start') !== undefined
   || ctx.tools.get('security_assessment_status') !== undefined
   || ctx.tools.get('security_assessment_findings') !== undefined
+  || ctx.tools.get('security_assessment_resume') !== undefined
 ) {
   throw new Error('packed model Tool entry did not withdraw its registered tools')
 }

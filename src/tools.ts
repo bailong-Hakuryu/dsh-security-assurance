@@ -5,9 +5,11 @@ import { defineTool, type GenericCallView, type ToolRunContext } from '@deepseek
 import {
   getAssessmentRequestSchema,
   listFindingsRequestSchema,
+  resumeAssessmentRequestSchema,
   startAssessmentRequestSchema,
   type AssessmentId,
   type AssessmentReceiptV1,
+  type AssessmentResumeReceiptV1,
   type AssessmentSnapshotV1,
   type AssessmentState,
   type FindingListPageV1,
@@ -27,6 +29,16 @@ export interface SecurityAssessmentStartReceiptV1 {
   readonly operation: 'start_assessment'
   readonly assessmentId: AssessmentId
   readonly assessmentRevision: 1
+  readonly state: 'CREATED'
+  readonly idempotencyKey: string
+}
+
+/** Model-safe projection of one accepted Assessment resume. */
+export interface SecurityAssessmentResumeReceiptV1 {
+  readonly schemaVersion: 1
+  readonly operation: 'resume_assessment'
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
   readonly state: 'CREATED'
   readonly idempotencyKey: string
 }
@@ -90,6 +102,25 @@ const START_OUTPUT = {
     },
   },
   render: (_args: unknown, value: SecurityAssessmentStartReceiptV1) => ([{
+    type: 'text' as const,
+    text: JSON.stringify(value),
+  }]),
+} as const
+
+const RESUME_OUTPUT = {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      schemaVersion: { type: 'integer', const: 1, required: true },
+      operation: { type: 'string', const: 'resume_assessment', required: true },
+      assessmentId: { type: 'string', required: true },
+      assessmentRevision: { type: 'integer', required: true },
+      state: { type: 'string', const: 'CREATED', required: true },
+      idempotencyKey: { type: 'string', required: true },
+    },
+  },
+  render: (_args: unknown, value: SecurityAssessmentResumeReceiptV1) => ([{
     type: 'text' as const,
     text: JSON.stringify(value),
   }]),
@@ -280,6 +311,19 @@ function startReceiptValue(receipt: AssessmentReceiptV1): SecurityAssessmentStar
   }
 }
 
+function resumeReceiptValue(
+  receipt: AssessmentResumeReceiptV1,
+): SecurityAssessmentResumeReceiptV1 {
+  return {
+    schemaVersion: 1,
+    operation: receipt.operation,
+    assessmentId: receipt.assessmentId,
+    assessmentRevision: receipt.assessmentRevision,
+    state: receipt.state,
+    idempotencyKey: receipt.idempotencyKey,
+  }
+}
+
 function statusValue(snapshot: AssessmentSnapshotV1): SecurityAssessmentStatusV1 {
   return {
     schemaVersion: 1,
@@ -351,6 +395,15 @@ function presentFindings(args: { readonly assessment_id: string }): GenericCallV
     card: 'generic',
     title: 'List security assessment findings',
     kind: 'read',
+    rawInput: args.assessment_id,
+  }
+}
+
+function presentResume(args: { readonly assessment_id: string }): GenericCallView {
+  return {
+    card: 'generic',
+    title: 'Resume security assessment',
+    kind: 'other',
     rawInput: args.assessment_id,
   }
 }
@@ -629,6 +682,72 @@ const SecurityAssuranceTools = {
       },
       isConcurrencySafe: () => true,
       presentCall: presentFindings,
+    }))
+
+    ctx.tools.register(defineTool({
+      name: 'security_assessment_resume',
+      description: 'Resume one exact BLOCKED Security Assessment revision under its original frozen contract. '
+        + 'Supply a fresh idempotency_key and a bounded operator reason. This tool never accepts a Subject, '
+        + 'Policy, Coverage Plan, Provider or Analyzer selection, budget, state override, Risk Acceptance, '
+        + 'Principal, permissions, repository path, or retry instruction outside the Service contract.',
+      parameters: {
+        assessment_id: {
+          type: 'string',
+          required: true,
+          description: 'Exact BLOCKED Assessment id from a current Security status result.',
+        },
+        expected_assessment_revision: {
+          type: 'integer',
+          required: true,
+          description: 'Exact current revision projected for the resumable BLOCKED Assessment.',
+        },
+        idempotency_key: {
+          type: 'string',
+          required: true,
+          description: 'Stable key for replaying this exact resume request; 1-128 bounded key characters.',
+        },
+        reason: {
+          type: 'object',
+          additionalProperties: false,
+          required: true,
+          properties: {
+            code: {
+              type: 'string',
+              required: true,
+              description: 'Uppercase operator reason code from the controlling workflow.',
+            },
+            summary: {
+              type: 'string',
+              required: true,
+              description: 'Bounded non-empty operator explanation, at most 512 characters.',
+            },
+          },
+        },
+      },
+      output: RESUME_OUTPUT,
+      async execute(args, exec) {
+        const parsed = resumeAssessmentRequestSchema.safeParse({
+          schemaVersion: 1,
+          assessmentId: args.assessment_id,
+          expectedAssessmentRevision: args.expected_assessment_revision,
+          idempotencyKey: args.idempotency_key,
+          reason: args.reason,
+        })
+        if (!parsed.success) {
+          return reject(
+            'security_assessment_resume arguments do not match the Assessment resume contract',
+            'SECURITY_INVALID_REQUEST',
+          )
+        }
+        const result = await ctx.securityAssurance.resumeAssessment(
+          harnessSessionInvocation(ctx, exec, 'assessment:resume'),
+          parsed.data,
+          { signal: exec.signal },
+        )
+        if (!result.ok) return reject(result.error.message, `SECURITY_${result.error.code}`)
+        return resumeReceiptValue(result.value)
+      },
+      presentCall: presentResume,
     }))
   },
 }

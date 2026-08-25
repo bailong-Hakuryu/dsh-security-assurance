@@ -17,11 +17,12 @@ This repository is under active vertical-slice development, not at the
   and Detail, purpose-bound Evidence View, Bundle Manifest, and Assurance
   Submission operations;
 - an independently activatable `dsh-security-assurance/tools` Consumer with
-  bounded `security_assessment_start` and read-only
-  `security_assessment_status` and `security_assessment_findings` model tools.
-  They derive the exact live Harness session outside model arguments, mint one
-  operation-specific permission, and delegate all Assessment validation,
-  pagination, redaction, and state transitions to the root Service;
+  bounded `security_assessment_start`, read-only `security_assessment_status`
+  and `security_assessment_findings`, and revision-bound
+  `security_assessment_resume` model tools. They derive the exact live Harness
+  session outside model arguments, mint one operation-specific permission, and
+  delegate all Assessment validation, pagination, redaction, recovery, and
+  state transitions to the root Service;
 - versioned Zod-validated public contracts;
 - one `SecurityResult<T>` success/failure envelope;
 - redacted authorization, validation, cancellation, deadline, and internal
@@ -211,7 +212,7 @@ This repository is under active vertical-slice development, not at the
 
 Production-qualified external Analyzers, process or agent Analyzers, general
 Node and application-security coverage, the complete protected Evidence Store,
-the remaining resume/cancel/export model tools, and the complete
+the remaining cancel/export model tools, and the complete
 Workbench information architecture are deliberately not claimed as implemented
 yet. The Workbench Host Remote, authenticated redacted Assessment selection
 with stable cursor continuation, generated Client contract, transient browser
@@ -350,13 +351,13 @@ Receipt after the Service has quiesced local work and finalized the Assessment;
 that Receipt identifies the request revision and does not misrepresent it as
 the later terminal revision.
 
-## Model-facing Assessment start, status, and findings
+## Model-facing Assessment start, status, findings, and resume
 
 The optional `dsh-security-assurance/tools` entry registers the current
 `security_assessment_start` -> `security_assessment_status` ->
-`security_assessment_findings` vertical slice through the Harness Tool Registry.
-All three operations require the exact registered, running Agent in its active
-open turn and derive a process-local
+`security_assessment_findings` -> `security_assessment_resume` vertical slice
+through the Harness Tool Registry. All four operations require the exact
+registered, running Agent in its active open turn and derive a process-local
 `harness-session` Invocation outside model arguments. Caller Principal,
 permissions, channel, Repository paths, arbitrary Policy content, and hidden
 idempotency state are never accepted from the model.
@@ -387,7 +388,16 @@ identity and revision, Validation state and contract, weakness classification,
 Technical Severity, Evidence Confidence, Policy Significance, and the protected-
 detail availability flag. Finding Detail, Source Anchors, Evidence links or
 content, attack paths, Risk Decisions, credentials, and authority metadata are
-excluded. The entry is lifecycle-owned: unloading it removes all three tools
+excluded.
+
+`security_assessment_resume` takes an exact BLOCKED Assessment ID and revision,
+an explicit idempotency key, and a bounded structured operator reason. It
+carries only `assessment:resume` and delegates to `resumeAssessment`; only the
+Service may decide whether the revision and state are resumable and create
+eligible new Attempts under the original frozen Subject, Policy, Coverage Plan,
+Provider Composition, and budget. The bounded Receipt omits the operator reason,
+timestamps, correlation, recovery internals, and all frozen semantic inputs.
+The entry is lifecycle-owned: unloading it removes all four tools
 without stopping the root Security Service.
 
 ## Host Repository composition

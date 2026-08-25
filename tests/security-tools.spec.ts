@@ -82,7 +82,10 @@ async function execute(
 
 async function executeTool(
   ctx: Context,
-  name: 'security_assessment_start' | 'security_assessment_status' | 'security_assessment_findings',
+  name: 'security_assessment_start'
+    | 'security_assessment_status'
+    | 'security_assessment_findings'
+    | 'security_assessment_resume',
   args: unknown,
   agent?: Agent,
   initiator: Agent | null | undefined = agent,
@@ -117,12 +120,19 @@ async function harness() {
   const systemPromptFiber = await ctx.plugin(SystemPrompt)
   const agentFiber = await ctx.plugin(AgentRegistry)
   const toolRuntimeFiber = await ctx.plugin(ToolRuntime)
-  const serviceFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+  let serviceFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
   await ctx.securityAssurance.whenReady()
-  const toolsFiber = await ctx.plugin(SecurityAssuranceTools)
+  let toolsFiber = await ctx.plugin(SecurityAssuranceTools)
   return {
     ctx,
-    toolsFiber,
+    get toolsFiber() { return toolsFiber },
+    async restartService() {
+      await toolsFiber.dispose()
+      await serviceFiber.dispose()
+      serviceFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.securityAssurance.whenReady()
+      toolsFiber = await ctx.plugin(SecurityAssuranceTools)
+    },
     async dispose() {
       await toolsFiber.dispose()
       await serviceFiber.dispose()
@@ -192,9 +202,11 @@ describe('security assessment tool registration', () => {
       const start = fixture.ctx.tools.get('security_assessment_start')
       const status = fixture.ctx.tools.get('security_assessment_status')
       const findings = fixture.ctx.tools.get('security_assessment_findings')
+      const resume = fixture.ctx.tools.get('security_assessment_resume')
       expect(start?.name).toBe('security_assessment_start')
       expect(status?.name).toBe('security_assessment_status')
       expect(findings?.name).toBe('security_assessment_findings')
+      expect(resume?.name).toBe('security_assessment_resume')
       expect(fixture.ctx.tools.executionMode({
         callId: CallId('security-start-mode'),
         name: 'security_assessment_start',
@@ -207,6 +219,17 @@ describe('security assessment tool registration', () => {
         arguments: { assessment_id: 'asm-00000000-0000-0000-0000-000000000000' },
         signal: toolSignal,
       })).toEqual({ kind: 'parallel' })
+      expect(fixture.ctx.tools.executionMode({
+        callId: CallId('security-resume-mode'),
+        name: 'security_assessment_resume',
+        arguments: {
+          assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+          expected_assessment_revision: 3,
+          idempotency_key: 'security-resume-mode-v1',
+          reason: { code: 'OPERATOR_RETRY', summary: 'Retry the interrupted assessment.' },
+        },
+        signal: toolSignal,
+      })).toEqual({ kind: 'exclusive' })
       expect(fixture.ctx.tools.executionMode({
         callId: CallId('security-findings-mode'),
         name: 'security_assessment_findings',
@@ -241,16 +264,225 @@ describe('security assessment tool registration', () => {
         kind: 'read',
         rawInput: 'asm-00000000-0000-0000-0000-000000000000',
       })
+      expect(resume?.presentCall?.({
+        assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+        expected_assessment_revision: 3,
+        idempotency_key: 'security-resume-present-v1',
+        reason: { code: 'OPERATOR_RETRY', summary: 'Retry the interrupted assessment.' },
+      })).toEqual({
+        card: 'generic',
+        title: 'Resume security assessment',
+        kind: 'other',
+        rawInput: 'asm-00000000-0000-0000-0000-000000000000',
+      })
       expect(start?.presentCall?.({ forged: true })).toBeUndefined()
       expect(status?.presentCall?.({ forged: true })).toBeUndefined()
       expect(findings?.presentCall?.({ forged: true })).toBeUndefined()
+      expect(resume?.presentCall?.({ forged: true })).toBeUndefined()
 
       await fixture.toolsFiber.dispose()
       expect(fixture.ctx.tools.get('security_assessment_start')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_status')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_findings')).toBeUndefined()
+      expect(fixture.ctx.tools.get('security_assessment_resume')).toBeUndefined()
       expect(fixture.ctx.reflect.get('securityAssurance')).toBeDefined()
     } finally {
+      await fixture.dispose()
+    }
+  })
+})
+
+describe('security_assessment_resume integration', () => {
+  it('resumes only an exact BLOCKED revision and returns a bounded session-owned receipt', async () => {
+    const repository = await repositoryFixture()
+    const fixture = await harness()
+    const root = stubAgent(`security-tool-resume-${Math.random()}`)
+    const other = stubAgent(`security-tool-resume-other-${Math.random()}`)
+    const disposeRoot = fixture.ctx.agents.register(root.agent)
+    const disposeOther = fixture.ctx.agents.register(other.agent)
+    try {
+      const platform = process.platform
+      if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+        throw new Error(`unsupported test platform: ${platform}`)
+      }
+      const firstInvocation = referenceHostInvocation(fixture.ctx.securityAssurance)
+      const registered = await fixture.ctx.securityAssurance.registerRepository(firstInvocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'security-tool-resume-repository-v1',
+        root: repository,
+        displayName: 'Model resume tool fixture',
+        bindings: {
+          policyId: 'security/default',
+          assessmentProfileId: 'security/standard',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform,
+          deliveryDestinationIds: [],
+        },
+      })
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+      const started = await fixture.ctx.securityAssurance.startAssessment(firstInvocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'security-tool-resume-assessment-v1',
+        repositoryId: registered.value.repositoryId,
+        subject: { kind: 'workspace_snapshot' },
+        assessmentMode: 'REPOSITORY',
+        assessmentProfileId: 'security/standard',
+        target: { kind: 'repository' },
+        requestedStrongerControlIds: [],
+      })
+      if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
+
+      await fixture.restartService()
+      const invocation = referenceHostInvocation(fixture.ctx.securityAssurance)
+      const blocked = await fixture.ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })
+      if (!blocked.ok) throw new Error(`blocked query failed: ${blocked.error.code}`)
+      expect(blocked.value).toMatchObject({
+        state: 'BLOCKED',
+        verdict: null,
+        availableActions: expect.arrayContaining([{
+          kind: 'RESUME_ASSESSMENT',
+          expectedAssessmentRevision: blocked.value.assessmentRevision,
+        }]),
+      })
+
+      const args = {
+        assessment_id: started.value.assessmentId,
+        expected_assessment_revision: blocked.value.assessmentRevision,
+        idempotency_key: 'security-tool-resume-command-v1',
+        reason: {
+          code: 'OPERATOR_RETRY',
+          summary: 'Resume the interrupted assessment through the model tool.',
+        },
+      }
+      const agentless = await executeTool(
+        fixture.ctx,
+        'security_assessment_resume',
+        args,
+      )
+      expect(agentless.error?.info?.code).toBe('SECURITY_TOOL_AGENT_REQUIRED')
+
+      openTurn(root)
+      const driverless = await executeTool(
+        fixture.ctx,
+        'security_assessment_resume',
+        args,
+        root.agent,
+        null,
+      )
+      expect(driverless.error?.info?.code).toBe('SECURITY_TOOL_DRIVER_REQUIRED')
+
+      const resumed = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_resume',
+        args,
+        root.agent,
+      ))
+      expect(resumed).toEqual({
+        schemaVersion: 1,
+        operation: 'resume_assessment',
+        assessmentId: started.value.assessmentId,
+        assessmentRevision: blocked.value.assessmentRevision + 1,
+        state: 'CREATED',
+        idempotencyKey: args.idempotency_key,
+      })
+      const serialized = JSON.stringify(resumed)
+      for (const forbidden of [
+        repository,
+        registered.value.repositoryId,
+        args.reason.code,
+        args.reason.summary,
+        'reason',
+        'acceptedAt',
+        'correlationId',
+        'subject',
+        'policy',
+        'coverage',
+        'provider',
+        'budget',
+        'principalId',
+        String(root.agent.id),
+      ]) expect(serialized).not.toContain(forbidden)
+
+      const forgedReplay = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_resume',
+        {
+          ...args,
+          principal_id: 'forged-resume-operator',
+          permissions: ['assessment:cancel', 'risk:break-glass'],
+        },
+        root.agent,
+      ))
+      expect(forgedReplay).toEqual(resumed)
+      expect(JSON.stringify(forgedReplay)).not.toContain('forged-resume-operator')
+
+      const idempotencyConflict = await executeTool(
+        fixture.ctx,
+        'security_assessment_resume',
+        {
+          ...args,
+          reason: { ...args.reason, summary: 'Attempt a conflicting resume replay.' },
+        },
+        root.agent,
+      )
+      expect(idempotencyConflict.error?.info?.code).toBe('SECURITY_IDEMPOTENCY_CONFLICT')
+
+      const invalid = await executeTool(
+        fixture.ctx,
+        'security_assessment_resume',
+        {
+          ...args,
+          idempotency_key: 'security-tool-resume-invalid-v1',
+          reason: { code: 'invalid-code', summary: 'Invalid reason code.' },
+        },
+        root.agent,
+      )
+      expect(invalid.error?.info?.code).toBe('SECURITY_INVALID_REQUEST')
+
+      const staleRevision = await executeTool(
+        fixture.ctx,
+        'security_assessment_resume',
+        {
+          ...args,
+          idempotency_key: 'security-tool-resume-stale-v1',
+        },
+        root.agent,
+      )
+      expect(staleRevision.error?.info?.code).toBe('SECURITY_CONFLICT')
+
+      const missing = await executeTool(
+        fixture.ctx,
+        'security_assessment_resume',
+        {
+          ...args,
+          assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
+          idempotency_key: 'security-tool-resume-missing-v1',
+        },
+        root.agent,
+      )
+      expect(missing.error?.info?.code).toBe('SECURITY_NOT_FOUND')
+
+      openTurn(other)
+      const otherSession = await executeTool(
+        fixture.ctx,
+        'security_assessment_resume',
+        args,
+        other.agent,
+      )
+      expect(otherSession.error?.info?.code).toBe('SECURITY_CONFLICT')
+
+      await waitUntilSealed(
+        fixture.ctx.securityAssurance,
+        invocation,
+        started.value.assessmentId,
+      )
+    } finally {
+      disposeOther()
+      disposeRoot()
       await fixture.dispose()
     }
   })
