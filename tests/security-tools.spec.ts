@@ -77,14 +77,37 @@ async function execute(
   initiator: Agent | null | undefined = agent,
   signal: AbortSignal = toolSignal,
 ): Promise<ToolExecutionResult> {
+  return executeTool(ctx, 'security_assessment_status', args, agent, initiator, signal)
+}
+
+async function executeTool(
+  ctx: Context,
+  name: 'security_assessment_start' | 'security_assessment_status',
+  args: unknown,
+  agent?: Agent,
+  initiator: Agent | null | undefined = agent,
+  signal: AbortSignal = toolSignal,
+): Promise<ToolExecutionResult> {
   const invoke = () => ctx.tools.execute({
-    callId: CallId(`security-status-${Math.random()}`),
-    name: 'security_assessment_status',
+    callId: CallId(`${name}-${Math.random()}`),
+    name,
     arguments: args,
     signal,
     ...agent === undefined ? {} : { agent },
   })
   return initiator == null ? invoke() : ctx.agents.withInitiator(initiator, invoke)
+}
+
+function startArgs(repositoryId: string, idempotencyKey = 'security-tool-start-v1') {
+  return {
+    idempotency_key: idempotencyKey,
+    repository_id: repositoryId,
+    subject: { kind: 'workspace_snapshot' as const },
+    assessment_mode: 'REPOSITORY' as const,
+    assessment_profile_id: 'security/standard',
+    target: { kind: 'repository' as const },
+    requested_stronger_control_ids: [],
+  }
 }
 
 async function harness() {
@@ -156,22 +179,38 @@ function resultValue(result: ToolExecutionResult): Record<string, unknown> {
 }
 
 describe('security_assessment_status registration', () => {
-  it('registers one parallel read tool and withdraws only that entry on disposal', async () => {
+  it('registers exclusive start plus parallel status and withdraws both on disposal', async () => {
     const fixture = await harness()
     try {
       expect(SecurityAssuranceTools).toMatchObject({
         name: 'dsh-security-assurance-tools',
         inject: ['agents', 'securityAssurance', 'tools'],
       })
-      const definition = fixture.ctx.tools.get('security_assessment_status')
-      expect(definition?.name).toBe('security_assessment_status')
+      const start = fixture.ctx.tools.get('security_assessment_start')
+      const status = fixture.ctx.tools.get('security_assessment_status')
+      expect(start?.name).toBe('security_assessment_start')
+      expect(status?.name).toBe('security_assessment_status')
+      expect(fixture.ctx.tools.executionMode({
+        callId: CallId('security-start-mode'),
+        name: 'security_assessment_start',
+        arguments: startArgs('repo-00000000-0000-0000-0000-000000000000'),
+        signal: toolSignal,
+      })).toEqual({ kind: 'exclusive' })
       expect(fixture.ctx.tools.executionMode({
         callId: CallId('security-status-mode'),
         name: 'security_assessment_status',
         arguments: { assessment_id: 'asm-00000000-0000-0000-0000-000000000000' },
         signal: toolSignal,
       })).toEqual({ kind: 'parallel' })
-      expect(definition?.presentCall?.({
+      expect(start?.presentCall?.(startArgs(
+        'repo-00000000-0000-0000-0000-000000000000',
+      ))).toEqual({
+        card: 'generic',
+        title: 'Start security assessment',
+        kind: 'other',
+        rawInput: 'repo-00000000-0000-0000-0000-000000000000',
+      })
+      expect(status?.presentCall?.({
         assessment_id: 'asm-00000000-0000-0000-0000-000000000000',
       })).toEqual({
         card: 'generic',
@@ -179,9 +218,11 @@ describe('security_assessment_status registration', () => {
         kind: 'read',
         rawInput: 'asm-00000000-0000-0000-0000-000000000000',
       })
-      expect(definition?.presentCall?.({ forged: true })).toBeUndefined()
+      expect(start?.presentCall?.({ forged: true })).toBeUndefined()
+      expect(status?.presentCall?.({ forged: true })).toBeUndefined()
 
       await fixture.toolsFiber.dispose()
+      expect(fixture.ctx.tools.get('security_assessment_start')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_status')).toBeUndefined()
       expect(fixture.ctx.reflect.get('securityAssurance')).toBeDefined()
     } finally {
@@ -245,6 +286,180 @@ describe('security_assessment_status authority', () => {
       expect(after.error?.info?.code).toBe('SECURITY_TOOL_DRIVER_REQUIRED')
     } finally {
       disposeAgent()
+      await fixture.dispose()
+    }
+  })
+})
+
+describe('security_assessment_start integration', () => {
+  it('starts through session authority, replays per session, and returns only a bounded receipt', async () => {
+    const repository = await repositoryFixture()
+    const fixture = await harness()
+    const root = stubAgent(`security-tool-start-${Math.random()}`)
+    const other = stubAgent(`security-tool-start-other-${Math.random()}`)
+    const disposeRoot = fixture.ctx.agents.register(root.agent)
+    const disposeOther = fixture.ctx.agents.register(other.agent)
+    try {
+      const platform = process.platform
+      if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+        throw new Error(`unsupported test platform: ${platform}`)
+      }
+      const hostInvocation = referenceHostInvocation(fixture.ctx.securityAssurance)
+      const registered = await fixture.ctx.securityAssurance.registerRepository(hostInvocation, {
+        schemaVersion: 1,
+        idempotencyKey: 'security-tool-start-repository-v1',
+        root: repository,
+        displayName: 'Model start tool fixture',
+        bindings: {
+          policyId: 'security/default',
+          assessmentProfileId: 'security/standard',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform,
+          deliveryDestinationIds: [],
+        },
+      })
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+
+      const agentlessStart = await executeTool(
+        fixture.ctx,
+        'security_assessment_start',
+        startArgs(registered.value.repositoryId, 'security-tool-start-agentless-v1'),
+      )
+      expect(agentlessStart.error?.info?.code).toBe('SECURITY_TOOL_AGENT_REQUIRED')
+
+      openTurn(root)
+      const driverlessStart = await executeTool(
+        fixture.ctx,
+        'security_assessment_start',
+        startArgs(registered.value.repositoryId, 'security-tool-start-driverless-v1'),
+        root.agent,
+        null,
+      )
+      expect(driverlessStart.error?.info?.code).toBe('SECURITY_TOOL_DRIVER_REQUIRED')
+
+      const args = startArgs(registered.value.repositoryId)
+      const started = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_start',
+        args,
+        root.agent,
+      ))
+      expect(started).toEqual({
+        schemaVersion: 1,
+        operation: 'start_assessment',
+        assessmentId: expect.stringMatching(/^asm-[0-9a-f-]{36}$/u),
+        assessmentRevision: 1,
+        state: 'CREATED',
+        idempotencyKey: args.idempotency_key,
+      })
+      const serialized = JSON.stringify(started)
+      for (const forbidden of [
+        repository,
+        registered.value.repositoryId,
+        'repositoryId',
+        'repositoryRevision',
+        'subject',
+        'digest',
+        'acceptedAt',
+        'correlationId',
+        'principalId',
+        String(root.agent.id),
+      ]) expect(serialized).not.toContain(forbidden)
+
+      const forgedReplay = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_start',
+        {
+          ...args,
+          principal_id: 'forged-start-operator',
+          permissions: ['risk:break-glass', 'repository:admin'],
+        },
+        root.agent,
+      ))
+      expect(forgedReplay).toEqual(started)
+      expect(JSON.stringify(forgedReplay)).not.toContain('forged-start-operator')
+
+      const idempotencyConflict = await executeTool(
+        fixture.ctx,
+        'security_assessment_start',
+        {
+          ...args,
+          assessment_mode: 'TARGETED',
+          target: { kind: 'targeted', relative_paths: ['README.md'] },
+        },
+        root.agent,
+      )
+      expect(idempotencyConflict.error?.info?.code).toBe('SECURITY_IDEMPOTENCY_CONFLICT')
+      expect(JSON.stringify(idempotencyConflict)).not.toContain('correlationId')
+
+      const inconsistent = await executeTool(
+        fixture.ctx,
+        'security_assessment_start',
+        {
+          ...args,
+          idempotency_key: 'security-tool-start-inconsistent-v1',
+          subject: {
+            kind: 'change',
+            base_commit: '0'.repeat(40),
+            head_commit: '1'.repeat(40),
+          },
+        },
+        root.agent,
+      )
+      expect(inconsistent.error?.info?.code).toBe('SECURITY_INVALID_REQUEST')
+
+      const missing = await executeTool(
+        fixture.ctx,
+        'security_assessment_start',
+        startArgs(
+          'repo-00000000-0000-0000-0000-000000000000',
+          'security-tool-start-missing-v1',
+        ),
+        root.agent,
+      )
+      expect(missing.error?.info?.code).toBe('SECURITY_NOT_FOUND')
+
+      const stalePreflight = await executeTool(
+        fixture.ctx,
+        'security_assessment_start',
+        {
+          ...args,
+          idempotency_key: 'security-tool-start-stale-preflight-v1',
+          start_preflight_digest: {
+            schema_version: 1,
+            algorithm: 'sha256',
+            media_type: 'application/vnd.dsh.canonical-json',
+            byte_length: 0,
+            canonicalization: 'dsh-canonical-json-v1',
+            value: '0'.repeat(64),
+          },
+        },
+        root.agent,
+      )
+      expect(stalePreflight.error?.info?.code).toBe('SECURITY_CONFLICT')
+
+      const status = resultValue(await execute(fixture.ctx, {
+        assessment_id: started['assessmentId'],
+      }, root.agent))
+      expect(status).toMatchObject({ assessmentId: started['assessmentId'] })
+
+      openTurn(other)
+      const otherSessionStart = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_start',
+        args,
+        other.agent,
+      ))
+      expect(otherSessionStart['assessmentId']).not.toBe(started['assessmentId'])
+      expect(otherSessionStart).toMatchObject({
+        assessmentRevision: 1,
+        state: 'CREATED',
+        idempotencyKey: args.idempotency_key,
+      })
+    } finally {
+      disposeOther()
+      disposeRoot()
       await fixture.dispose()
     }
   })
