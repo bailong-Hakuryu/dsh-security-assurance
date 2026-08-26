@@ -43,6 +43,15 @@ describe('ADR 0245: Contract imports are side-effect-free and runtime entries st
     expect(processSpies.exit).not.toHaveBeenCalled()
   })
 
+  it('importing ./conformance produces no side effects', async () => {
+    await import('../src/conformance.js')
+
+    expect(consoleSpies.log).not.toHaveBeenCalled()
+    expect(consoleSpies.warn).not.toHaveBeenCalled()
+    expect(consoleSpies.error).not.toHaveBeenCalled()
+    expect(processSpies.exit).not.toHaveBeenCalled()
+  })
+
   it('importing ./evaluation produces no side effects', async () => {
     await import('../src/evaluation.js')
 

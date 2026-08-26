@@ -190,6 +190,40 @@ if (
 ) {
   throw new Error('packed Analyzer Contract Entry is incomplete')
 }
+const conformance = await import('dsh-security-assurance/conformance')
+if (
+  typeof conformance.createAnalyzerConformanceFixtureV1 !== 'function'
+  || typeof conformance.createReferenceAnalyzerFactoryV1 !== 'function'
+  || typeof conformance.createReferenceAssuranceProviderFactoryV1 !== 'function'
+  || typeof conformance.runAnalyzerContractSuiteV1 !== 'function'
+  || typeof conformance.runAssuranceProviderContractSuiteV1 !== 'function'
+  || typeof conformance.assertConformanceReportV1 !== 'function'
+  || 'resolveTrustedInvocation' in conformance
+  || 'SecurityAuthorityResolver' in conformance
+) {
+  throw new Error('packed Conformance Contract Entry is incomplete or leaked authority')
+}
+const analyzerConformanceFixture = conformance.createAnalyzerConformanceFixtureV1()
+const analyzerConformanceReport = await conformance.runAnalyzerContractSuiteV1({
+  descriptor: analyzerConformanceFixture.descriptor,
+  factory: conformance.createReferenceAnalyzerFactoryV1(),
+}, analyzerConformanceFixture)
+conformance.assertConformanceReportV1(analyzerConformanceReport)
+for (const scenario of ['MALFORMED_OUTPUT', 'FAILURE']) {
+  const failedReport = await conformance.runAnalyzerContractSuiteV1({
+    descriptor: analyzerConformanceFixture.descriptor,
+    factory: conformance.createReferenceAnalyzerFactoryV1(scenario),
+  }, analyzerConformanceFixture)
+  if (failedReport.passed || JSON.stringify(failedReport).includes('deterministic failure')) {
+    throw new Error('packed ' + scenario + ' Analyzer conformance did not fail canonically')
+  }
+}
+const cancellationFixture = conformance.createAnalyzerConformanceFixtureV1({ invocation: 'CANCEL' })
+const cancellationReport = await conformance.runAnalyzerContractSuiteV1({
+  descriptor: cancellationFixture.descriptor,
+  factory: conformance.createReferenceAnalyzerFactoryV1('DELAY_UNTIL_ABORT'),
+}, cancellationFixture)
+conformance.assertConformanceReportV1(cancellationReport)
 const evaluation = await import('dsh-security-assurance/evaluation')
 const packedStratumDefinitions = [
   {
@@ -1689,6 +1723,8 @@ process.stdout.write(JSON.stringify({
   packedImport: 'PASS',
   invariantEntry: 'PASS',
   analyzerContract: 'PASS',
+  conformanceContract: 'PASS',
+  conformanceScenarios: 'PASS',
   evaluationMetrics: 'PASS',
   modelTools: 'PASS',
   modelToolLiveSession: 'PASS',
@@ -1711,6 +1747,8 @@ process.stdout.write(JSON.stringify({
     result.packedImport !== 'PASS'
     || result.invariantEntry !== 'PASS'
     || result.analyzerContract !== 'PASS'
+    || result.conformanceContract !== 'PASS'
+    || result.conformanceScenarios !== 'PASS'
     || result.evaluationMetrics !== 'PASS'
     || result.modelTools !== 'PASS'
     || result.modelToolLiveSession !== 'PASS'
@@ -1748,6 +1786,18 @@ if (importContext.reflect.get('securityAssurance') !== undefined
 const SecurityAssuranceService = (await import('dsh-security-assurance')).default
 const EngineeringControlPlane = (await import('dsh-engineering-control-plane')).default
 const { sealAssuranceSubmissionV1 } = await import('dsh-engineering-control-plane/assurance-provider')
+const conformance = await import('dsh-security-assurance/conformance')
+const providerConformanceFixture = conformance.createAssuranceProviderConformanceFixtureV1()
+const providerFailureReport = await conformance.runAssuranceProviderContractSuiteV1(
+  providerConformanceFixture,
+  async () => { throw new Error('credential=packed-secret-sentinel') },
+)
+if (providerFailureReport.passed || JSON.stringify(providerFailureReport).includes('packed-secret-sentinel')) {
+  throw new Error('packed Provider conformance did not redact Adapter failure')
+}
+if (typeof await conformance.createReferenceAssuranceProviderFactoryV1('SATISFIED') !== 'function') {
+  throw new Error('packed Reference Assurance Provider Factory is unavailable')
+}
 const SubagentRuntime = (await import('@deepseek-ai/dsh-subagent')).default
 const LocalSubprocessRuntime = (await import('@deepseek-ai/dsh-subprocess-local')).default
 
@@ -2489,6 +2539,7 @@ process.stdout.write(JSON.stringify({
   malformedSubmission: 'PASS',
   frozenProviderLoss: 'PASS',
   unloadAndRestart: 'PASS',
+  conformanceProviderScenarios: 'PASS',
 }))
 `, 'utf8')
   const adapterProbe = await execute(process.execPath, [adapterProbePath], {
@@ -2496,7 +2547,11 @@ process.stdout.write(JSON.stringify({
     windowsHide: true,
   })
   const adapterResult = JSON.parse(adapterProbe.stdout)
-  if (adapterResult.adapterImport !== 'PASS' || adapterResult.sideEffectFree !== 'PASS') {
+  if (
+    adapterResult.adapterImport !== 'PASS'
+    || adapterResult.sideEffectFree !== 'PASS'
+    || adapterResult.conformanceProviderScenarios !== 'PASS'
+  ) {
     throw new Error('packed Adapter smoke probe returned an invalid result')
   }
 
@@ -2511,6 +2566,8 @@ process.stdout.write(JSON.stringify({
     packedImport: result.packedImport,
     invariantEntry: result.invariantEntry,
     analyzerContract: result.analyzerContract,
+    conformanceContract: result.conformanceContract,
+    conformanceScenarios: result.conformanceScenarios,
     evaluationMetrics: result.evaluationMetrics,
     modelTools: result.modelTools,
     modelToolLiveSession: result.modelToolLiveSession,

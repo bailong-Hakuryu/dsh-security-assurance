@@ -15,6 +15,12 @@ import type { AnalyzerDescriptorV1 } from '../src/analyzer.ts'
 import SecurityAssuranceControlPlaneProvider, {
   SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
 } from '../src/control-plane-provider.ts'
+import {
+  assertConformanceReportV1,
+  createAssuranceProviderConformanceFixtureV1,
+  createReferenceAssuranceProviderFactoryV1,
+  runAssuranceProviderContractSuiteV1,
+} from '../src/conformance.ts'
 import { installControlPlaneCancellationCrashCheckpoint } from '../src/internal/control-plane-cancellation-crash-checkpoint.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
@@ -250,6 +256,107 @@ function controlPlaneConfig(repository: string, dshHome: string, repositoryId: s
 
 describe('Security Assurance Control Plane Provider', () => {
   it.each([
+    { scenario: 'SATISFIED' as const, outcome: 'satisfied' as const, status: 'APPROVED' as const },
+    { scenario: 'FAILED' as const, outcome: 'failed' as const, status: 'REWORK_REQUIRED' as const },
+    { scenario: 'INDETERMINATE' as const, outcome: 'indeterminate' as const, status: 'BLOCKED' as const },
+    { scenario: 'EXTERNAL_FAILURE' as const, outcome: 'indeterminate' as const, status: 'BLOCKED' as const },
+  ])('runs the $scenario Reference Provider through a real public Control Plane composition', async ({
+    scenario,
+    outcome,
+    status,
+  }) => {
+    const repository = await nodeRepositoryFixture({
+      name: 'reference-provider-conformance-fixture',
+      version: '1.0.0',
+      type: 'module',
+    })
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-reference-provider-conformance-home-'))
+    temporaryRoots.push(dshHome)
+    const fixture = createAssuranceProviderConformanceFixtureV1()
+    const factory = await createReferenceAssuranceProviderFactoryV1(scenario)
+    const ctx = new Context()
+    const subprocessFiber = await ctx.plugin(LocalSubprocessRuntime)
+    const subagentFiber = await ctx.plugin(SubagentRuntime)
+    const disposeScriptedProvider = registerScriptedEngineeringProvider(ctx)
+    const notApplicable = { mode: 'not_applicable' as const, reason: 'Not required by this fixture.' }
+    const controlPlaneFiber = await ctx.plugin(EngineeringControlPlane, {
+      dshHome,
+      subagentProvider: 'spawn',
+      maxSubagentDepth: 1,
+      rolePolicies: {
+        planner: { allowTools: [], denyTools: [] },
+        developer: { allowTools: [], denyTools: [] },
+        tester: { allowTools: [], denyTools: [] },
+        reviewer: { allowTools: [], denyTools: [] },
+      },
+      repositories: [{
+        root: repository,
+        verificationProfile: 'reference-provider-conformance',
+        assuranceProviders: [{
+          providerId: fixture.descriptor.providerId,
+          providerVersion: fixture.descriptor.providerVersion,
+          activation: 'required',
+        }],
+      }],
+      verificationProfiles: [{
+        name: 'reference-provider-conformance',
+        categories: {
+          functional: notApplicable,
+          negative: notApplicable,
+          regression: notApplicable,
+          security: notApplicable,
+        },
+      }],
+    })
+    await ctx.engineeringControlPlane.whenReady()
+    const disposeProvider = ctx.engineeringControlPlane.registerAssuranceProvider(
+      fixture.descriptor,
+      factory,
+    )
+
+    try {
+      const agent = {
+        id: 'agent-reference-provider-conformance',
+        session: { header: { cwd: repository } },
+      } as unknown as Agent
+      const receipt = await ctx.engineeringControlPlane.start(agent, {
+        idempotencyKey: `reference-provider-conformance:${scenario.toLowerCase()}:start:1`,
+        objective: 'Prove the public Reference Assurance Provider contract',
+      }, new AbortController().signal)
+      const snapshot = await waitForTerminalMission(ctx, agent, receipt.missionId)
+
+      expect(snapshot).toMatchObject({
+        status,
+        assuranceProviderInvocations: [scenario === 'EXTERNAL_FAILURE'
+          ? {
+              descriptor: fixture.descriptor,
+              state: 'external_failed',
+              failure: {
+                schemaVersion: 1,
+                reason: 'failed',
+                code: 'reference_provider_failure',
+              },
+            }
+          : {
+              descriptor: fixture.descriptor,
+              state: 'settled',
+              outcome: { kind: 'sealed_submission', claimedOutcome: outcome },
+            }],
+        assuranceResults: [{
+          requirementId: `external-provider:${fixture.descriptor.providerId}@${fixture.descriptor.providerVersion}`,
+          outcome,
+        }],
+      })
+    } finally {
+      disposeProvider()
+      await controlPlaneFiber.dispose()
+      disposeScriptedProvider()
+      await subagentFiber.dispose()
+      await subprocessFiber.dispose()
+    }
+  })
+
+  it.each([
     {
       caseName: 'satisfied Security Verdict',
       packageJson: { name: 'safe-control-plane-fixture', version: '1.0.0', type: 'module' },
@@ -387,6 +494,34 @@ describe('Security Assurance Control Plane Provider', () => {
         objective: 'Close the Mission Gate with the real Security Assurance Provider',
       }, new AbortController().signal)
       const snapshot = await waitForTerminalMission(ctx, agent, receipt.missionId)
+
+      const conformance = await runAssuranceProviderContractSuiteV1({
+        schemaVersion: 1,
+        descriptor: SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
+      }, async () => {
+        const invocation = snapshot.assuranceProviderInvocations?.[0]
+        if (invocation === undefined) throw new Error('Control Plane did not retain the Provider invocation')
+        if (invocation.state === 'settled') {
+          return {
+            schemaVersion: 1,
+            descriptor: invocation.descriptor,
+            invocationState: 'settled',
+            outcomeKind: 'sealed_submission',
+            claimedOutcome: invocation.outcome.claimedOutcome,
+          }
+        }
+        if (invocation.state === 'external_failed') {
+          return {
+            schemaVersion: 1,
+            descriptor: invocation.descriptor,
+            invocationState: 'external_failed',
+            outcomeKind: 'external_failure',
+            claimedOutcome: null,
+          }
+        }
+        throw new Error(`Provider invocation did not settle: ${invocation.state}`)
+      })
+      expect(() => assertConformanceReportV1(conformance)).not.toThrow()
 
       expect(snapshot).toMatchObject({
         status: missionStatus,

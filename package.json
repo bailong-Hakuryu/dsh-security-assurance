@@ -21,6 +21,10 @@
       "types": "./lib/types/analyzer.d.ts",
       "default": "./lib/analyzer.js"
     },
+    "./conformance": {
+      "types": "./lib/types/conformance.d.ts",
+      "default": "./lib/conformance.js"
+    },
     "./evaluation": {
       "types": "./lib/types/evaluation.d.ts",
       "default": "./lib/evaluation.js"
@@ -64,6 +68,7 @@
     "lib/index.js",
     "lib/contracts.js",
     "lib/analyzer.js",
+    "lib/conformance.js",
     "lib/evaluation.js",
     "lib/tools.js",
     "lib/control-plane-provider.js",
@@ -84,6 +89,8 @@
     "lib/types/contracts.d.ts.map",
     "lib/types/analyzer.d.ts",
     "lib/types/analyzer.d.ts.map",
+    "lib/types/conformance.d.ts",
+    "lib/types/conformance.d.ts.map",
     "lib/types/evaluation.d.ts",
     "lib/types/evaluation.d.ts.map",
     "lib/types/digest-envelope.d.ts",
