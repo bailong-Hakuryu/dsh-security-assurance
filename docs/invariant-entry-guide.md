@@ -1,328 +1,142 @@
 # Invariant Entry Usage Guide
 
-## Overview
+## Purpose
 
-The `./invariant` entry is an optional dormant Cordis Runtime Entry that verifies Harness composition and reports its result into Service health. It performs read-only verification without patching, repairing, or mutating any runtime state.
+`dsh-security-assurance/invariant` is an optional, dormant Harness companion.
+When enabled, it validates the deployed Security Assurance composition and
+publishes the result through the root Service's Runtime Health snapshot. It does
+not start Assessments, mutate Security Assurance state, repair configuration,
+or patch Harness.
 
-## When to Use
+## Activation
 
-Use the invariant entry when you need to:
+The normal Harness composition uses the disabled rows supplied by
+`cordis.patch.yml`:
 
-- **Verify Harness composition** - Ensure the exact Harness version matches expectations
-- **Validate runtime environment** - Confirm required services and dependencies are available
-- **Monitor system health** - Include composition verification in health checks
-- **Detect configuration drift** - Identify mismatches between expected and actual runtime
-- **Debug integration issues** - Diagnose problems with service registration or dependencies
-
-## Installation
-
-The invariant entry is included in the `dsh-security-assurance` package but remains dormant by default. To activate it, explicitly load it as a Cordis plugin:
-
-```typescript
-import { Context } from '@deepseek-ai/cordis'
-import SecurityAssuranceService from 'dsh-security-assurance'
-import SecurityAssuranceInvariant from 'dsh-security-assurance/invariant'
-
-const ctx = new Context()
-
-// Install the Security Assurance Service
-ctx.plugin(SecurityAssuranceService, {
-  dshHome: '/path/to/dsh/home'
-})
-
-// Activate the invariant entry (optional)
-ctx.plugin(SecurityAssuranceInvariant)
+```yml
+- id: dsh-security-assurance
+  name: dsh-security-assurance
+  disabled: false
+- id: dsh-security-assurance-invariant
+  name: dsh-security-assurance/invariant
+  disabled: false
 ```
 
-## Verification Checks
+The Harness invariant registry, Loader, and Typert registry must already be part
+of the Host composition. The root Service remains usable without the companion;
+in that case Health reports `PENDING_INVARIANT`.
 
-The invariant entry performs 8 comprehensive checks at construction time:
+For a programmatic integration test, load the companion as a module plugin:
 
-### Required Checks (must pass)
+```ts
+import { Context } from '@deepseek-ai/cordis'
+import { InvariantRegistry } from '@deepseek-ai/dsh-invariants'
+import SecurityAssuranceService from 'dsh-security-assurance'
+import * as securityAssuranceInvariant from 'dsh-security-assurance/invariant'
 
-1. **Harness Version** (`composition.harness-version`)
-   - Verifies exact `@deepseek-ai/harness` version matches `TARGET_HARNESS_VERSION`
-   - Failure indicates version mismatch or missing Harness package
+const ctx = new Context()
+await ctx.plugin(InvariantRegistry)
+await ctx.plugin(SecurityAssuranceService, { dshHome: '/var/lib/dsh' })
+await ctx.plugin(securityAssuranceInvariant)
+```
 
-2. **Required Services** (`composition.required-services`)
-   - Verifies presence of: `loader`, `logger`, `http`
-   - Failure indicates missing critical Cordis services
+Loader and Typert must expose the real deployment entries and generated host
+package record for verification to pass.
 
-3. **Service Registration** (`composition.service-registration`)
-   - Verifies Security Assurance Service is registered on Context
-   - Verifies Service exposes expected public contract
-   - Failure indicates incomplete or incorrect service registration
+## Reading Results
 
-4. **Context Integrity** (`composition.context-integrity`)
-   - Verifies Context.plugin method is available
-   - Verifies Context.fiber is accessible
-   - Failure indicates fundamental Context corruption
+Health is the only public verification API:
 
-5. **Public Contract** (`composition.public-contract`)
-   - Verifies Service exposes: `getHealth`, `whenReady`
-   - Reports availability of optional methods: `startAssessment`, `getAssessment`, `waitForAssessment`
-   - Failure indicates incomplete public API
+```ts
+const result = await ctx.securityAssurance.getHealth(trustedInvocation, {
+  schemaVersion: 1,
+})
 
-### Optional Checks (informational)
-
-6. **No Conflicts** (`composition.no-conflicts`)
-   - Checks for multiple Security Assurance Service registrations
-   - Skipped if reflect service unavailable
-
-7. **Cordis Version** (`composition.cordis-version`)
-   - Reports Cordis framework version
-   - Helps diagnose framework-related issues
-
-8. **Bundle Dependencies** (`composition.bundle-dependencies`)
-   - Verifies critical dependencies: `@deepseek-ai/cordis`, `@deepseek-ai/harness`
-   - Helps diagnose missing dependency issues
-
-## Reading Verification Results
-
-### From the Service
-
-Verification results are contributed to the Service's Runtime Health:
-
-```typescript
-const service = ctx.securityAssurance
-const invocation = /* create trusted invocation */
-
-const healthResult = await service.getHealth(invocation, { schemaVersion: 1 })
-
-if (healthResult.ok) {
-  const health = healthResult.value
-  
-  // Overall verification result
-  console.log(health.compatibility.harnessVerification) // "PASS" | "FAIL" | "PENDING_INVARIANT"
-  
-  // Individual checks
-  for (const check of health.checks) {
-    console.log(`${check.id}: ${check.status}`)
-    console.log(`  Required: ${check.required}`)
-    console.log(`  Message: ${check.message}`)
+if (result.ok) {
+  console.log(result.value.compatibility.harnessVerification)
+  for (const check of result.value.checks) {
+    if (check.id.startsWith('composition.')) {
+      console.log(check.id, check.status, check.message)
+    }
   }
 }
 ```
 
-### Directly from the Invariant
+`harnessVerification` has three states:
 
-For testing or debugging, you can access results directly:
+- `PENDING_INVARIANT`: the optional companion is not active.
+- `PASS`: all six required composition checks passed.
+- `FAIL`: at least one required check failed or could not be evaluated.
 
-```typescript
-const invariant = ctx.securityAssuranceInvariant
+An active `FAIL` places the Service in `READ_ONLY_SAFE`: queries remain
+available, while mutation commands return a retryable `UNAVAILABLE` result.
 
-// Get overall result
-const result = invariant.getVerificationResult()
-console.log(`Verification: ${result}`) // "PASS" | "FAIL" | "PENDING_INVARIANT"
+## Checks
 
-// Get individual checks
-const checks = invariant.getVerificationChecks()
-for (const check of checks) {
-  console.log(`${check.id}: ${check.status} - ${check.message}`)
-}
-```
+The companion emits exactly these required checks:
 
-## Understanding Results
+1. `composition.harness-version`
+2. `composition.required-service-definitions`
+3. `composition.bundle-dependencies`
+4. `composition.generated-contract`
+5. `composition.capability-identity`
+6. `composition.declared-runtime`
 
-### PASS
-All required checks passed. The runtime composition matches expectations and the Service is correctly registered.
-
-### FAIL
-One or more required checks failed. Review the individual check messages to identify the issue:
-- Harness version mismatch → Update Harness or adjust expectations
-- Missing services → Ensure required Cordis plugins are loaded
-- Service not registered → Verify Service plugin loaded before invariant
-- Context corruption → Investigate fundamental runtime issues
-- Contract incomplete → Service implementation may be outdated
-
-### PENDING_INVARIANT
-The invariant entry was not activated. This is the default state when the Service runs without the invariant plugin.
-
-## Best Practices
-
-### 1. Activate Early in Development
-Load the invariant entry during development to catch composition issues early:
-
-```typescript
-if (process.env.NODE_ENV === 'development') {
-  ctx.plugin(SecurityAssuranceInvariant)
-}
-```
-
-### 2. Use in Integration Tests
-Include invariant verification in integration test suites:
-
-```typescript
-import { describe, it, expect } from 'vitest'
-
-describe('Security Assurance Integration', () => {
-  it('should have valid Harness composition', async () => {
-    ctx.plugin(SecurityAssuranceService, { dshHome })
-    ctx.plugin(SecurityAssuranceInvariant)
-    
-    const invariant = ctx.securityAssuranceInvariant
-    const result = invariant.getVerificationResult()
-    
-    expect(result).toBe('PASS')
-  })
-})
-```
-
-### 3. Monitor in Production
-Consider activating the invariant in production environments to detect drift:
-
-```typescript
-// Activate invariant in all environments
-ctx.plugin(SecurityAssuranceInvariant)
-
-// Log verification results
-const invariant = ctx.securityAssuranceInvariant
-const result = invariant.getVerificationResult()
-
-if (result === 'FAIL') {
-  logger.error('Harness composition verification failed', {
-    checks: invariant.getVerificationChecks()
-  })
-}
-```
-
-### 4. Don't Use for Runtime Repairs
-The invariant is read-only and performs no repairs. If verification fails:
-- Fix the underlying issue (version mismatch, missing dependencies, etc.)
-- Don't attempt to patch or work around failures
-- Treat failures as critical configuration errors
-
-## Performance Considerations
-
-### Overhead
-- Verification runs **once at construction time** (synchronous)
-- No ongoing overhead after construction
-- Typical execution time: < 10ms
-- Safe to activate in production
-
-### Disposal
-The invariant follows Cordis Fiber lifecycle:
-- Disposes cleanly when parent Context disposes
-- No manual cleanup required
-- Service remains functional after invariant disposal
+`NOT_EVALUATED` is diagnostic detail, not a bypass. Because every composition
+check is required, it causes the overall result to be `FAIL`.
 
 ## Troubleshooting
 
-### "Missing required Cordis services"
-**Cause**: Required services (loader, logger, http) not available  
-**Fix**: Ensure Harness plugins are loaded before Security Assurance
+### Required Service Definitions fail
 
-### "Harness version mismatch"
-**Cause**: Installed Harness version doesn't match `TARGET_HARNESS_VERSION`  
-**Fix**: Update `@deepseek-ai/harness` to the required version
+Confirm the active Context provides:
 
-### "Security Assurance Service not registered"
-**Cause**: Service plugin not loaded or loaded after invariant  
-**Fix**: Load `SecurityAssuranceService` before `SecurityAssuranceInvariant`
+- `securityAssurance` with its Health API;
+- `invariants.register()`;
+- `loader.entries()`; and
+- `typert.getPackage()`.
 
-### "Context.plugin method not available"
-**Cause**: Fundamental Context corruption  
-**Fix**: Verify Cordis installation and Context initialization
+The companion intentionally does not require unrelated `logger` or `http`
+Services.
 
-### "Service missing required methods"
-**Cause**: Service implementation incomplete or outdated  
-**Fix**: Verify `dsh-security-assurance` package version and integrity
+### Generated contract or capability identity fails
 
-## API Reference
+Regenerate and register the host Typert contribution for
+`dsh-security-assurance#host`. The main model must use Service key
+`securityAssurance`, export name `SecurityAssuranceService`, and contain every
+public Service method.
 
-### SecurityAssuranceInvariant
+### Declared runtime fails
 
-```typescript
-class SecurityAssuranceInvariant extends Service {
-  constructor(ctx: Context)
-  
-  // Public accessors (for testing and debugging)
-  getVerificationResult(): HarnessVerificationResult
-  getVerificationChecks(): readonly HarnessVerificationCheck[]
-}
-```
+Inspect Loader entries and confirm both exact identities are enabled:
 
-### Types
+- `dsh-security-assurance` -> `dsh-security-assurance`
+- `dsh-security-assurance-invariant` -> `dsh-security-assurance/invariant`
 
-```typescript
-type HarnessVerificationResult = 'PASS' | 'FAIL' | 'PENDING_INVARIANT'
+A disabled, renamed, or absent row is a failure.
 
-interface HarnessVerificationCheck {
-  readonly id: string              // Check identifier (e.g., "composition.harness-version")
-  readonly status: 'PASS' | 'FAIL' // Check result
-  readonly required: boolean       // Whether check must pass for overall PASS
-  readonly message: string         // Human-readable result description
-}
-```
+### Harness version fails
 
-## Examples
+The installed `@deepseek-ai/dsh-invariants` and
+`@deepseek-ai/dsh-typert-registry` versions must exactly match
+`TARGET_HARNESS_VERSION`.
 
-### Basic Activation
+### Companion unloads
 
-```typescript
-import { Context } from '@deepseek-ai/cordis'
-import SecurityAssuranceService from 'dsh-security-assurance'
-import SecurityAssuranceInvariant from 'dsh-security-assurance/invariant'
+No manual cleanup API exists. Disposing its Cordis Fiber automatically removes
+the composition checks and returns Health to `PENDING_INVARIANT`. This is the
+expected lifecycle behavior.
 
-const ctx = new Context()
-ctx.plugin(SecurityAssuranceService, { dshHome: '/var/lib/dsh' })
-ctx.plugin(SecurityAssuranceInvariant)
+## Operational Guidance
 
-const result = ctx.securityAssuranceInvariant.getVerificationResult()
-console.log(`Composition verification: ${result}`)
-```
+- Enable the companion in integration, staging, and production compositions
+  where drift must block mutations.
+- Alert on `harnessVerification: FAIL` and review the individual redacted check
+  messages.
+- Fix the declared composition or package versions; do not bypass admission or
+  add runtime repair logic.
+- Keep the companion dormant only when the deployment deliberately accepts an
+  unverified composition.
 
-### Health Check Integration
-
-```typescript
-async function healthCheck() {
-  const service = ctx.securityAssurance
-  const invocation = createTrustedInvocation()
-  
-  const healthResult = await service.getHealth(invocation, { schemaVersion: 1 })
-  
-  if (!healthResult.ok) {
-    return { healthy: false, error: healthResult.error }
-  }
-  
-  const health = healthResult.value
-  
-  return {
-    healthy: health.state === 'READY',
-    harnessVerification: health.compatibility.harnessVerification,
-    checks: health.checks.filter(c => c.status === 'FAIL')
-  }
-}
-```
-
-### Conditional Activation
-
-```typescript
-// Only activate in specific environments
-const shouldVerify = process.env.VERIFY_COMPOSITION === 'true'
-  || process.env.NODE_ENV === 'test'
-  || process.env.NODE_ENV === 'development'
-
-if (shouldVerify) {
-  ctx.plugin(SecurityAssuranceInvariant)
-  
-  const result = ctx.securityAssuranceInvariant.getVerificationResult()
-  if (result === 'FAIL') {
-    console.error('Composition verification failed - review checks before proceeding')
-  }
-}
-```
-
-## Related Documentation
-
-- [ADR 0253 Compliance Report](./adr-0253-compliance-report.md) - Implementation details
-- [Implementation Specification](./implementation-specification.md) - Overall architecture
-- [README](../README.md) - Project overview
-
-## Support
-
-For issues or questions about the invariant entry:
-1. Review the troubleshooting section above
-2. Check verification check messages for specific guidance
-3. Consult ADR 0253 for design rationale
-4. File an issue with verification results and environment details
+See [ADR 0253 Compliance Report](./adr-0253-compliance-report.md) for the
+requirement-to-implementation mapping.

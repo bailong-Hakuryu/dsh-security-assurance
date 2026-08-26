@@ -1,589 +1,315 @@
-import { Context, Service } from '@deepseek-ai/cordis'
+import { createRequire } from 'node:module'
+import type { Context } from '@deepseek-ai/cordis'
+import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'
+import { TARGET_HARNESS_VERSION } from './contracts.ts'
 import {
-  TARGET_HARNESS_VERSION,
-} from './contracts.ts'
+  HARNESS_VERIFICATION_AUTHORITY,
+  RECEIVE_HARNESS_VERIFICATION,
+  type HarnessVerificationCheck,
+  type HarnessVerificationContribution,
+  type HarnessVerificationReceiver,
+} from './internal/harness-verification.ts'
+import type {} from './index.ts'
 
-/**
- * Sanitize error message for inclusion in public Health checks.
- * Limits length and removes potentially sensitive details.
- */
+const PACKAGE_NAME = 'dsh-security-assurance'
+const PACKAGE_FACE = 'host'
+const PACKAGE_KEY = `${PACKAGE_NAME}#${PACKAGE_FACE}`
+const SERVICE_KEY = 'securityAssurance'
+const SERVICE_EXPORT_NAME = 'SecurityAssuranceService'
+const ROOT_ENTRY_ID = 'dsh-security-assurance'
+const ROOT_ENTRY_NAME = 'dsh-security-assurance'
+const INVARIANT_ENTRY_ID = 'dsh-security-assurance-invariant'
+const INVARIANT_ENTRY_NAME = 'dsh-security-assurance/invariant'
+
+const REQUIRED_PUBLIC_METHODS = Object.freeze([
+  'whenReady',
+  'registerAnalyzer',
+  'registerAnalyzerQualification',
+  'getHealth',
+  'getCatalog',
+  'registerRepository',
+  'updateRepository',
+  'disableRepository',
+  'getRepository',
+  'listRepositories',
+  'startAssessment',
+  'resumeAssessment',
+  'cancelAssessment',
+  'listAssessments',
+  'getAssessment',
+  'listFindings',
+  'getFinding',
+  'getEvidenceView',
+  'recordRiskDecision',
+  'waitForAssessmentRevision',
+  'getBundleManifest',
+  'getAssuranceSubmission',
+  'requestExport',
+  'getExport',
+] as const)
+
+const REQUIRED_BUNDLE_DEPENDENCIES = Object.freeze([
+  '@deepseek-ai/cordis',
+  '@deepseek-ai/cordis-plugin-loader',
+  '@deepseek-ai/dsh-invariants',
+  '@deepseek-ai/dsh-typert-registry',
+  'zod',
+] as const)
+
+interface LoaderEntryLike {
+  readonly options?: {
+    readonly id?: unknown
+    readonly name?: unknown
+    readonly disabled?: unknown
+  }
+}
+
+interface LoaderLike {
+  entries(): Iterable<LoaderEntryLike>
+}
+
+interface TypertMemberLike {
+  readonly kind?: unknown
+  readonly name?: unknown
+}
+
+interface TypertServiceLike {
+  readonly key?: unknown
+  readonly exportName?: unknown
+  readonly members?: readonly TypertMemberLike[]
+}
+
+interface TypertPackageLike {
+  readonly package?: unknown
+  readonly face?: unknown
+  readonly key?: unknown
+  readonly model?: {
+    readonly services?: readonly TypertServiceLike[]
+  }
+}
+
+interface TypertLike {
+  getPackage(packageName: string, face?: string): TypertPackageLike | undefined
+}
+
+interface PackageManifest {
+  readonly version?: unknown
+}
+
+const require = createRequire(import.meta.url)
+
+function pass(id: string, message: string): HarnessVerificationCheck {
+  return Object.freeze({ id, status: 'PASS', required: true, message })
+}
+
+function fail(id: string, message: string): HarnessVerificationCheck {
+  return Object.freeze({ id, status: 'FAIL', required: true, message })
+}
+
+function notEvaluated(id: string, message: string): HarnessVerificationCheck {
+  return Object.freeze({ id, status: 'NOT_EVALUATED', required: true, message })
+}
+
+/** Bound and redact diagnostics before they enter the public Health envelope. */
 function sanitizeErrorMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : 'unknown error'
-  const sanitized = raw.replace(/\/[^\s]+/g, '[path]').replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g, '[ip]')
-  return sanitized.slice(0, 200)
+  const raw = error instanceof Error ? error.message : String(error)
+  const sanitized = raw
+    .replace(/\b((?:api[_-]?key|access[_-]?token|secret|password|credential)s?)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[token]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]')
+    .replace(/\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[token]')
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[key]')
+    .replace(/\b[0-9a-f]{32,}\b/gi, '[key]')
+    .replace(/\b(?:https?|file):\/\/[^\s]+/gi, '[url]')
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[ip]')
+    .replace(/(?:[A-Z]:[\\/]|\\\\)[^\s]*/gi, '[path]')
+    .replace(/(?:^|\s)\/[^\s:]*/g, ' [path]')
+    .slice(0, 200)
+  return sanitized.length > 0 ? sanitized : 'unknown error'
 }
 
-/**
- * Harness composition verification result contributed to Runtime Health.
- *
- * The invariant entry verifies the exact Harness version, required Service
- * Definitions, bundle dependencies, generated contract compatibility, and
- * declared runtime composition without mutating state or patching Harness.
- */
-export type HarnessVerificationResult = 'PASS' | 'FAIL' | 'PENDING_INVARIANT'
-
-export interface HarnessVerificationCheck {
-  readonly id: string
-  readonly status: 'PASS' | 'FAIL' | 'NOT_EVALUATED'
-  readonly required: boolean
-  readonly message: string
+function serviceFromContext(ctx: Context, name: string): unknown {
+  try {
+    return ctx.reflect.get(name)
+  } catch {
+    return undefined
+  }
 }
 
-/**
- * Optional dormant Cordis Runtime Entry that verifies Harness composition
- * and reports its result into Service health without patching or repairing.
- *
- * Effects are Fiber-owned and dormant unless explicitly activated. The entry
- * performs no Assessment work, no Store mutation, no Harness patching, and
- * no substitute Provider registration.
- */
-export class SecurityAssuranceInvariant extends Service {
-  static inject = ['securityAssurance']
-
-  private verificationResult: HarnessVerificationResult = 'PENDING_INVARIANT'
-  private verificationChecks: readonly HarnessVerificationCheck[] = []
-
-  constructor(ctx: Context) {
-    super(ctx, 'securityAssuranceInvariant')
-    // Perform verification synchronously at construction time
-    this.performVerification()
-
-    // Contribute verification result to the Service
-    this.contributeToServiceHealth()
-
-    // TODO: Implement proper Fiber disposer to revoke health contribution
-    // when invariant is unloaded. Currently, verification state persists
-    // after invariant disposal (Standards issue #4).
+function packageVersion(packageName: string): string {
+  const manifest = require(`${packageName}/package.json`) as PackageManifest
+  if (typeof manifest.version !== 'string') {
+    throw new TypeError(`${packageName} package version is unavailable`)
   }
+  return manifest.version
+}
 
-  private performVerification(): void {
-    const checks: HarnessVerificationCheck[] = []
-
-    // 1. Verify exact Harness version
-    const harnessVersionCheck = this.verifyHarnessVersion()
-    checks.push(harnessVersionCheck)
-
-    // 2. Verify required Cordis services exist
-    const cordisServicesCheck = this.verifyRequiredServices()
-    checks.push(cordisServicesCheck)
-
-    // 3. Verify Service registration
-    const serviceRegistrationCheck = this.verifyServiceRegistration()
-    checks.push(serviceRegistrationCheck)
-
-    // 4. Verify no conflicting registrations
-    const conflictCheck = this.verifyNoConflicts()
-    checks.push(conflictCheck)
-
-    // 5. Verify Cordis framework version
-    const cordisVersionCheck = this.verifyCordisVersion()
-    checks.push(cordisVersionCheck)
-
-    // 6. Verify Context integrity
-    const contextIntegrityCheck = this.verifyContextIntegrity()
-    checks.push(contextIntegrityCheck)
-
-    // 7. Verify bundle dependencies
-    const bundleDepsCheck = this.verifyBundleDependencies()
-    checks.push(bundleDepsCheck)
-
-    // 8. Verify public contract compatibility
-    const contractCheck = this.verifyPublicContract()
-    checks.push(contractCheck)
-
-    this.verificationChecks = checks
-
-    // Result is PASS only if all required checks pass
-    const requiredChecksFailed = checks.filter(c => c.required && c.status === 'FAIL')
-    this.verificationResult = requiredChecksFailed.length === 0 ? 'PASS' : 'FAIL'
-  }
-
-  /**
-   * Verify the exact version of @deepseek-ai/harness matches the target version.
-   * This ensures generated contracts and runtime composition are compatible.
-   *
-   * @returns {HarnessVerificationCheck} Check result with PASS/FAIL status
-   */
-  private verifyHarnessVersion(): HarnessVerificationCheck {
-    // Check if @deepseek-ai/harness is available and matches target version
-    try {
-      // Access loader through context's services if available
-      const loader = (this.ctx as any).loader
-      if (!loader?.packages) {
-        return {
-          id: 'composition.harness-version',
-          status: 'FAIL',
-          required: true,
-          message: `Harness loader not available; expected ${TARGET_HARNESS_VERSION}.`,
-        }
-      }
-
-      const harnessPackage = loader.packages['@deepseek-ai/harness']
-      if (!harnessPackage) {
-        return {
-          id: 'composition.harness-version',
-          status: 'FAIL',
-          required: true,
-          message: `Harness package not found; expected ${TARGET_HARNESS_VERSION}.`,
-        }
-      }
-
-      const actualVersion = harnessPackage.version
-      if (actualVersion !== TARGET_HARNESS_VERSION) {
-        return {
-          id: 'composition.harness-version',
-          status: 'FAIL',
-          required: true,
-          message: `Harness version ${actualVersion} does not match target ${TARGET_HARNESS_VERSION}.`,
-        }
-      }
-
-      return {
-        id: 'composition.harness-version',
-        status: 'PASS',
-        required: true,
-        message: `Harness version ${actualVersion} matches target ${TARGET_HARNESS_VERSION}.`,
-      }
-    } catch (error) {
-      return {
-        id: 'composition.harness-version',
-        status: 'FAIL',
-        required: true,
-        message: `Harness version verification failed: ${sanitizeErrorMessage(error)}`,
-      }
-    }
-  }
-
-  /**
-   * Verify that required Cordis services (loader, logger, http) are available.
-   * These services are critical for Security Assurance runtime operation.
-   *
-   * @returns {HarnessVerificationCheck} Check result with PASS/FAIL status
-   */
-  private verifyRequiredServices(): HarnessVerificationCheck {
-    const requiredServices = [
-      'loader',
-      'logger',
-      'http',
-    ]
-
-    const missingServices = requiredServices.filter(serviceName => {
-      try {
-        // Use reflection API if available to safely check service existence
-        if (this.ctx.reflect) {
-          return this.ctx.reflect.get(serviceName) === undefined
-        }
-        // Fallback: try to access the service in a try-catch
-        return (this.ctx as any)[serviceName] === undefined
-      } catch {
-        // If accessing throws, service is not available
-        return true
-      }
+function verifyHarnessVersion(): HarnessVerificationCheck {
+  const id = 'composition.harness-version'
+  try {
+    const harnessPackages = [
+      '@deepseek-ai/dsh-invariants',
+      '@deepseek-ai/dsh-typert-registry',
+    ] as const
+    const mismatches = harnessPackages.flatMap(packageName => {
+      const actual = packageVersion(packageName)
+      return actual === TARGET_HARNESS_VERSION ? [] : [`${packageName}@${actual}`]
     })
-
-    if (missingServices.length > 0) {
-      return {
-        id: 'composition.required-services',
-        status: 'FAIL',
-        required: true,
-        message: `Missing required Cordis services: ${missingServices.join(', ')}.`,
-      }
-    }
-
-    return {
-      id: 'composition.required-services',
-      status: 'PASS',
-      required: true,
-      message: 'All required Cordis services are available.',
-    }
-  }
-
-  /**
-   * Verify that the Security Assurance Service is properly registered
-   * and that there are no conflicting registrations in the service registry.
-   *
-   * @returns {HarnessVerificationCheck} Check result with PASS/FAIL/NOT_EVALUATED status
-   */
-  private verifyServiceRegistration(): HarnessVerificationCheck {
-    try {
-      const securityService = this.ctx.securityAssurance
-      if (!securityService) {
-        return {
-          id: 'composition.service-registration',
-          status: 'FAIL',
-          required: true,
-          message: 'Security Assurance Service is not registered.',
-        }
-      }
-
-      // Verify it's the expected type by checking for a known method
-      if (typeof securityService.getHealth !== 'function') {
-        return {
-          id: 'composition.service-registration',
-          status: 'FAIL',
-          required: true,
-          message: 'Security Assurance Service does not expose expected public contract.',
-        }
-      }
-
-      return {
-        id: 'composition.service-registration',
-        status: 'PASS',
-        required: true,
-        message: 'Security Assurance Service is correctly registered.',
-      }
-    } catch (error) {
-      return {
-        id: 'composition.service-registration',
-        status: 'FAIL',
-        required: true,
-        message: `Service registration verification failed: ${sanitizeErrorMessage(error)}`,
-      }
-    }
-  }
-
-  private verifyNoConflicts(): HarnessVerificationCheck {
-    // Check that no other plugin has registered conflicting services
-    // This is a placeholder for more sophisticated conflict detection
-    try {
-      const registry = this.ctx.reflect
-      if (!registry) {
-        return {
-          id: 'composition.no-conflicts',
-          status: 'NOT_EVALUATED',
-          required: false,
-          message: 'Conflict detection skipped (reflect not available).',
-        }
-      }
-
-      // Verify our service is the only securityAssurance registration
-      // Compare using the underlying service instance, not the proxy
-      const securityService = registry.get('securityAssurance')
-      if (!securityService) {
-        return {
-          id: 'composition.no-conflicts',
-          status: 'PASS',
-          required: false,
-          message: 'No conflicting service registrations detected.',
-        }
-      }
-
-      // Check if there are multiple definitions for securityAssurance
-      // The registry tracks all service definitions, not proxies
-      const definitions = (this.ctx.reflect as any)?._services
-      if (definitions) {
-        const securityDefs = Array.from(definitions.values()).filter(
-          (def: any) => def?.name === 'securityAssurance'
-        )
-        if (securityDefs.length > 1) {
-          return {
-            id: 'composition.no-conflicts',
-            status: 'FAIL',
-            required: false,
-            message: 'Multiple Security Assurance Service registrations detected.',
-          }
-        }
-      }
-
-      return {
-        id: 'composition.no-conflicts',
-        status: 'PASS',
-        required: false,
-        message: 'No conflicting service registrations detected.',
-      }
-    } catch (error) {
-      return {
-        id: 'composition.no-conflicts',
-        status: 'NOT_EVALUATED',
-        required: false,
-        message: 'Conflict detection skipped due to error.',
-      }
-    }
-  }
-
-  private verifyCordisVersion(): HarnessVerificationCheck {
-    // Verify Cordis framework is available and functional
-    try {
-      const loader = (this.ctx as any).loader
-      if (!loader?.packages) {
-        return {
-          id: 'composition.cordis-version',
-          status: 'FAIL',
-          required: false,
-          message: 'Cordis loader not available for version verification.',
-        }
-      }
-
-      const cordisPackage = loader.packages['@deepseek-ai/cordis']
-      if (!cordisPackage) {
-        return {
-          id: 'composition.cordis-version',
-          status: 'FAIL',
-          required: false,
-          message: 'Cordis package not found in loader registry.',
-        }
-      }
-
-      const version = cordisPackage.version
-      return {
-        id: 'composition.cordis-version',
-        status: 'PASS',
-        required: false,
-        message: `Cordis version ${version} is available.`,
-      }
-    } catch (error) {
-      return {
-        id: 'composition.cordis-version',
-        status: 'FAIL',
-        required: false,
-        message: `Cordis version verification failed: ${sanitizeErrorMessage(error)}`,
-      }
-    }
-  }
-
-  /**
-   * Verify that the Cordis Context is functioning properly with all
-   * required capabilities (plugin, emit, fiber) available.
-   *
-   * @returns {HarnessVerificationCheck} Check result with PASS/FAIL status
-   */
-  private verifyContextIntegrity(): HarnessVerificationCheck {
-    // Verify the Context is functioning properly
-    try {
-      // Check basic Context capabilities
-      if (typeof this.ctx.plugin !== 'function') {
-        return {
-          id: 'composition.context-integrity',
-          status: 'FAIL',
-          required: true,
-          message: 'Context.plugin method not available.',
-        }
-      }
-
-      // Verify Context can emit events
-      if (typeof this.ctx.emit !== 'function') {
-        return {
-          id: 'composition.context-integrity',
-          status: 'FAIL',
-          required: true,
-          message: 'Context.emit method not available.',
-        }
-      }
-
-      // Check if fiber is accessible
-      if (!this.ctx.fiber) {
-        return {
-          id: 'composition.context-integrity',
-          status: 'FAIL',
-          required: false,
-          message: 'Context.fiber not available.',
-        }
-      }
-
-      // Verify fiber has proper structure
-      if (this.ctx.fiber && typeof (this.ctx.fiber as any).id !== 'number') {
-        return {
-          id: 'composition.context-integrity',
-          status: 'FAIL',
-          required: false,
-          message: 'Context.fiber structure is invalid.',
-        }
-      }
-
-      // Check if reflect service is accessible (optional but recommended)
-      if (!this.ctx.reflect) {
-        return {
-          id: 'composition.context-integrity',
-          status: 'PASS',
-          required: false,
-          message: 'Context integrity verified (reflect service not available).',
-        }
-      }
-
-      return {
-        id: 'composition.context-integrity',
-        status: 'PASS',
-        required: true,
-        message: 'Context integrity verified.',
-      }
-    } catch (error) {
-      return {
-        id: 'composition.context-integrity',
-        status: 'FAIL',
-        required: true,
-        message: `Context integrity verification failed: ${sanitizeErrorMessage(error)}`,
-      }
-    }
-  }
-
-  /**
-   * Verify that critical bundle dependencies (@deepseek-ai/cordis, zod)
-   * are available in the runtime environment.
-   *
-   * @returns {HarnessVerificationCheck} Check result with PASS/FAIL status
-   */
-  private verifyBundleDependencies(): HarnessVerificationCheck {
-    // Verify critical bundle dependencies are available
-    try {
-      const loader = (this.ctx as any).loader
-      if (!loader?.packages) {
-        return {
-          id: 'composition.bundle-dependencies',
-          status: 'FAIL',
-          required: false,
-          message: 'Loader not available for dependency verification.',
-        }
-      }
-
-      // Check for critical dependencies
-      const criticalDeps = [
-        '@deepseek-ai/cordis',
-        '@deepseek-ai/harness',
-      ]
-
-      const missingDeps = criticalDeps.filter(dep => !loader.packages[dep])
-
-      if (missingDeps.length > 0) {
-        return {
-          id: 'composition.bundle-dependencies',
-          status: 'FAIL',
-          required: false,
-          message: `Missing critical dependencies: ${missingDeps.join(', ')}.`,
-        }
-      }
-
-      return {
-        id: 'composition.bundle-dependencies',
-        status: 'PASS',
-        required: false,
-        message: `All critical bundle dependencies are available.`,
-      }
-    } catch (error) {
-      return {
-        id: 'composition.bundle-dependencies',
-        status: 'FAIL',
-        required: false,
-        message: `Bundle dependency verification failed: ${sanitizeErrorMessage(error)}`,
-      }
-    }
-  }
-
-  /**
-   * Verify that the Security Assurance Service exposes the expected public
-   * contract with all required methods and proper signatures.
-   *
-   * @returns {HarnessVerificationCheck} Check result with PASS/FAIL status
-   */
-  private verifyPublicContract(): HarnessVerificationCheck {
-    // Verify the Security Assurance Service exposes the expected public contract
-    try {
-      const service = this.ctx.securityAssurance
-      if (!service) {
-        return {
-          id: 'composition.public-contract',
-          status: 'FAIL',
-          required: true,
-          message: 'Security Assurance Service not available for contract verification.',
-        }
-      }
-
-      // Check for essential public methods with proper signatures
-      const requiredMethods = [
-        'getHealth',
-        'whenReady',
-      ]
-
-      const missingMethods = requiredMethods.filter(method => typeof (service as any)[method] !== 'function')
-
-      if (missingMethods.length > 0) {
-        return {
-          id: 'composition.public-contract',
-          status: 'FAIL',
-          required: true,
-          message: `Service missing required methods: ${missingMethods.join(', ')}.`,
-        }
-      }
-
-      // Verify the RECEIVE_HARNESS_VERIFICATION protocol is implemented
-      if (typeof (service as any)[RECEIVE_HARNESS_VERIFICATION] !== 'function') {
-        return {
-          id: 'composition.public-contract',
-          status: 'FAIL',
-          required: true,
-          message: 'Service does not implement RECEIVE_HARNESS_VERIFICATION protocol.',
-        }
-      }
-
-      // Verify whenReady returns a Promise
-      const readyResult = (service as any).whenReady()
-      if (!(readyResult instanceof Promise)) {
-        return {
-          id: 'composition.public-contract',
-          status: 'FAIL',
-          required: true,
-          message: 'Service.whenReady() does not return a Promise.',
-        }
-      }
-
-      // Verify Service has assessment methods (optional capabilities)
-      const optionalMethods = [
-        'startAssessment',
-        'getAssessment',
-        'waitForAssessment',
-        'listAssessments',
-      ]
-
-      const availableOptional = optionalMethods.filter(method => typeof (service as any)[method] === 'function')
-
-      return {
-        id: 'composition.public-contract',
-        status: 'PASS',
-        required: true,
-        message: `Service public contract verified (${availableOptional.length} optional methods available).`,
-      }
-    } catch (error) {
-      return {
-        id: 'composition.public-contract',
-        status: 'FAIL',
-        required: true,
-        message: `Public contract verification failed: ${sanitizeErrorMessage(error)}`,
-      }
-    }
-  }
-
-  private contributeToServiceHealth(): void {
-    // Expose verification result to the Service through a package-private channel
-    const service = this.ctx.securityAssurance as any
-    if (service && typeof service[RECEIVE_HARNESS_VERIFICATION] === 'function') {
-      service[RECEIVE_HARNESS_VERIFICATION](
-        this.verificationResult,
-        this.verificationChecks,
-      )
-    }
-  }
-
-  /** Public accessor for verification result (for testing) */
-  getVerificationResult(): HarnessVerificationResult {
-    return this.verificationResult
-  }
-
-  /** Public accessor for verification checks (for testing) */
-  getVerificationChecks(): readonly HarnessVerificationCheck[] {
-    return this.verificationChecks
+    return mismatches.length === 0
+      ? pass(id, `Harness runtime packages match ${TARGET_HARNESS_VERSION}.`)
+      : fail(id, `Harness runtime version mismatch: ${mismatches.join(', ')}.`)
+  } catch (error) {
+    return notEvaluated(id, `Harness version verification unavailable: ${sanitizeErrorMessage(error)}.`)
   }
 }
 
-/**
- * Package-private symbol for the Service to receive Harness verification results.
- * This avoids polluting the public Service API.
- * Versioned to ensure protocol compatibility between invariant and Service.
- */
-const RECEIVE_HARNESS_VERIFICATION = Symbol.for('dsh-security-assurance:receive-harness-verification:v1')
+function verifyRequiredServiceDefinitions(ctx: Context): HarnessVerificationCheck {
+  const id = 'composition.required-service-definitions'
+  const securityAssurance = serviceFromContext(ctx, SERVICE_KEY) as Record<PropertyKey, unknown> | undefined
+  const invariants = serviceFromContext(ctx, 'invariants') as { register?: unknown } | undefined
+  const loader = serviceFromContext(ctx, 'loader') as { entries?: unknown } | undefined
+  const typert = serviceFromContext(ctx, 'typert') as { getPackage?: unknown } | undefined
+  const missing: string[] = []
+  if (securityAssurance === undefined
+    || typeof securityAssurance.getHealth !== 'function'
+    || typeof securityAssurance[RECEIVE_HARNESS_VERIFICATION] !== 'function') missing.push(SERVICE_KEY)
+  if (invariants === undefined || typeof invariants.register !== 'function') missing.push('invariants')
+  if (loader === undefined || typeof loader.entries !== 'function') missing.push('loader')
+  if (typert === undefined || typeof typert.getPackage !== 'function') missing.push('typert')
+  return missing.length === 0
+    ? pass(id, 'Required Harness Service Definitions are available.')
+    : fail(id, `Missing or incompatible Service Definitions: ${missing.join(', ')}.`)
+}
 
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    securityAssuranceInvariant: SecurityAssuranceInvariant
+function verifyBundleDependencies(): HarnessVerificationCheck {
+  const id = 'composition.bundle-dependencies'
+  try {
+    const resolved = REQUIRED_BUNDLE_DEPENDENCIES.map(packageName =>
+      `${packageName}@${packageVersion(packageName)}`)
+    return pass(id, `Required runtime bundle dependencies are present: ${resolved.join(', ')}.`)
+  } catch (error) {
+    return notEvaluated(id, `Bundle dependency verification unavailable: ${sanitizeErrorMessage(error)}.`)
   }
 }
 
-export default SecurityAssuranceInvariant
+function getTypertPackage(ctx: Context): TypertPackageLike | undefined {
+  const typert = serviceFromContext(ctx, 'typert') as TypertLike | undefined
+  return typert?.getPackage(PACKAGE_NAME, PACKAGE_FACE)
+}
+
+function mainServiceModel(record: TypertPackageLike | undefined): TypertServiceLike | undefined {
+  return record?.model?.services?.find(service => service.key === SERVICE_KEY)
+}
+
+function verifyGeneratedContract(ctx: Context): HarnessVerificationCheck {
+  const id = 'composition.generated-contract'
+  try {
+    const record = getTypertPackage(ctx)
+    if (record === undefined) {
+      return notEvaluated(id, `Generated ${PACKAGE_KEY} contract is not registered.`)
+    }
+    const model = mainServiceModel(record)
+    if (model === undefined || !Array.isArray(model.members)) {
+      return fail(id, `Generated contract does not define ${SERVICE_KEY}.`)
+    }
+    const declaredMethods = new Set(model.members
+      .filter(member => member.kind === 'method' && typeof member.name === 'string')
+      .map(member => member.name as string))
+    const service = serviceFromContext(ctx, SERVICE_KEY) as Record<string, unknown> | undefined
+    const missingGenerated = REQUIRED_PUBLIC_METHODS.filter(method => !declaredMethods.has(method))
+    const missingLive = REQUIRED_PUBLIC_METHODS.filter(method => typeof service?.[method] !== 'function')
+    if (missingGenerated.length > 0 || missingLive.length > 0) {
+      const details = [
+        missingGenerated.length === 0 ? undefined : `generated: ${missingGenerated.join(', ')}`,
+        missingLive.length === 0 ? undefined : `live: ${missingLive.join(', ')}`,
+      ].filter(detail => detail !== undefined)
+      return fail(id, `Public contract methods are missing (${details.join('; ')}).`)
+    }
+    return pass(id, 'Generated host contract matches the live Security Assurance Service.')
+  } catch (error) {
+    return notEvaluated(id, `Generated contract verification unavailable: ${sanitizeErrorMessage(error)}.`)
+  }
+}
+
+function verifyCapabilityIdentity(ctx: Context): HarnessVerificationCheck {
+  const id = 'composition.capability-identity'
+  try {
+    const record = getTypertPackage(ctx)
+    if (record === undefined) {
+      return notEvaluated(id, `Generated ${PACKAGE_KEY} capability identity is not registered.`)
+    }
+    const model = mainServiceModel(record)
+    const matches = record.package === PACKAGE_NAME
+      && record.face === PACKAGE_FACE
+      && record.key === PACKAGE_KEY
+      && model?.key === SERVICE_KEY
+      && model.exportName === SERVICE_EXPORT_NAME
+    return matches
+      ? pass(id, `Capability identity ${PACKAGE_KEY}/${SERVICE_KEY} is exact.`)
+      : fail(id, 'Generated capability identity does not match the package contract.')
+  } catch (error) {
+    return notEvaluated(id, `Capability identity verification unavailable: ${sanitizeErrorMessage(error)}.`)
+  }
+}
+
+function verifyDeclaredRuntimeComposition(ctx: Context): HarnessVerificationCheck {
+  const id = 'composition.declared-runtime'
+  try {
+    const loader = serviceFromContext(ctx, 'loader') as LoaderLike | undefined
+    if (loader === undefined || typeof loader.entries !== 'function') {
+      return notEvaluated(id, 'Loader entries are unavailable for declared composition verification.')
+    }
+    const entries = [...loader.entries()].map(entry => entry.options)
+    const hasEnabledEntry = (entryId: string, entryName: string): boolean => entries.some(options =>
+      options?.id === entryId && options.name === entryName && options.disabled !== true)
+    const missing = [
+      hasEnabledEntry(ROOT_ENTRY_ID, ROOT_ENTRY_NAME) ? undefined : ROOT_ENTRY_ID,
+      hasEnabledEntry(INVARIANT_ENTRY_ID, INVARIANT_ENTRY_NAME) ? undefined : INVARIANT_ENTRY_ID,
+    ].filter(entryId => entryId !== undefined)
+    return missing.length === 0
+      ? pass(id, 'Security Assurance and its invariant companion are enabled in Loader composition.')
+      : fail(id, `Required enabled Loader entries are missing: ${missing.join(', ')}.`)
+  } catch (error) {
+    return notEvaluated(id, `Declared composition verification unavailable: ${sanitizeErrorMessage(error)}.`)
+  }
+}
+
+function performVerification(ctx: Context): HarnessVerificationContribution {
+  const checks = Object.freeze([
+    verifyHarnessVersion(),
+    verifyRequiredServiceDefinitions(ctx),
+    verifyBundleDependencies(),
+    verifyGeneratedContract(ctx),
+    verifyCapabilityIdentity(ctx),
+    verifyDeclaredRuntimeComposition(ctx),
+  ])
+  return Object.freeze({
+    result: checks.every(check => !check.required || check.status === 'PASS') ? 'PASS' : 'FAIL',
+    checks,
+  })
+}
+
+function verificationReceiver(ctx: Context): HarnessVerificationReceiver | undefined {
+  const service = serviceFromContext(ctx, SERVICE_KEY) as Record<PropertyKey, unknown> | undefined
+  const receiver = service?.[RECEIVE_HARNESS_VERIFICATION]
+  return typeof receiver === 'function'
+    ? receiver.bind(service) as HarnessVerificationReceiver
+    : undefined
+}
+
+export const name = 'security-assurance-invariant'
+export const inject = ['invariants']
+
+const install: InvariantInstaller = Object.assign((ctx: Context) => {
+  const owner = Object.freeze(Object.create(null) as object)
+  const receiver = verificationReceiver(ctx)
+  if (receiver === undefined) return
+  receiver(HARNESS_VERIFICATION_AUTHORITY, owner, performVerification(ctx))
+  ctx.effect(() => () => {
+    receiver(HARNESS_VERIFICATION_AUTHORITY, owner, undefined)
+  })
+}, { inject: [SERVICE_KEY] })
+
+/** Register the dormant package-owned check through the Harness registry. */
+export const apply = (ctx: Context): Promise<() => void> =>
+  Promise.resolve(ctx.invariants.register(PACKAGE_NAME, install))

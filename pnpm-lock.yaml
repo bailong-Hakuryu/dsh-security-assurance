@@ -15,6 +15,9 @@ importers:
       '@deepseek-ai/cordis':
         specifier: link:../deepseek-harness-master/vendor/cordis
         version: link:../deepseek-harness-master/vendor/cordis
+      '@deepseek-ai/cordis-plugin-loader':
+        specifier: link:../deepseek-harness-master/vendor/loader
+        version: link:../deepseek-harness-master/vendor/loader
       '@deepseek-ai/dsh-agent':
         specifier: link:../deepseek-harness-master/packages/core/agent
         version: link:../deepseek-harness-master/packages/core/agent
@@ -48,6 +51,9 @@ importers:
       '@deepseek-ai/dsh-home-paths':
         specifier: link:../deepseek-harness-master/packages/util/home-paths
         version: link:../deepseek-harness-master/packages/util/home-paths
+      '@deepseek-ai/dsh-invariants':
+        specifier: link:../deepseek-harness-master/packages/runtime-diagnostics/invariants
+        version: link:../deepseek-harness-master/packages/runtime-diagnostics/invariants
       '@deepseek-ai/dsh-llm':
         specifier: link:../deepseek-harness-master/packages/llm/llm
         version: link:../deepseek-harness-master/packages/llm/llm

@@ -4,6 +4,11 @@
     - id: dsh-security-assurance
       name: dsh-security-assurance
       disabled: true
+    # Optional package-owned composition verification. Enable beside the root
+    # Service only when the Harness invariant registry is present.
+    - id: dsh-security-assurance-invariant
+      name: dsh-security-assurance/invariant
+      disabled: true
     - id: dsh-security-assurance-tools
       name: dsh-security-assurance/tools
       disabled: true

@@ -99,6 +99,7 @@ try {
     type: 'module',
     dependencies: {
       '@deepseek-ai/cordis': '4.0.1',
+      '@deepseek-ai/cordis-plugin-loader': '1.0.2',
       '@deepseek-ai/dsh-agent': '0.1.1-rc.2',
       '@deepseek-ai/dsh-api-gateway': '0.1.1-rc.2',
       '@deepseek-ai/dsh-client-locale': '0.1.1-rc.2',
@@ -839,6 +840,15 @@ if (
 const root = await import('dsh-security-assurance')
 if ('SecurityPersistence' in root || 'freezeSubject' in root || 'SecurityAuthorityResolver' in root) {
   throw new Error('root export leaked a package-private implementation boundary')
+}
+const invariant = await import('dsh-security-assurance/invariant')
+if (
+  invariant.name !== 'security-assurance-invariant'
+  || JSON.stringify(invariant.inject) !== JSON.stringify(['invariants'])
+  || typeof invariant.apply !== 'function'
+  || 'SecurityAssuranceInvariant' in invariant
+) {
+  throw new Error('packed invariant companion is incomplete or exposes a public Service')
 }
 const modelTools = await import('dsh-security-assurance/tools')
 if (
@@ -1677,6 +1687,7 @@ if (ctx.reflect.get('securityAssurance') !== undefined) {
 }
 process.stdout.write(JSON.stringify({
   packedImport: 'PASS',
+  invariantEntry: 'PASS',
   analyzerContract: 'PASS',
   evaluationMetrics: 'PASS',
   modelTools: 'PASS',
@@ -1698,6 +1709,7 @@ process.stdout.write(JSON.stringify({
   const result = JSON.parse(probe.stdout)
   if (
     result.packedImport !== 'PASS'
+    || result.invariantEntry !== 'PASS'
     || result.analyzerContract !== 'PASS'
     || result.evaluationMetrics !== 'PASS'
     || result.modelTools !== 'PASS'
@@ -2497,6 +2509,7 @@ process.stdout.write(JSON.stringify({
     controlPlaneArtifact: controlPlaneFilename,
     packageVersion: installedManifest.version,
     packedImport: result.packedImport,
+    invariantEntry: result.invariantEntry,
     analyzerContract: result.analyzerContract,
     evaluationMetrics: result.evaluationMetrics,
     modelTools: result.modelTools,

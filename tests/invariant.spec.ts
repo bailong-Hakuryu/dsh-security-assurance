@@ -1,276 +1,337 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
+import { InvariantRegistry } from '@deepseek-ai/dsh-invariants'
 import { SecurityAssuranceService } from '../src/index.ts'
-import { SecurityAssuranceInvariant } from '../src/invariant.ts'
+import * as invariantEntry from '../src/invariant.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
+
+const PUBLIC_METHODS = [
+  'whenReady',
+  'registerAnalyzer',
+  'registerAnalyzerQualification',
+  'getHealth',
+  'getCatalog',
+  'registerRepository',
+  'updateRepository',
+  'disableRepository',
+  'getRepository',
+  'listRepositories',
+  'startAssessment',
+  'resumeAssessment',
+  'cancelAssessment',
+  'listAssessments',
+  'getAssessment',
+  'listFindings',
+  'getFinding',
+  'getEvidenceView',
+  'recordRiskDecision',
+  'waitForAssessmentRevision',
+  'getBundleManifest',
+  'getAssuranceSubmission',
+  'requestExport',
+  'getExport',
+] as const
+
+interface LoaderEntryFixture {
+  readonly options: {
+    readonly id: string
+    readonly name: string
+    readonly disabled?: boolean
+  }
+}
+
+interface LoaderFixtureConfig {
+  readonly entries?: readonly LoaderEntryFixture[]
+}
+
+class LoaderFixture extends Service {
+  private readonly configuredEntries: readonly LoaderEntryFixture[]
+
+  constructor(ctx: Context, config: LoaderFixtureConfig = {}) {
+    super(ctx, 'loader')
+    this.configuredEntries = config.entries ?? []
+  }
+
+  * entries(): Generator<LoaderEntryFixture, void, void> {
+    yield* this.configuredEntries
+  }
+}
+
+interface TypertRecordFixture {
+  readonly package: string
+  readonly face: string
+  readonly key: string
+  readonly model: {
+    readonly services: readonly {
+      readonly key: string
+      readonly exportName: string
+      readonly members: readonly {
+        readonly kind: 'method'
+        readonly name: string
+      }[]
+    }[]
+  }
+}
+
+interface TypertFixtureConfig {
+  readonly record?: TypertRecordFixture
+  readonly failureMessage?: string
+}
+
+class TypertFixture extends Service {
+  private readonly record: TypertRecordFixture | undefined
+  private readonly failureMessage: string | undefined
+
+  constructor(ctx: Context, config: TypertFixtureConfig = {}) {
+    super(ctx, 'typert')
+    this.record = config.record
+    this.failureMessage = config.failureMessage
+  }
+
+  getPackage(): TypertRecordFixture | undefined {
+    if (this.failureMessage !== undefined) throw new Error(this.failureMessage)
+    return this.record
+  }
+}
+
+function validEntries(): readonly LoaderEntryFixture[] {
+  return [
+    {
+      options: {
+        id: 'dsh-security-assurance',
+        name: 'dsh-security-assurance',
+      },
+    },
+    {
+      options: {
+        id: 'dsh-security-assurance-invariant',
+        name: 'dsh-security-assurance/invariant',
+      },
+    },
+  ]
+}
+
+function hostRecord(options: {
+  readonly packageName?: string
+  readonly face?: string
+  readonly packageKey?: string
+  readonly serviceKey?: string
+  readonly exportName?: string
+  readonly methods?: readonly string[]
+} = {}): TypertRecordFixture {
+  return {
+    package: options.packageName ?? 'dsh-security-assurance',
+    face: options.face ?? 'host',
+    key: options.packageKey ?? 'dsh-security-assurance#host',
+    model: {
+      services: [{
+        key: options.serviceKey ?? 'securityAssurance',
+        exportName: options.exportName ?? 'SecurityAssuranceService',
+        members: (options.methods ?? PUBLIC_METHODS).map(method => ({
+          kind: 'method',
+          name: method,
+        })),
+      }],
+    },
+  }
+}
 
 describe('Invariant Entry', () => {
   let ctx: Context
-  let service: SecurityAssuranceService
-  let invariant: SecurityAssuranceInvariant
   let dshHome: string
+  let fibers: Fiber[]
 
   beforeEach(async () => {
     ctx = new Context()
     dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-invariant-test-'))
+    fibers = []
   })
 
   afterEach(async () => {
-    if (ctx && typeof (ctx as any).dispose === 'function') {
-      await (ctx as any).dispose()
+    for (const fiber of fibers.reverse()) {
+      try {
+        await fiber.dispose()
+      } catch {
+        // Best-effort teardown keeps the primary assertion failure visible.
+      }
     }
-    if (dshHome) {
-      await rm(dshHome, { recursive: true, force: true }).catch(() => {})
+    await rm(dshHome, { recursive: true, force: true }).catch(() => {})
+  })
+
+  async function activateService(): Promise<void> {
+    const fiber = ctx.plugin(SecurityAssuranceService, { dshHome })
+    fibers.push(fiber)
+    await fiber
+    await ctx.securityAssurance.whenReady()
+  }
+
+  async function activateInvariantComposition(options: {
+    readonly entries?: readonly LoaderEntryFixture[]
+    readonly typertRecord?: TypertRecordFixture
+    readonly typertFailureMessage?: string
+    readonly omitTypert?: boolean
+  } = {}): Promise<Fiber> {
+    const registryFiber = ctx.plugin(InvariantRegistry)
+    fibers.push(registryFiber)
+    await registryFiber
+
+    const loaderFiber = ctx.plugin(LoaderFixture, {
+      entries: options.entries ?? validEntries(),
+    })
+    fibers.push(loaderFiber)
+    await loaderFiber
+
+    if (options.omitTypert !== true) {
+      const typertFiber = ctx.plugin(TypertFixture, {
+        record: options.typertRecord ?? hostRecord(),
+        ...(options.typertFailureMessage === undefined
+          ? {}
+          : { failureMessage: options.typertFailureMessage }),
+      })
+      fibers.push(typertFiber)
+      await typertFiber
     }
-  })
 
-  it('performs Harness composition verification at construction', async () => {
-    const serviceFiber = ctx.plugin(SecurityAssuranceService, { dshHome })
-    await serviceFiber
-    service = ctx.securityAssurance
-    expect(service).toBeDefined()
-
-    const invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
+    await activateService()
+    const invariantFiber = ctx.plugin(invariantEntry)
+    fibers.push(invariantFiber)
     await invariantFiber
-    invariant = ctx.securityAssuranceInvariant
-    expect(invariant).toBeDefined()
+    return invariantFiber
+  }
 
-    const result = invariant.getVerificationResult()
-    expect(result).toMatch(/^(PASS|FAIL|PENDING_INVARIANT)$/)
+  async function health() {
+    const invocation = referenceHostInvocation(ctx.securityAssurance)
+    const result = await ctx.securityAssurance.getHealth(invocation, { schemaVersion: 1 })
+    if (!result.ok) throw new Error(`health failed: ${result.error.code}`)
+    return result.value
+  }
 
-    const checks = invariant.getVerificationChecks()
-    expect(Array.isArray(checks)).toBe(true)
-    expect(checks.length).toBeGreaterThan(0)
+  it('stays dormant until the optional invariant companion is activated', async () => {
+    await activateService()
 
-    for (const check of checks) {
-      expect(check).toHaveProperty('id')
-      expect(check).toHaveProperty('status')
-      expect(check).toHaveProperty('required')
-      expect(check).toHaveProperty('message')
-      expect(check.status).toMatch(/^(PASS|FAIL)$/)
-      expect(typeof check.required).toBe('boolean')
-      expect(typeof check.message).toBe('string')
-    }
+    const snapshot = await health()
+
+    expect(snapshot.compatibility.harnessVerification).toBe('PENDING_INVARIANT')
+    expect(snapshot.checks.filter(check => check.id.startsWith('composition.'))).toEqual([])
   })
 
-  it('contributes verification result to Service Runtime Health', async () => {
-    const serviceFiber = ctx.plugin(SecurityAssuranceService, { dshHome })
-    await serviceFiber
-    service = ctx.securityAssurance
-    expect(service).toBeDefined()
+  it('reports PASS only when all six required composition checks pass', async () => {
+    await activateInvariantComposition()
 
-    const invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
-    await invariantFiber
-    invariant = ctx.securityAssuranceInvariant
-    expect(invariant).toBeDefined()
+    const snapshot = await health()
+    const compositionChecks = snapshot.checks.filter(check => check.id.startsWith('composition.'))
 
-    await service.whenReady()
-
-    // Verify the invariant performed its checks
-    const result = invariant.getVerificationResult()
-    expect(result).toMatch(/^(PASS|FAIL|PENDING_INVARIANT)$/)
-
-    const checks = invariant.getVerificationChecks()
-    expect(Array.isArray(checks)).toBe(true)
-    expect(checks.length).toBeGreaterThan(0)
-
-    // Verify the result was contributed to Service Runtime Health
-    const invocation = referenceHostInvocation(service)
-    const healthResult = await service.getHealth(invocation, { schemaVersion: 1 })
-    expect(healthResult.ok).toBe(true)
-
-    if (healthResult.ok) {
-      const health = healthResult.value
-      expect(health.compatibility.harnessVerification).toBe(result)
-
-      // Verify checks are present in health
-      const harnessChecks = health.checks.filter(c => c.id.startsWith('composition.'))
-      expect(harnessChecks.length).toBeGreaterThan(0)
-    }
+    expect(snapshot.compatibility.harnessVerification).toBe('PASS')
+    expect(snapshot.state).toBe('READY')
+    expect(snapshot.admission.mutations).toBe(true)
+    expect(compositionChecks.map(check => check.id)).toEqual([
+      'composition.harness-version',
+      'composition.required-service-definitions',
+      'composition.bundle-dependencies',
+      'composition.generated-contract',
+      'composition.capability-identity',
+      'composition.declared-runtime',
+    ])
+    expect(compositionChecks).toEqual(compositionChecks.map(check => ({
+      ...check,
+      status: 'PASS',
+      required: true,
+    })))
   })
 
-  it('verifies required Cordis services exist', async () => {
-    ctx.plugin(SecurityAssuranceService, { dshHome })
-    service = ctx.securityAssurance
+  it('fails closed when a required composition check cannot be evaluated', async () => {
+    await activateInvariantComposition({ omitTypert: true })
 
-    const invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
-    await invariantFiber
-    invariant = ctx.securityAssuranceInvariant
+    const snapshot = await health()
+    const invocation = referenceHostInvocation(ctx.securityAssurance)
+    const mutation = await ctx.securityAssurance.registerRepository(invocation, {
+      schemaVersion: 1,
+      idempotencyKey: 'invariant-read-only-register-1',
+      root: 'D:/must-not-be-resolved-in-invariant-safe-mode',
+      displayName: 'Must not register',
+      bindings: {
+        policyId: 'security/default',
+        assessmentProfileId: 'security/standard',
+        evidenceProtectionId: 'evidence/local-protected',
+        dataEgressPolicyId: 'egress/deny-by-default',
+        platform: 'linux',
+        deliveryDestinationIds: [],
+      },
+    })
 
-    const checks = invariant.getVerificationChecks()
-    const servicesCheck = checks.find(c => c.id === 'composition.required-services')
-
-    expect(servicesCheck).toBeDefined()
-    if (servicesCheck) {
-      expect(servicesCheck.required).toBe(true)
-      // In test environment, some services may not be available
-      expect(servicesCheck.status).toMatch(/^(PASS|FAIL)$/)
-    }
+    expect(snapshot.checks).toContainEqual(expect.objectContaining({
+      id: 'composition.generated-contract',
+      status: 'NOT_EVALUATED',
+      required: true,
+    }))
+    expect(snapshot.compatibility.harnessVerification).toBe('FAIL')
+    expect(snapshot.state).toBe('READ_ONLY_SAFE')
+    expect(snapshot.admission.mutations).toBe(false)
+    expect(mutation).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE', retryable: true } })
   })
 
-  it('verifies Security Assurance Service registration', async () => {
-    ctx.plugin(SecurityAssuranceService, { dshHome })
-    service = ctx.securityAssurance
+  it('revokes its Health contribution when its real Cordis Fiber is disposed', async () => {
+    const invariantFiber = await activateInvariantComposition()
+    expect((await health()).compatibility.harnessVerification).toBe('PASS')
 
-    const invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
-    await invariantFiber
-    invariant = ctx.securityAssuranceInvariant
+    await invariantFiber.dispose()
 
-    const checks = invariant.getVerificationChecks()
-    const serviceCheck = checks.find(c => c.id === 'composition.service-registration')
-
-    expect(serviceCheck).toBeDefined()
-    if (serviceCheck) {
-      expect(serviceCheck.required).toBe(true)
-      expect(serviceCheck.status).toBe('PASS')
-      expect(serviceCheck.message).toContain('correctly registered')
-    }
+    const snapshot = await health()
+    expect(snapshot.compatibility.harnessVerification).toBe('PENDING_INVARIANT')
+    expect(snapshot.checks.filter(check => check.id.startsWith('composition.'))).toEqual([])
   })
 
-  it('is dormant and performs no Assessment work', async () => {
-    ctx.plugin(SecurityAssuranceService, { dshHome })
-    service = ctx.securityAssurance
+  it('rejects incomplete generated methods and incorrect capability identity', async () => {
+    await activateInvariantComposition({
+      typertRecord: hostRecord({
+        packageKey: 'dsh-security-assurance#wrong-face',
+        methods: PUBLIC_METHODS.filter(method => method !== 'getExport'),
+      }),
+    })
 
-    const invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
-    await invariantFiber
-    invariant = ctx.securityAssuranceInvariant
+    const snapshot = await health()
 
-    // Invariant should not start any Assessment Engine
-    // Invariant should not mutate Assessment state
-    // Invariant should not register Providers
-    // This is verified by the fact that it only performs checks and returns results
-
-    const result = invariant.getVerificationResult()
-    expect(result).toBeDefined()
-
-    // No side effects should be observable beyond the verification result
-    expect(typeof invariant.getVerificationResult).toBe('function')
-    expect(typeof invariant.getVerificationChecks).toBe('function')
+    expect(snapshot.compatibility.harnessVerification).toBe('FAIL')
+    expect(snapshot.checks).toContainEqual(expect.objectContaining({
+      id: 'composition.generated-contract',
+      status: 'FAIL',
+    }))
+    expect(snapshot.checks).toContainEqual(expect.objectContaining({
+      id: 'composition.capability-identity',
+      status: 'FAIL',
+    }))
   })
 
-  it('disposes cleanly with Fiber ownership', async () => {
-    const serviceFiber = ctx.plugin(SecurityAssuranceService, { dshHome })
-    await serviceFiber
-    service = ctx.securityAssurance
-    expect(service).toBeDefined()
+  it('fails when the invariant companion is absent from enabled Loader composition', async () => {
+    await activateInvariantComposition({ entries: validEntries().slice(0, 1) })
 
-    const invariantCtx = ctx.plugin(SecurityAssuranceInvariant)
-    await invariantCtx
-    invariant = ctx.securityAssuranceInvariant
+    const snapshot = await health()
 
-    expect(invariant).toBeDefined()
-
-    // Dispose the invariant plugin
-    invariantCtx.dispose()
-
-    // Service should remain functional - verify it still exists
-    expect(ctx.securityAssurance).toBeDefined()
-
-    // The service reference should still be valid
-    expect(service).toBeDefined()
+    expect(snapshot.compatibility.harnessVerification).toBe('FAIL')
+    expect(snapshot.checks).toContainEqual(expect.objectContaining({
+      id: 'composition.declared-runtime',
+      status: 'FAIL',
+      required: true,
+    }))
   })
 
-  it('does not patch or modify Harness', async () => {
-    const serviceFiber = ctx.plugin(SecurityAssuranceService, { dshHome })
-    await serviceFiber
-    service = ctx.securityAssurance
+  it('redacts secrets from unavailable-check diagnostics exposed through Health', async () => {
+    const apiKey = '0123456789abcdef0123456789abcdef'
+    const providerToken = 'sk-proj-demo-secret-value'
+    await activateInvariantComposition({
+      typertFailureMessage: `credentials api_key=${apiKey} provider=${providerToken}`,
+    })
 
-    const invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
-    await invariantFiber
-    invariant = ctx.securityAssuranceInvariant
+    const snapshot = await health()
+    const messages = snapshot.checks.map(check => check.message).join('\n')
 
-    // Invariant should not modify any existing services
-    // We can't use toBe(service) because of Cordis proxy, so just verify both exist
-    expect(service).toBeDefined()
-    expect(ctx.securityAssurance).toBeDefined()
-
-    // Verify invariant was created
-    expect(invariant).toBeDefined()
-  })
-
-  it('reports verification failures without throwing', async () => {
-    ctx.plugin(SecurityAssuranceService, { dshHome })
-    service = ctx.securityAssurance
-
-    // Invariant construction should not throw even if checks fail
-    let invariantFiber
-    expect(() => {
-      invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
-    }).not.toThrow()
-
-    await invariantFiber
-    invariant = ctx.securityAssuranceInvariant
-    expect(invariant).toBeDefined()
-
-    const result = invariant.getVerificationResult()
-    expect(result).toBeDefined()
-  })
-
-  it('verifies all checks have proper structure', async () => {
-    ctx.plugin(SecurityAssuranceService, { dshHome })
-    service = ctx.securityAssurance
-
-    const invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
-    await invariantFiber
-    invariant = ctx.securityAssuranceInvariant
-
-    const checks = invariant.getVerificationChecks()
-
-    // Verify all checks have proper structure
-    for (const check of checks) {
-      expect(check).toHaveProperty('id')
-      expect(check).toHaveProperty('status')
-      expect(check).toHaveProperty('required')
-      expect(check).toHaveProperty('message')
-      expect(typeof check.id).toBe('string')
-      expect(['PASS', 'FAIL', 'NOT_EVALUATED']).toContain(check.status)
-      expect(typeof check.required).toBe('boolean')
-      expect(typeof check.message).toBe('string')
-      expect(check.message.length).toBeGreaterThan(0)
-      expect(check.message.length).toBeLessThanOrEqual(512)
-    }
-  })
-
-  it('verifies check IDs follow naming convention', async () => {
-    ctx.plugin(SecurityAssuranceService, { dshHome })
-    service = ctx.securityAssurance
-
-    const invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
-    await invariantFiber
-    invariant = ctx.securityAssuranceInvariant
-
-    const checks = invariant.getVerificationChecks()
-
-    // Verify all check IDs follow the naming convention
-    const idPattern = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/
-    for (const check of checks) {
-      expect(check.id).toMatch(idPattern)
-      expect(check.id.length).toBeLessThanOrEqual(96)
-    }
-  })
-
-  it('verifies required checks are actually critical', async () => {
-    ctx.plugin(SecurityAssuranceService, { dshHome })
-    service = ctx.securityAssurance
-
-    const invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
-    await invariantFiber
-    invariant = ctx.securityAssuranceInvariant
-
-    const checks = invariant.getVerificationChecks()
-    const requiredChecks = checks.filter(c => c.required)
-
-    // Verify critical checks are marked as required
-    expect(requiredChecks.some(c => c.id === 'composition.harness-version')).toBe(true)
-    expect(requiredChecks.some(c => c.id === 'composition.required-services')).toBe(true)
-    expect(requiredChecks.some(c => c.id === 'composition.service-registration')).toBe(true)
-    expect(requiredChecks.some(c => c.id === 'composition.public-contract')).toBe(true)
-
-    // Context integrity check may be required or not depending on what failed
-    const contextCheck = checks.find(c => c.id === 'composition.context-integrity')
-    expect(contextCheck).toBeDefined()
+    expect(snapshot.compatibility.harnessVerification).toBe('FAIL')
+    expect(messages).not.toContain(apiKey)
+    expect(messages).not.toContain(providerToken)
+    expect(messages).toContain('[redacted]')
+    expect(messages).toContain('[token]')
   })
 })

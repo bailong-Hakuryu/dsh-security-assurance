@@ -105,6 +105,14 @@ import {
   LOOKUP_CONTROL_PLANE_ASSESSMENT,
   lookupControlPlaneAssessment,
 } from './internal/control-plane-assessment.ts'
+import {
+  HARNESS_VERIFICATION_AUTHORITY,
+  RECEIVE_HARNESS_VERIFICATION,
+  type HarnessVerificationCheck,
+  type HarnessVerificationOwner,
+  type HarnessVerificationReceiver,
+  type HarnessVerificationResult,
+} from './internal/harness-verification.ts'
 import { reachControlPlaneCancellationCrashCheckpoint } from './internal/control-plane-cancellation-crash-checkpoint.ts'
 import {
   EXECUTE_CONTROL_PLANE_PROVIDER_OPERATION,
@@ -231,14 +239,6 @@ function interruption<T>(options: InvocationOptions): SecurityResult<T> | undefi
 }
 
 type ServiceLifecycleState = 'ACTIVE' | 'QUIESCING' | 'STOPPED'
-type HarnessVerificationResult = 'PASS' | 'FAIL' | 'PENDING_INVARIANT'
-
-interface HarnessVerificationCheck {
-  readonly id: string
-  readonly status: 'PASS' | 'FAIL'
-  readonly required: boolean
-  readonly message: string
-}
 
 function buildRuntimeHealth(
   persistenceReady: boolean,
@@ -412,6 +412,7 @@ export class SecurityAssuranceService extends Service {
   private disposed = false
   private harnessVerification: HarnessVerificationResult = 'PENDING_INVARIANT'
   private harnessVerificationChecks: readonly HarnessVerificationCheck[] = []
+  private harnessVerificationOwner: HarnessVerificationOwner | undefined
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'securityAssurance')
@@ -492,16 +493,26 @@ export class SecurityAssuranceService extends Service {
       ) => this.executeControlPlaneProviderOperation(invocation, operation, options),
     })
 
-    // Package-private symbol for receiving Harness verification results from the invariant entry
-    const RECEIVE_HARNESS_VERIFICATION = Symbol.for('dsh-security-assurance:receive-harness-verification:v1')
     Object.defineProperty(this, RECEIVE_HARNESS_VERIFICATION, {
       configurable: false,
       enumerable: false,
       writable: false,
-      value: (result: HarnessVerificationResult, checks: readonly HarnessVerificationCheck[]) => {
-        this.harnessVerification = result
-        this.harnessVerificationChecks = checks
-      },
+      value: ((authority, owner, contribution) => {
+        if (authority !== HARNESS_VERIFICATION_AUTHORITY) return false
+        if (contribution === undefined) {
+          if (this.harnessVerificationOwner !== owner) return false
+          this.harnessVerificationOwner = undefined
+          this.harnessVerification = 'PENDING_INVARIANT'
+          this.harnessVerificationChecks = []
+          return true
+        }
+        this.harnessVerificationOwner = owner
+        this.harnessVerification = contribution.result
+        this.harnessVerificationChecks = deepFreeze(
+          contribution.checks.map(check => ({ ...check })),
+        )
+        return true
+      }) satisfies HarnessVerificationReceiver,
     })
 
     void this.ready.catch(() => {})
@@ -1860,6 +1871,7 @@ export class SecurityAssuranceService extends Service {
     return persistence !== undefined
       && this.lifecycleState === 'ACTIVE'
       && this.runtimeCompatible
+      && this.harnessVerification !== 'FAIL'
   }
 
   private startExportDeliveryWorker(): void {
