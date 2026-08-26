@@ -123,7 +123,17 @@ export class SecurityAssuranceInvariant extends Service {
     ]
 
     const missingServices = requiredServices.filter(serviceName => {
-      return !(this.ctx as any)[serviceName]
+      try {
+        // Use reflection API if available to safely check service existence
+        if (this.ctx.reflect) {
+          return this.ctx.reflect.get(serviceName) === undefined
+        }
+        // Fallback: try to access the service in a try-catch
+        return (this.ctx as any)[serviceName] === undefined
+      } catch {
+        // If accessing throws, service is not available
+        return true
+      }
     })
 
     if (missingServices.length > 0) {
