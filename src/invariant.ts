@@ -69,6 +69,14 @@ export class SecurityAssuranceInvariant extends Service {
     const contextIntegrityCheck = this.verifyContextIntegrity()
     checks.push(contextIntegrityCheck)
 
+    // 7. Verify bundle dependencies
+    const bundleDepsCheck = this.verifyBundleDependencies()
+    checks.push(bundleDepsCheck)
+
+    // 8. Verify public contract compatibility
+    const contractCheck = this.verifyPublicContract()
+    checks.push(contractCheck)
+
     this.verificationChecks = checks
 
     // Result is PASS only if all required checks pass
@@ -328,6 +336,107 @@ export class SecurityAssuranceInvariant extends Service {
         status: 'FAIL',
         required: true,
         message: `Context integrity verification failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+      }
+    }
+  }
+
+  private verifyBundleDependencies(): HarnessVerificationCheck {
+    // Verify critical bundle dependencies are available
+    try {
+      const loader = (this.ctx as any).loader
+      if (!loader?.packages) {
+        return {
+          id: 'composition.bundle-dependencies',
+          status: 'FAIL',
+          required: false,
+          message: 'Loader not available for dependency verification.',
+        }
+      }
+
+      // Check for critical dependencies
+      const criticalDeps = [
+        '@deepseek-ai/cordis',
+        '@deepseek-ai/harness',
+      ]
+
+      const missingDeps = criticalDeps.filter(dep => !loader.packages[dep])
+
+      if (missingDeps.length > 0) {
+        return {
+          id: 'composition.bundle-dependencies',
+          status: 'FAIL',
+          required: false,
+          message: `Missing critical dependencies: ${missingDeps.join(', ')}.`,
+        }
+      }
+
+      return {
+        id: 'composition.bundle-dependencies',
+        status: 'PASS',
+        required: false,
+        message: `All critical bundle dependencies are available.`,
+      }
+    } catch (error) {
+      return {
+        id: 'composition.bundle-dependencies',
+        status: 'FAIL',
+        required: false,
+        message: `Bundle dependency verification failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+      }
+    }
+  }
+
+  private verifyPublicContract(): HarnessVerificationCheck {
+    // Verify the Security Assurance Service exposes the expected public contract
+    try {
+      const service = this.ctx.securityAssurance
+      if (!service) {
+        return {
+          id: 'composition.public-contract',
+          status: 'FAIL',
+          required: true,
+          message: 'Security Assurance Service not available for contract verification.',
+        }
+      }
+
+      // Check for essential public methods
+      const requiredMethods = [
+        'getHealth',
+        'whenReady',
+      ]
+
+      const missingMethods = requiredMethods.filter(method => typeof (service as any)[method] !== 'function')
+
+      if (missingMethods.length > 0) {
+        return {
+          id: 'composition.public-contract',
+          status: 'FAIL',
+          required: true,
+          message: `Service missing required methods: ${missingMethods.join(', ')}.`,
+        }
+      }
+
+      // Verify Service has lifecycle methods (optional)
+      const optionalMethods = [
+        'startAssessment',
+        'getAssessment',
+        'waitForAssessment',
+      ]
+
+      const availableOptional = optionalMethods.filter(method => typeof (service as any)[method] === 'function')
+
+      return {
+        id: 'composition.public-contract',
+        status: 'PASS',
+        required: true,
+        message: `Service public contract verified (${availableOptional.length} optional methods available).`,
+      }
+    } catch (error) {
+      return {
+        id: 'composition.public-contract',
+        status: 'FAIL',
+        required: true,
+        message: `Public contract verification failed: ${error instanceof Error ? error.message : 'unknown error'}`,
       }
     }
   }
