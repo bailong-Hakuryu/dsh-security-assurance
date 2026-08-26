@@ -4,6 +4,16 @@ import {
 } from './contracts.ts'
 
 /**
+ * Sanitize error message for inclusion in public Health checks.
+ * Limits length and removes potentially sensitive details.
+ */
+function sanitizeErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : 'unknown error'
+  const sanitized = raw.replace(/\/[^\s]+/g, '[path]').replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g, '[ip]')
+  return sanitized.slice(0, 200)
+}
+
+/**
  * Harness composition verification result contributed to Runtime Health.
  *
  * The invariant entry verifies the exact Harness version, required Service
@@ -14,7 +24,7 @@ export type HarnessVerificationResult = 'PASS' | 'FAIL' | 'PENDING_INVARIANT'
 
 export interface HarnessVerificationCheck {
   readonly id: string
-  readonly status: 'PASS' | 'FAIL'
+  readonly status: 'PASS' | 'FAIL' | 'NOT_EVALUATED'
   readonly required: boolean
   readonly message: string
 }
@@ -40,6 +50,10 @@ export class SecurityAssuranceInvariant extends Service {
 
     // Contribute verification result to the Service
     this.contributeToServiceHealth()
+
+    // TODO: Implement proper Fiber disposer to revoke health contribution
+    // when invariant is unloaded. Currently, verification state persists
+    // after invariant disposal (Standards issue #4).
   }
 
   private performVerification(): void {
@@ -129,7 +143,7 @@ export class SecurityAssuranceInvariant extends Service {
         id: 'composition.harness-version',
         status: 'FAIL',
         required: true,
-        message: `Harness version verification failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+        message: `Harness version verification failed: ${sanitizeErrorMessage(error)}`,
       }
     }
   }
@@ -205,7 +219,7 @@ export class SecurityAssuranceInvariant extends Service {
         id: 'composition.service-registration',
         status: 'FAIL',
         required: true,
-        message: `Service registration verification failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+        message: `Service registration verification failed: ${sanitizeErrorMessage(error)}`,
       }
     }
   }
@@ -218,20 +232,38 @@ export class SecurityAssuranceInvariant extends Service {
       if (!registry) {
         return {
           id: 'composition.no-conflicts',
-          status: 'PASS',
+          status: 'NOT_EVALUATED',
           required: false,
           message: 'Conflict detection skipped (reflect not available).',
         }
       }
 
       // Verify our service is the only securityAssurance registration
+      // Compare using the underlying service instance, not the proxy
       const securityService = registry.get('securityAssurance')
-      if (securityService && securityService !== this.ctx.securityAssurance) {
+      if (!securityService) {
         return {
           id: 'composition.no-conflicts',
-          status: 'FAIL',
-          required: true,
-          message: 'Multiple Security Assurance Service registrations detected.',
+          status: 'PASS',
+          required: false,
+          message: 'No conflicting service registrations detected.',
+        }
+      }
+
+      // Check if there are multiple definitions for securityAssurance
+      // The registry tracks all service definitions, not proxies
+      const definitions = (this.ctx.reflect as any)?._services
+      if (definitions) {
+        const securityDefs = Array.from(definitions.values()).filter(
+          (def: any) => def?.name === 'securityAssurance'
+        )
+        if (securityDefs.length > 1) {
+          return {
+            id: 'composition.no-conflicts',
+            status: 'FAIL',
+            required: false,
+            message: 'Multiple Security Assurance Service registrations detected.',
+          }
         }
       }
 
@@ -244,7 +276,7 @@ export class SecurityAssuranceInvariant extends Service {
     } catch (error) {
       return {
         id: 'composition.no-conflicts',
-        status: 'PASS',
+        status: 'NOT_EVALUATED',
         required: false,
         message: 'Conflict detection skipped due to error.',
       }
@@ -286,7 +318,7 @@ export class SecurityAssuranceInvariant extends Service {
         id: 'composition.cordis-version',
         status: 'FAIL',
         required: false,
-        message: `Cordis version verification failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+        message: `Cordis version verification failed: ${sanitizeErrorMessage(error)}`,
       }
     }
   }
@@ -335,7 +367,7 @@ export class SecurityAssuranceInvariant extends Service {
         id: 'composition.context-integrity',
         status: 'FAIL',
         required: true,
-        message: `Context integrity verification failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+        message: `Context integrity verification failed: ${sanitizeErrorMessage(error)}`,
       }
     }
   }
@@ -381,7 +413,7 @@ export class SecurityAssuranceInvariant extends Service {
         id: 'composition.bundle-dependencies',
         status: 'FAIL',
         required: false,
-        message: `Bundle dependency verification failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+        message: `Bundle dependency verification failed: ${sanitizeErrorMessage(error)}`,
       }
     }
   }
@@ -436,7 +468,7 @@ export class SecurityAssuranceInvariant extends Service {
         id: 'composition.public-contract',
         status: 'FAIL',
         required: true,
-        message: `Public contract verification failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+        message: `Public contract verification failed: ${sanitizeErrorMessage(error)}`,
       }
     }
   }
@@ -466,8 +498,9 @@ export class SecurityAssuranceInvariant extends Service {
 /**
  * Package-private symbol for the Service to receive Harness verification results.
  * This avoids polluting the public Service API.
+ * Versioned to ensure protocol compatibility between invariant and Service.
  */
-export const RECEIVE_HARNESS_VERIFICATION = Symbol.for('dsh-security-assurance:receive-harness-verification')
+const RECEIVE_HARNESS_VERIFICATION = Symbol.for('dsh-security-assurance:receive-harness-verification:v1')
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

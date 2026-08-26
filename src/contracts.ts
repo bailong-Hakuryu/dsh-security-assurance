@@ -120,7 +120,7 @@ export interface RuntimeHealthSnapshot {
     readonly targetHarnessVersion: typeof TARGET_HARNESS_VERSION
     readonly requiredNodeRange: typeof REQUIRED_NODE_RANGE
     readonly actualNodeVersion: string
-    readonly harnessVerification: 'PENDING_INVARIANT'
+    readonly harnessVerification: 'PASS' | 'FAIL' | 'PENDING_INVARIANT'
   }
   readonly state: RuntimeHealthState
   readonly admission: {
@@ -141,7 +141,7 @@ export const runtimeHealthSnapshotSchema: z.ZodType<RuntimeHealthSnapshot> = z.s
     targetHarnessVersion: z.literal(TARGET_HARNESS_VERSION),
     requiredNodeRange: z.literal(REQUIRED_NODE_RANGE),
     actualNodeVersion: z.string().regex(/^\d+\.\d+\.\d+(?:[-+].+)?$/).max(64),
-    harnessVerification: z.literal('PENDING_INVARIANT'),
+    harnessVerification: z.enum(['PASS', 'FAIL', 'PENDING_INVARIANT']),
   }),
   state: runtimeHealthStateSchema,
   admission: z.strictObject({

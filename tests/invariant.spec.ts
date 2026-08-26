@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { SecurityAssuranceService } from '../src/index.ts'
 import { SecurityAssuranceInvariant } from '../src/invariant.ts'
+import { referenceHostInvocation } from './support/reference-host.ts'
 
 describe('Invariant Entry', () => {
   let ctx: Context
@@ -75,6 +76,20 @@ describe('Invariant Entry', () => {
     const checks = invariant.getVerificationChecks()
     expect(Array.isArray(checks)).toBe(true)
     expect(checks.length).toBeGreaterThan(0)
+
+    // Verify the result was contributed to Service Runtime Health
+    const invocation = referenceHostInvocation(service)
+    const healthResult = await service.getHealth(invocation, { schemaVersion: 1 })
+    expect(healthResult.ok).toBe(true)
+
+    if (healthResult.ok) {
+      const health = healthResult.value
+      expect(health.compatibility.harnessVerification).toBe(result)
+
+      // Verify checks are present in health
+      const harnessChecks = health.checks.filter(c => c.id.startsWith('composition.'))
+      expect(harnessChecks.length).toBeGreaterThan(0)
+    }
   })
 
   it('verifies required Cordis services exist', async () => {

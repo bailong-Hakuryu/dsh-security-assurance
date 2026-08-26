@@ -248,7 +248,8 @@ function buildRuntimeHealth(
   harnessVerification: HarnessVerificationResult,
   harnessVerificationChecks: readonly HarnessVerificationCheck[],
 ): RuntimeHealthSnapshot {
-  const mutationsAdmitted = nodeSupported && persistenceReady
+  const harnessBlocked = harnessVerification === 'FAIL'
+  const mutationsAdmitted = nodeSupported && persistenceReady && !harnessBlocked
   const state = lifecycleState === 'ACTIVE'
     ? mutationsAdmitted ? 'READY' : 'READ_ONLY_SAFE'
     : lifecycleState
@@ -492,7 +493,7 @@ export class SecurityAssuranceService extends Service {
     })
 
     // Package-private symbol for receiving Harness verification results from the invariant entry
-    const RECEIVE_HARNESS_VERIFICATION = Symbol.for('dsh-security-assurance:receive-harness-verification')
+    const RECEIVE_HARNESS_VERIFICATION = Symbol.for('dsh-security-assurance:receive-harness-verification:v1')
     Object.defineProperty(this, RECEIVE_HARNESS_VERIFICATION, {
       configurable: false,
       enumerable: false,
