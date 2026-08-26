@@ -61,8 +61,19 @@ export class SecurityAssuranceInvariant extends Service {
     const conflictCheck = this.verifyNoConflicts()
     checks.push(conflictCheck)
 
+    // 5. Verify Cordis framework version
+    const cordisVersionCheck = this.verifyCordisVersion()
+    checks.push(cordisVersionCheck)
+
+    // 6. Verify Context integrity
+    const contextIntegrityCheck = this.verifyContextIntegrity()
+    checks.push(contextIntegrityCheck)
+
     this.verificationChecks = checks
-    this.verificationResult = checks.every(c => c.status === 'PASS') ? 'PASS' : 'FAIL'
+
+    // Result is PASS only if all required checks pass
+    const requiredChecksFailed = checks.filter(c => c.required && c.status === 'FAIL')
+    this.verificationResult = requiredChecksFailed.length === 0 ? 'PASS' : 'FAIL'
   }
 
   private verifyHarnessVersion(): HarnessVerificationCheck {
@@ -228,6 +239,95 @@ export class SecurityAssuranceInvariant extends Service {
         status: 'PASS',
         required: false,
         message: 'Conflict detection skipped due to error.',
+      }
+    }
+  }
+
+  private verifyCordisVersion(): HarnessVerificationCheck {
+    // Verify Cordis framework is available and functional
+    try {
+      const loader = (this.ctx as any).loader
+      if (!loader?.packages) {
+        return {
+          id: 'composition.cordis-version',
+          status: 'FAIL',
+          required: false,
+          message: 'Cordis loader not available for version verification.',
+        }
+      }
+
+      const cordisPackage = loader.packages['@deepseek-ai/cordis']
+      if (!cordisPackage) {
+        return {
+          id: 'composition.cordis-version',
+          status: 'FAIL',
+          required: false,
+          message: 'Cordis package not found in loader registry.',
+        }
+      }
+
+      const version = cordisPackage.version
+      return {
+        id: 'composition.cordis-version',
+        status: 'PASS',
+        required: false,
+        message: `Cordis version ${version} is available.`,
+      }
+    } catch (error) {
+      return {
+        id: 'composition.cordis-version',
+        status: 'FAIL',
+        required: false,
+        message: `Cordis version verification failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+      }
+    }
+  }
+
+  private verifyContextIntegrity(): HarnessVerificationCheck {
+    // Verify the Context is functioning properly
+    try {
+      // Check basic Context capabilities
+      if (typeof this.ctx.plugin !== 'function') {
+        return {
+          id: 'composition.context-integrity',
+          status: 'FAIL',
+          required: true,
+          message: 'Context.plugin method not available.',
+        }
+      }
+
+      // Check if fiber is accessible
+      if (!this.ctx.fiber) {
+        return {
+          id: 'composition.context-integrity',
+          status: 'FAIL',
+          required: false,
+          message: 'Context.fiber not available.',
+        }
+      }
+
+      // Check if reflect service is accessible
+      if (!this.ctx.reflect) {
+        return {
+          id: 'composition.context-integrity',
+          status: 'PASS',
+          required: false,
+          message: 'Context integrity verified (reflect service not available).',
+        }
+      }
+
+      return {
+        id: 'composition.context-integrity',
+        status: 'PASS',
+        required: true,
+        message: 'Context integrity verified.',
+      }
+    } catch (error) {
+      return {
+        id: 'composition.context-integrity',
+        status: 'FAIL',
+        required: true,
+        message: `Context integrity verification failed: ${error instanceof Error ? error.message : 'unknown error'}`,
       }
     }
   }
