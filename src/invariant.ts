@@ -98,6 +98,12 @@ export class SecurityAssuranceInvariant extends Service {
     this.verificationResult = requiredChecksFailed.length === 0 ? 'PASS' : 'FAIL'
   }
 
+  /**
+   * Verify the exact version of @deepseek-ai/harness matches the target version.
+   * This ensures generated contracts and runtime composition are compatible.
+   *
+   * @returns {HarnessVerificationCheck} Check result with PASS/FAIL status
+   */
   private verifyHarnessVersion(): HarnessVerificationCheck {
     // Check if @deepseek-ai/harness is available and matches target version
     try {
@@ -148,6 +154,12 @@ export class SecurityAssuranceInvariant extends Service {
     }
   }
 
+  /**
+   * Verify that required Cordis services (loader, logger, http) are available.
+   * These services are critical for Security Assurance runtime operation.
+   *
+   * @returns {HarnessVerificationCheck} Check result with PASS/FAIL status
+   */
   private verifyRequiredServices(): HarnessVerificationCheck {
     const requiredServices = [
       'loader',
@@ -186,6 +198,12 @@ export class SecurityAssuranceInvariant extends Service {
     }
   }
 
+  /**
+   * Verify that the Security Assurance Service is properly registered
+   * and that there are no conflicting registrations in the service registry.
+   *
+   * @returns {HarnessVerificationCheck} Check result with PASS/FAIL/NOT_EVALUATED status
+   */
   private verifyServiceRegistration(): HarnessVerificationCheck {
     try {
       const securityService = this.ctx.securityAssurance
@@ -323,6 +341,12 @@ export class SecurityAssuranceInvariant extends Service {
     }
   }
 
+  /**
+   * Verify that the Cordis Context is functioning properly with all
+   * required capabilities (plugin, emit, fiber) available.
+   *
+   * @returns {HarnessVerificationCheck} Check result with PASS/FAIL status
+   */
   private verifyContextIntegrity(): HarnessVerificationCheck {
     // Verify the Context is functioning properly
     try {
@@ -336,6 +360,16 @@ export class SecurityAssuranceInvariant extends Service {
         }
       }
 
+      // Verify Context can emit events
+      if (typeof this.ctx.emit !== 'function') {
+        return {
+          id: 'composition.context-integrity',
+          status: 'FAIL',
+          required: true,
+          message: 'Context.emit method not available.',
+        }
+      }
+
       // Check if fiber is accessible
       if (!this.ctx.fiber) {
         return {
@@ -346,7 +380,17 @@ export class SecurityAssuranceInvariant extends Service {
         }
       }
 
-      // Check if reflect service is accessible
+      // Verify fiber has proper structure
+      if (this.ctx.fiber && typeof (this.ctx.fiber as any).id !== 'number') {
+        return {
+          id: 'composition.context-integrity',
+          status: 'FAIL',
+          required: false,
+          message: 'Context.fiber structure is invalid.',
+        }
+      }
+
+      // Check if reflect service is accessible (optional but recommended)
       if (!this.ctx.reflect) {
         return {
           id: 'composition.context-integrity',
@@ -372,6 +416,12 @@ export class SecurityAssuranceInvariant extends Service {
     }
   }
 
+  /**
+   * Verify that critical bundle dependencies (@deepseek-ai/cordis, zod)
+   * are available in the runtime environment.
+   *
+   * @returns {HarnessVerificationCheck} Check result with PASS/FAIL status
+   */
   private verifyBundleDependencies(): HarnessVerificationCheck {
     // Verify critical bundle dependencies are available
     try {
@@ -418,6 +468,12 @@ export class SecurityAssuranceInvariant extends Service {
     }
   }
 
+  /**
+   * Verify that the Security Assurance Service exposes the expected public
+   * contract with all required methods and proper signatures.
+   *
+   * @returns {HarnessVerificationCheck} Check result with PASS/FAIL status
+   */
   private verifyPublicContract(): HarnessVerificationCheck {
     // Verify the Security Assurance Service exposes the expected public contract
     try {
@@ -431,7 +487,7 @@ export class SecurityAssuranceInvariant extends Service {
         }
       }
 
-      // Check for essential public methods
+      // Check for essential public methods with proper signatures
       const requiredMethods = [
         'getHealth',
         'whenReady',
@@ -448,11 +504,33 @@ export class SecurityAssuranceInvariant extends Service {
         }
       }
 
-      // Verify Service has lifecycle methods (optional)
+      // Verify the RECEIVE_HARNESS_VERIFICATION protocol is implemented
+      if (typeof (service as any)[RECEIVE_HARNESS_VERIFICATION] !== 'function') {
+        return {
+          id: 'composition.public-contract',
+          status: 'FAIL',
+          required: true,
+          message: 'Service does not implement RECEIVE_HARNESS_VERIFICATION protocol.',
+        }
+      }
+
+      // Verify whenReady returns a Promise
+      const readyResult = (service as any).whenReady()
+      if (!(readyResult instanceof Promise)) {
+        return {
+          id: 'composition.public-contract',
+          status: 'FAIL',
+          required: true,
+          message: 'Service.whenReady() does not return a Promise.',
+        }
+      }
+
+      // Verify Service has assessment methods (optional capabilities)
       const optionalMethods = [
         'startAssessment',
         'getAssessment',
         'waitForAssessment',
+        'listAssessments',
       ]
 
       const availableOptional = optionalMethods.filter(method => typeof (service as any)[method] === 'function')

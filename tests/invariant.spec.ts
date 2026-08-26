@@ -208,4 +208,69 @@ describe('Invariant Entry', () => {
     const result = invariant.getVerificationResult()
     expect(result).toBeDefined()
   })
+
+  it('verifies all checks have proper structure', async () => {
+    ctx.plugin(SecurityAssuranceService, { dshHome })
+    service = ctx.securityAssurance
+
+    const invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
+    await invariantFiber
+    invariant = ctx.securityAssuranceInvariant
+
+    const checks = invariant.getVerificationChecks()
+
+    // Verify all checks have proper structure
+    for (const check of checks) {
+      expect(check).toHaveProperty('id')
+      expect(check).toHaveProperty('status')
+      expect(check).toHaveProperty('required')
+      expect(check).toHaveProperty('message')
+      expect(typeof check.id).toBe('string')
+      expect(['PASS', 'FAIL', 'NOT_EVALUATED']).toContain(check.status)
+      expect(typeof check.required).toBe('boolean')
+      expect(typeof check.message).toBe('string')
+      expect(check.message.length).toBeGreaterThan(0)
+      expect(check.message.length).toBeLessThanOrEqual(512)
+    }
+  })
+
+  it('verifies check IDs follow naming convention', async () => {
+    ctx.plugin(SecurityAssuranceService, { dshHome })
+    service = ctx.securityAssurance
+
+    const invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
+    await invariantFiber
+    invariant = ctx.securityAssuranceInvariant
+
+    const checks = invariant.getVerificationChecks()
+
+    // Verify all check IDs follow the naming convention
+    const idPattern = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/
+    for (const check of checks) {
+      expect(check.id).toMatch(idPattern)
+      expect(check.id.length).toBeLessThanOrEqual(96)
+    }
+  })
+
+  it('verifies required checks are actually critical', async () => {
+    ctx.plugin(SecurityAssuranceService, { dshHome })
+    service = ctx.securityAssurance
+
+    const invariantFiber = ctx.plugin(SecurityAssuranceInvariant)
+    await invariantFiber
+    invariant = ctx.securityAssuranceInvariant
+
+    const checks = invariant.getVerificationChecks()
+    const requiredChecks = checks.filter(c => c.required)
+
+    // Verify critical checks are marked as required
+    expect(requiredChecks.some(c => c.id === 'composition.harness-version')).toBe(true)
+    expect(requiredChecks.some(c => c.id === 'composition.required-services')).toBe(true)
+    expect(requiredChecks.some(c => c.id === 'composition.service-registration')).toBe(true)
+    expect(requiredChecks.some(c => c.id === 'composition.public-contract')).toBe(true)
+
+    // Context integrity check may be required or not depending on what failed
+    const contextCheck = checks.find(c => c.id === 'composition.context-integrity')
+    expect(contextCheck).toBeDefined()
+  })
 })
