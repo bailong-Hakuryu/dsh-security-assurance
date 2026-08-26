@@ -4,10 +4,56 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import SecurityAssuranceService from '../src/index.js'
+import {
+  publicSecurityErrorSchema,
+  type InvocationOptions,
+  type SecurityInvocation,
+  type SecurityResult,
+} from '../src/contracts.js'
 import { referenceHostInvocation } from './support/reference-host.js'
 
 const temporaryRoots: string[] = []
 const contexts: Context[] = []
+
+const publicOperationNames = [
+  'getHealth',
+  'getCatalog',
+  'registerRepository',
+  'updateRepository',
+  'disableRepository',
+  'getRepository',
+  'listRepositories',
+  'startAssessment',
+  'resumeAssessment',
+  'cancelAssessment',
+  'listAssessments',
+  'getAssessment',
+  'listFindings',
+  'getFinding',
+  'getEvidenceView',
+  'recordRiskDecision',
+  'waitForAssessmentRevision',
+  'getBundleManifest',
+  'getAssuranceSubmission',
+  'requestExport',
+  'getExport',
+] as const satisfies readonly (keyof SecurityAssuranceService)[]
+
+type PublicOperationName = typeof publicOperationNames[number]
+type PublicOperationResult = {
+  [Name in PublicOperationName]: Awaited<ReturnType<SecurityAssuranceService[Name]>>
+}[PublicOperationName]
+type AllOperationResultsUseEnvelope = [PublicOperationResult] extends [SecurityResult<unknown>]
+  ? true
+  : false
+type UniformPublicOperation = (
+  this: SecurityAssuranceService,
+  invocation: SecurityInvocation,
+  request: unknown,
+  options?: InvocationOptions,
+) => Promise<SecurityResult<unknown>>
+
+const allOperationSignaturesUseEnvelope: AllOperationResultsUseEnvelope = true
 
 afterEach(async () => {
   await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
@@ -15,6 +61,75 @@ afterEach(async () => {
 })
 
 describe('ADR 0247: Public operations return one typed Security Result envelope', () => {
+
+  it('keeps the reviewed catalog of 21 operation signatures inside SecurityResult<T>', () => {
+    expect(publicOperationNames).toHaveLength(21)
+    expect(allOperationSignaturesUseEnvelope).toBe(true)
+  })
+
+  it('returns one validated UNAUTHORIZED envelope from every public operation', async () => {
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-adr-0247-home-'))
+    temporaryRoots.push(dshHome)
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.securityAssurance.whenReady()
+    const invalidInvocation = {} as SecurityInvocation
+
+    for (const name of publicOperationNames) {
+      const invoke = ctx.securityAssurance[name] as unknown as UniformPublicOperation
+      const result = await invoke.call(ctx.securityAssurance, invalidInvocation, {})
+
+      expect(result, name).toMatchObject({
+        ok: false,
+        error: {
+          schemaVersion: 1,
+          code: 'UNAUTHORIZED',
+          retryable: false,
+        },
+      })
+      if (!result.ok) {
+        expect(publicSecurityErrorSchema.safeParse(result.error).success, name).toBe(true)
+      }
+    }
+  })
+
+  it('redacts unexpected failures at every public Service seam', async () => {
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-adr-0247-home-'))
+    temporaryRoots.push(dshHome)
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.securityAssurance.whenReady()
+    const invocation = referenceHostInvocation(ctx.securityAssurance, 'adr-0247-principal')
+    const hostileRequest = new Proxy({}, {
+      get() {
+        throw new Error('sensitive internal marker')
+      },
+      ownKeys() {
+        throw new Error('sensitive internal marker')
+      },
+    })
+
+    for (const name of publicOperationNames) {
+      const invoke = ctx.securityAssurance[name] as unknown as UniformPublicOperation
+      const result = await invoke.call(ctx.securityAssurance, invocation, hostileRequest)
+
+      expect(result, name).toMatchObject({
+        ok: false,
+        error: {
+          schemaVersion: 1,
+          code: 'INTERNAL',
+          retryable: true,
+        },
+      })
+      if (!result.ok) {
+        expect(result.error.message.length, name).toBeGreaterThan(0)
+        expect(result.error.message, name).not.toContain('sensitive internal marker')
+        expect(publicSecurityErrorSchema.safeParse(result.error).success, name).toBe(true)
+      }
+    }
+  })
 
   describe('Expected failures return typed errors, not exceptions', () => {
     it('UNAUTHORIZED for missing authority returns SecurityResult', async () => {
@@ -249,7 +364,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
-      const result = await ctx.securityAssurance.listRepositories(invocation, { schemaVersion: 1 })
+      const result = await ctx.securityAssurance.listRepositories(invocation, { schemaVersion: 1, limit: 100 })
 
       expect(result).toHaveProperty('ok')
       expect(typeof result.ok).toBe('boolean')
@@ -264,7 +379,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
-      const result = await ctx.securityAssurance.listAssessments(invocation, { schemaVersion: 1 })
+      const result = await ctx.securityAssurance.listAssessments(invocation, { schemaVersion: 1, limit: 100 })
 
       expect(result).toHaveProperty('ok')
       expect(typeof result.ok).toBe('boolean')

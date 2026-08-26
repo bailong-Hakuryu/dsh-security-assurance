@@ -11,6 +11,7 @@ import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import EngineeringControlPlane from 'dsh-engineering-control-plane'
 import { afterEach, describe, expect, it } from 'vitest'
 import SecurityAssuranceService from '../src/index.ts'
+import type { AnalyzerDescriptorV1 } from '../src/analyzer.ts'
 import SecurityAssuranceControlPlaneProvider, {
   SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
 } from '../src/control-plane-provider.ts'
@@ -94,6 +95,46 @@ function registerScriptedEngineeringProvider(ctx: Context): () => void {
     },
   }
   return ctx.subagents.registerProvider(provider)
+}
+
+function registerBlockingCancellationAnalyzer(
+  ctx: Context,
+  onStarted: (assessmentId: string) => void,
+): () => void {
+  const descriptor: AnalyzerDescriptorV1 = {
+    schemaVersion: 1,
+    analyzerId: 'fixture/blocking-cancellation',
+    analyzerVersion: '1.0.0',
+    descriptorSchemaVersion: 1,
+    buildDigest: {
+      schemaVersion: 1,
+      algorithm: 'sha256',
+      mediaType: 'application/vnd.fixture.blocking-cancellation-analyzer+json',
+      byteLength: 1,
+      canonicalization: 'dsh-canonical-json-v1',
+      value: '9'.repeat(64),
+    },
+    executionClass: 'PURE',
+    supportedAssessmentModes: ['REPOSITORY'],
+    supportedPolicyIds: ['security/node-package-lifecycle'],
+    coverageObligationIds: ['application-security-analysis'],
+    evidenceSchemaIds: ['fixture/blocking-cancellation-evidence'],
+    egress: 'NONE',
+  }
+  return ctx.securityAssurance.registerAnalyzer(descriptor, normalizedDescriptor => ({
+    descriptor: normalizedDescriptor,
+    analyze(input, options) {
+      onStarted(input.assessmentId)
+      return new Promise<never>((_resolve, reject) => {
+        const signal = options?.signal
+        if (signal === undefined) return
+        const rejectAbort = () => reject(signal.reason ?? new Error('Analyzer invocation aborted'))
+        if (signal.aborted) rejectAbort()
+        else signal.addEventListener('abort', rejectAbort, { once: true })
+      })
+    },
+    async dispose() {},
+  }))
 }
 
 async function waitForTerminalMission(ctx: Context, agent: Agent, missionId: string) {
@@ -763,7 +804,7 @@ describe('Security Assurance Control Plane Provider', () => {
       name: 'cancel-active-control-plane-fixture',
       version: '1.0.0',
       type: 'module',
-    }, 150)
+    })
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-control-plane-cancel-home-'))
     temporaryRoots.push(dshHome)
     const platform = process.platform
@@ -776,6 +817,9 @@ describe('Security Assurance Control Plane Provider', () => {
     const disposeScriptedProvider = registerScriptedEngineeringProvider(ctx)
     const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
     await ctx.securityAssurance.whenReady()
+    let resolveAnalyzerStarted!: (assessmentId: string) => void
+    const analyzerStarted = new Promise<string>(resolve => { resolveAnalyzerStarted = resolve })
+    const disposeBlockingAnalyzer = registerBlockingCancellationAnalyzer(ctx, resolveAnalyzerStarted)
     const invocation = referenceHostInvocation(ctx.securityAssurance)
     const registered = await ctx.securityAssurance.registerRepository(invocation, {
       schemaVersion: 1,
@@ -798,18 +842,6 @@ describe('Security Assurance Control Plane Provider', () => {
     )
     await ctx.engineeringControlPlane.whenReady()
     const adapterFiber = await ctx.plugin(SecurityAssuranceControlPlaneProvider)
-    let resolveAssessmentStarted!: (assessmentId: string) => void
-    const assessmentStarted = new Promise<string>(resolve => { resolveAssessmentStarted = resolve })
-    let releaseAssessment!: () => void
-    const assessmentHold = new Promise<void>(resolve => { releaseAssessment = resolve })
-    const disposeCheckpoint = installControlPlaneCancellationCrashCheckpoint(
-      ctx.securityAssurance,
-      async event => {
-        if (event.name !== 'after_assessment_started') return
-        resolveAssessmentStarted(event.assessmentId)
-        await assessmentHold
-      },
-    )
 
     try {
       const agent = {
@@ -821,12 +853,16 @@ describe('Security Assurance Control Plane Provider', () => {
         objective: 'Cancel the active external Security Assessment with the Mission',
       }, new AbortController().signal)
       await waitForProviderInvocation(ctx, agent, receipt.missionId, ['begun'])
-      await Promise.race([
-        assessmentStarted,
+      const activeAssessmentId = await Promise.race([
+        analyzerStarted,
         new Promise<never>((_resolve, reject) => {
-          setTimeout(() => reject(new Error('Security Assessment did not reach the start checkpoint')), 15_000)
+          setTimeout(() => reject(new Error('Blocking Security Analyzer was not invoked')), 15_000)
         }),
       ])
+      await expect(ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: activeAssessmentId as never,
+      })).resolves.toMatchObject({ ok: true, value: { state: 'RUNNING' } })
       const active = await ctx.engineeringControlPlane.status(
         agent,
         receipt.missionId,
@@ -879,7 +915,7 @@ describe('Security Assurance Control Plane Provider', () => {
         state: 'terminated',
         outcome: {
           kind: 'external_assessment_canceled',
-          externalAssessmentId: expect.any(String),
+          externalAssessmentId: activeAssessmentId,
         },
       })
       if (terminated?.state !== 'terminated' || !('externalAssessmentId' in terminated.outcome)) {
@@ -898,10 +934,9 @@ describe('Security Assurance Control Plane Provider', () => {
         },
       })
     } finally {
-      releaseAssessment()
-      disposeCheckpoint()
       await adapterFiber.dispose()
       await controlPlaneFiber.dispose()
+      disposeBlockingAnalyzer()
       await securityFiber.dispose()
       disposeScriptedProvider()
       await subagentFiber.dispose()

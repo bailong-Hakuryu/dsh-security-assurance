@@ -1,8 +1,9 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { realpath, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import z from 'zod'
 import {
   disableRepositoryRequestSchema,
   EVIDENCE_VIEW_BOUNDED_JSON_LIFETIME_MS,
@@ -102,10 +103,23 @@ import {
 import {
   controlPlaneAssessmentIdentitySchema,
   LOOKUP_CONTROL_PLANE_ASSESSMENT,
+  lookupControlPlaneAssessment,
 } from './internal/control-plane-assessment.ts'
+import { reachControlPlaneCancellationCrashCheckpoint } from './internal/control-plane-cancellation-crash-checkpoint.ts'
+import {
+  EXECUTE_CONTROL_PLANE_PROVIDER_OPERATION,
+  type ControlPlaneAssessmentOperation,
+  type ControlPlaneAssessmentOperationOutcome,
+  type ControlPlaneCancellationOperation,
+  type ControlPlaneCancellationOperationOutcome,
+  type ControlPlaneProviderContext,
+  type ControlPlaneProviderOperation,
+  type ControlPlaneProviderOperationOutcome,
+} from './internal/control-plane-provider-operation.ts'
 import {
   VERIFY_CONTROL_PLANE_REPOSITORY_BINDING,
   type ControlPlaneRepositoryBindingMatcher,
+  verifyControlPlaneRepositoryBinding,
 } from './internal/control-plane-repository-binding.ts'
 import type { TrustedCallerChannel } from './internal/authority.ts'
 import { AnalyzerRegistry } from './internal/analyzer-registry.ts'
@@ -216,10 +230,18 @@ function interruption<T>(options: InvocationOptions): SecurityResult<T> | undefi
   return undefined
 }
 
-function buildRuntimeHealth(persistenceReady: boolean): RuntimeHealthSnapshot {
-  const actualNodeVersion = process.versions.node
-  const nodeSupported = nodeVersionIsSupported(actualNodeVersion)
+type ServiceLifecycleState = 'ACTIVE' | 'QUIESCING' | 'STOPPED'
+
+function buildRuntimeHealth(
+  persistenceReady: boolean,
+  lifecycleState: ServiceLifecycleState,
+  actualNodeVersion: string,
+  nodeSupported: boolean,
+): RuntimeHealthSnapshot {
   const mutationsAdmitted = nodeSupported && persistenceReady
+  const state = lifecycleState === 'ACTIVE'
+    ? mutationsAdmitted ? 'READY' : 'READ_ONLY_SAFE'
+    : lifecycleState
   return runtimeHealthSnapshotSchema.parse({
     schemaVersion: 1,
     product: {
@@ -232,11 +254,11 @@ function buildRuntimeHealth(persistenceReady: boolean): RuntimeHealthSnapshot {
       actualNodeVersion,
       harnessVerification: 'PENDING_INVARIANT',
     },
-    state: mutationsAdmitted ? 'READY' : 'READ_ONLY_SAFE',
+    state,
     admission: {
-      queries: true,
-      mutations: mutationsAdmitted,
-      sealedExports: mutationsAdmitted,
+      queries: state !== 'STOPPED',
+      mutations: state === 'READY',
+      sealedExports: lifecycleState === 'ACTIVE' && persistenceReady,
     },
     checks: [
       {
@@ -263,6 +285,57 @@ function buildRuntimeHealth(persistenceReady: boolean): RuntimeHealthSnapshot {
       },
     ],
   })
+}
+
+function controlPlaneOperationIdempotencyKey(
+  operation: 'start' | 'resume' | 'cancel',
+  context: ControlPlaneProviderContext,
+): string {
+  const prefix = operation === 'start' ? '' : `${operation}\0`
+  const digest = createHash('sha256')
+    .update(`${prefix}${context.invocationId}\0${context.missionId}\0${context.attempt}`)
+    .digest('hex')
+  return operation === 'start'
+    ? `control-plane-${digest}`
+    : `control-plane-${operation}-${digest}`
+}
+
+function controlPlaneSecurityFailure(code: PublicSecurityErrorCode): ControlPlaneAssessmentOperationOutcome {
+  return {
+    kind: 'EXTERNAL_FAILURE',
+    reason: code === 'CANCELED' ? 'canceled' : code === 'UNAVAILABLE' ? 'blocked' : 'failed',
+    code: `security_${code.toLowerCase()}`,
+  }
+}
+
+function controlPlaneSealedOutcome(
+  assessment: AssessmentSnapshotV1,
+  securitySubmission: SecurityAssuranceSubmissionV1,
+): ControlPlaneAssessmentOperationOutcome {
+  const claimedOutcome = assessment.verdict === 'SATISFIED'
+    ? 'satisfied'
+    : assessment.verdict === 'FAILED' ? 'failed' : 'indeterminate'
+  const resolutions = assessment.coverage.resolutions.length === 0
+    ? [{
+        obligationId: 'security/assessment',
+        state: assessment.coverage.status === 'COMPLETE' ? 'SATISFIED' as const : 'GAP' as const,
+      }]
+    : assessment.coverage.resolutions
+  const coverageComplete = assessment.coverage.status === 'COMPLETE'
+    && resolutions.every(resolution => resolution.state === 'SATISFIED')
+  return {
+    kind: 'SEALED_ASSESSMENT',
+    assessmentId: assessment.assessmentId,
+    claimedOutcome,
+    coverage: {
+      status: coverageComplete ? 'complete' : 'incomplete',
+      dimensions: resolutions.map(resolution => ({
+        dimensionId: resolution.obligationId,
+        status: resolution.state === 'SATISFIED' ? 'covered' : 'not_covered',
+      })),
+    },
+    securitySubmission,
+  }
 }
 
 function assessmentSelectionIsConsistent(
@@ -293,7 +366,15 @@ function requestedStrongerControlsAreValid(controlIds: readonly string[]): boole
 
 export interface Config {
   /** Optional explicit Harness home; defaults through the shared DSH_HOME resolver. */
-  readonly dshHome?: string
+  readonly dshHome?: string | undefined
+}
+
+const securityAssuranceConfigSchema: z.ZodType<Config> = z.strictObject({
+  dshHome: z.string().min(1).max(4096).optional(),
+})
+
+class SecurityArtifactIntegrityError extends Error {
+  override readonly name = 'SecurityArtifactIntegrityError'
 }
 
 /**
@@ -309,6 +390,8 @@ export class SecurityAssuranceService extends Service {
   private readonly evidenceViews = new EvidenceViewModule()
   private readonly exportDelivery: ExportDeliveryModule
   private readonly riskDecisions = new RiskDecisionModule()
+  private readonly actualNodeVersion = process.versions.node
+  private readonly runtimeCompatible = nodeVersionIsSupported(this.actualNodeVersion)
   private readonly ready: Promise<SecurityPersistence | undefined>
   private readonly securityRoot: string
   private readonly runningAssessments = new Map<AssessmentId, {
@@ -319,11 +402,14 @@ export class SecurityAssuranceService extends Service {
   private exportDeliveryWorkerTask: Promise<void> | undefined
   private exportDeliveryWakePending = false
   private exportDeliveryWake: (() => void) | undefined
+  private lifecycleState: ServiceLifecycleState = 'ACTIVE'
   private disposed = false
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'securityAssurance')
-    this.securityRoot = join(resolveDshHome(config.dshHome), 'security-assurance')
+    const parsedConfig = securityAssuranceConfigSchema.safeParse(config)
+    if (!parsedConfig.success) throw new TypeError('Security Assurance configuration is invalid')
+    this.securityRoot = join(resolveDshHome(parsedConfig.data.dshHome), 'security-assurance')
     this.exportDelivery = new ExportDeliveryModule(this.securityRoot)
     Object.defineProperty(this, RESOLVE_TRUSTED_INVOCATION, {
       configurable: false,
@@ -331,7 +417,7 @@ export class SecurityAssuranceService extends Service {
       writable: false,
       value: (channel: TrustedCallerChannel) => this.authorityResolver.resolve(channel),
     })
-    this.ready = this.initialize(config)
+    this.ready = this.initialize(parsedConfig.data)
     Object.defineProperty(this, LOOKUP_CONTROL_PLANE_ASSESSMENT, {
       configurable: false,
       enumerable: false,
@@ -387,9 +473,19 @@ export class SecurityAssuranceService extends Service {
         }
       },
     })
+    Object.defineProperty(this, EXECUTE_CONTROL_PLANE_PROVIDER_OPERATION, {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: (
+        invocation: SecurityInvocation,
+        operation: ControlPlaneProviderOperation,
+        options: InvocationOptions,
+      ) => this.executeControlPlaneProviderOperation(invocation, operation, options),
+    })
     void this.ready.catch(() => {})
     void this.ready.then(persistence => {
-      if (persistence === undefined || this.disposed) return
+      if (!this.admitsMutations(persistence)) return
       for (const assessmentId of persistence.listCreatedAssessmentIds()) {
         this.launchAssessment(persistence, assessmentId)
       }
@@ -398,15 +494,20 @@ export class SecurityAssuranceService extends Service {
     ctx.effect(async () => {
       const persistence = await this.ready
       return async () => {
-        this.disposed = true
-        for (const running of this.runningAssessments.values()) running.controller.abort()
-        this.exportDeliveryWorkerController.abort()
-        this.wakeExportDeliveryWorker()
-        await Promise.allSettled([
-          ...[...this.runningAssessments.values()].map(running => running.task),
-          ...(this.exportDeliveryWorkerTask === undefined ? [] : [this.exportDeliveryWorkerTask]),
-        ])
-        persistence?.close()
+        this.lifecycleState = 'QUIESCING'
+        try {
+          for (const running of this.runningAssessments.values()) running.controller.abort()
+          this.exportDeliveryWorkerController.abort()
+          this.wakeExportDeliveryWorker()
+          await Promise.allSettled([
+            ...[...this.runningAssessments.values()].map(running => running.task),
+            ...(this.exportDeliveryWorkerTask === undefined ? [] : [this.exportDeliveryWorkerTask]),
+          ])
+          persistence?.close()
+        } finally {
+          this.disposed = true
+          this.lifecycleState = 'STOPPED'
+        }
       }
     }, 'security assurance teardown')
   }
@@ -451,7 +552,16 @@ export class SecurityAssuranceService extends Service {
         return failure('INVALID_REQUEST', 'The request does not match getHealth schema version 1.')
       }
       const persistence = await this.ready
-      return deepFreeze({ ok: true, value: buildRuntimeHealth(persistence !== undefined && !this.disposed) })
+      const persistenceReady = persistence !== undefined && this.lifecycleState !== 'STOPPED'
+      return deepFreeze({
+        ok: true,
+        value: buildRuntimeHealth(
+          persistenceReady,
+          this.lifecycleState,
+          this.actualNodeVersion,
+          this.runtimeCompatible,
+        ),
+      })
     } catch {
       return failure('INTERNAL', 'Security Assurance could not complete the operation.', true)
     }
@@ -495,12 +605,12 @@ export class SecurityAssuranceService extends Service {
       ) {
         return failure('INVALID_REQUEST', 'The proposed Assessment selection is inconsistent.')
       }
+      const repositoryId = parsed.data.proposedStart?.repositoryId ?? parsed.data.repositoryId
       const persistence = await this.ready
-      if (persistence === undefined || this.disposed) {
+      if (this.disposed || (persistence === undefined && repositoryId !== undefined)) {
         return failure('UNAVAILABLE', 'The Security Catalog is unavailable while the private store is offline.', true)
       }
-      const repositoryId = parsed.data.proposedStart?.repositoryId ?? parsed.data.repositoryId
-      const repository = repositoryId === undefined
+      const repository = repositoryId === undefined || persistence === undefined
         ? undefined
         : persistence.resolveRepository(repositoryId)
       if (repositoryId !== undefined && repository === undefined) {
@@ -546,7 +656,7 @@ export class SecurityAssuranceService extends Service {
         return failure('INVALID_REQUEST', 'The request does not match registerRepository schema version 1.')
       }
       const persistence = await this.ready
-      if (persistence === undefined || this.disposed) {
+      if (!this.admitsMutations(persistence)) {
         return failure('UNAVAILABLE', 'Repository mutations are unavailable in read-only-safe mode.', true)
       }
       const canonicalRoot = await realpath(parsed.data.root)
@@ -599,7 +709,7 @@ export class SecurityAssuranceService extends Service {
         return failure('INVALID_REQUEST', 'The request does not match updateRepository schema version 1.')
       }
       const persistence = await this.ready
-      if (persistence === undefined || this.disposed) {
+      if (!this.admitsMutations(persistence)) {
         return failure('UNAVAILABLE', 'Repository mutations are unavailable in read-only-safe mode.', true)
       }
       const receipt = persistence.updateRepository({
@@ -635,7 +745,7 @@ export class SecurityAssuranceService extends Service {
         return failure('INVALID_REQUEST', 'The request does not match disableRepository schema version 1.')
       }
       const persistence = await this.ready
-      if (persistence === undefined || this.disposed) {
+      if (!this.admitsMutations(persistence)) {
         return failure('UNAVAILABLE', 'Repository mutations are unavailable in read-only-safe mode.', true)
       }
       const receipt = persistence.disableRepository({
@@ -737,17 +847,10 @@ export class SecurityAssuranceService extends Service {
         return failure('INVALID_REQUEST', 'The request contains an unknown or duplicate stronger control.')
       }
       const persistence = await this.ready
-      if (persistence === undefined || this.disposed) {
+      if (!this.admitsMutations(persistence)) {
         return failure('UNAVAILABLE', 'Assessment start is unavailable in read-only-safe mode.', true)
       }
-      const repository = persistence.resolveRepository(parsed.data.repositoryId)
-      if (repository === undefined) return failure('NOT_FOUND', 'The Repository does not exist.')
-      if (repository.snapshot.state !== 'ENABLED') {
-        return failure('CONFLICT', 'The Repository is disabled and cannot start new Assessments.')
-      }
-      if (parsed.data.assessmentProfileId !== repository.snapshot.bindings.assessmentProfileId) {
-        return failure('INVALID_REQUEST', 'The requested Assessment Profile is not bound to this Repository.')
-      }
+      // An accepted start is a replay of its frozen contract, not a new start subject to current Registry admission.
       const replay = persistence.findAssessmentStartReplay({
         principalId: authority.principalId,
         authorityKind: authority.kind,
@@ -758,6 +861,14 @@ export class SecurityAssuranceService extends Service {
       if (replay !== undefined) {
         this.launchAssessment(persistence, replay.assessmentId)
         return deepFreeze({ ok: true, value: replay })
+      }
+      const repository = persistence.resolveRepository(parsed.data.repositoryId)
+      if (repository === undefined) return failure('NOT_FOUND', 'The Repository does not exist.')
+      if (repository.snapshot.state !== 'ENABLED') {
+        return failure('CONFLICT', 'The Repository is disabled and cannot start new Assessments.')
+      }
+      if (parsed.data.assessmentProfileId !== repository.snapshot.bindings.assessmentProfileId) {
+        return failure('INVALID_REQUEST', 'The requested Assessment Profile is not bound to this Repository.')
       }
 
       const qualificationEvaluationInstant = new Date().toISOString()
@@ -871,7 +982,7 @@ export class SecurityAssuranceService extends Service {
         return failure('INVALID_REQUEST', 'The request does not match resumeAssessment schema version 1.')
       }
       const persistence = await this.ready
-      if (persistence === undefined || this.disposed) {
+      if (!this.admitsMutations(persistence)) {
         return failure('UNAVAILABLE', 'Assessment resume is unavailable in read-only-safe mode.', true)
       }
       const receipt = persistence.resumeAssessment({
@@ -920,7 +1031,7 @@ export class SecurityAssuranceService extends Service {
         return failure('INVALID_REQUEST', 'The request does not match cancelAssessment schema version 1.')
       }
       const persistence = await this.ready
-      if (persistence === undefined || this.disposed) {
+      if (!this.admitsMutations(persistence)) {
         return failure('UNAVAILABLE', 'Assessment cancellation is unavailable in read-only-safe mode.', true)
       }
       const receipt = persistence.requestAssessmentCancellation({
@@ -1232,7 +1343,7 @@ export class SecurityAssuranceService extends Service {
         return failure('INVALID_REQUEST', 'The request does not match recordRiskDecision schema version 1.')
       }
       const persistence = await this.ready
-      if (persistence === undefined || this.disposed) {
+      if (!this.admitsMutations(persistence)) {
         return failure('UNAVAILABLE', 'Risk Decision mutations are unavailable in read-only-safe mode.', true)
       }
       const persistenceInput = {
@@ -1443,9 +1554,12 @@ export class SecurityAssuranceService extends Service {
       if (!parsed.success) {
         return failure('INVALID_REQUEST', 'The request does not match requestExport schema version 1.')
       }
+      const persistence = await this.ready
+      if (!this.admitsMutations(persistence)) {
+        return failure('UNAVAILABLE', 'Export Requests are unavailable in read-only-safe mode.', true)
+      }
       const sealed = await this.verifiedSealedRecord(parsed.data.assessmentId)
       if (sealed === undefined) {
-        const persistence = await this.ready
         if (persistence?.getAssessmentRecord(parsed.data.assessmentId) === undefined) {
           return failure('NOT_FOUND', 'The Assessment does not exist.')
         }
@@ -1545,6 +1659,184 @@ export class SecurityAssuranceService extends Service {
     } catch (error) {
       return this.exportFailure(error)
     }
+  }
+
+  private executeControlPlaneProviderOperation(
+    invocation: SecurityInvocation,
+    operation: ControlPlaneProviderOperation,
+    options: InvocationOptions,
+  ): Promise<ControlPlaneProviderOperationOutcome> {
+    return operation.kind === 'CANCEL'
+      ? this.cancelControlPlaneAssessment(invocation, operation, options)
+      : this.runControlPlaneAssessment(invocation, operation, options)
+  }
+
+  private async runControlPlaneAssessment(
+    invocation: SecurityInvocation,
+    operation: ControlPlaneAssessmentOperation,
+    options: InvocationOptions,
+  ): Promise<ControlPlaneAssessmentOperationOutcome> {
+    const repository = await this.getRepository(
+      invocation,
+      { schemaVersion: 1, repositoryId: operation.repositoryId },
+      options,
+    )
+    if (!repository.ok) return controlPlaneSecurityFailure(repository.error.code)
+    if (repository.value.state !== 'ENABLED') {
+      return { kind: 'EXTERNAL_FAILURE', reason: 'blocked', code: 'repository_disabled' }
+    }
+    let repositoryBindingMatches: boolean
+    try {
+      repositoryBindingMatches = await verifyControlPlaneRepositoryBinding(
+        this,
+        invocation,
+        operation.repositoryId,
+        operation.context,
+      )
+    } catch {
+      return { kind: 'EXTERNAL_FAILURE', reason: 'blocked', code: 'repository_binding_unavailable' }
+    }
+    if (!repositoryBindingMatches) {
+      return { kind: 'EXTERNAL_FAILURE', reason: 'failed', code: 'repository_binding_mismatch' }
+    }
+
+    const started = await this.startAssessment(invocation, {
+      schemaVersion: 1,
+      idempotencyKey: controlPlaneOperationIdempotencyKey('start', operation.context),
+      repositoryId: operation.repositoryId,
+      subject: { kind: 'workspace_snapshot' },
+      assessmentMode: 'REPOSITORY',
+      assessmentProfileId: repository.value.bindings.assessmentProfileId,
+      target: { kind: 'repository' },
+      requestedStrongerControlIds: [],
+    }, options)
+    if (!started.ok) return controlPlaneSecurityFailure(started.error.code)
+    await reachControlPlaneCancellationCrashCheckpoint(
+      this,
+      'after_assessment_started',
+      started.value.assessmentId,
+    )
+
+    let revision: number = started.value.assessmentRevision
+    while (true) {
+      const assessment = await this.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      }, options)
+      if (!assessment.ok) return controlPlaneSecurityFailure(assessment.error.code)
+      revision = assessment.value.assessmentRevision
+      if (assessment.value.state === 'SEALED') {
+        const submission = await this.getAssuranceSubmission(invocation, {
+          schemaVersion: 1,
+          assessmentId: started.value.assessmentId,
+        }, options)
+        if (!submission.ok) return controlPlaneSecurityFailure(submission.error.code)
+        return controlPlaneSealedOutcome(assessment.value, submission.value)
+      }
+      if (assessment.value.state === 'BLOCKED') {
+        if (operation.kind !== 'RECOVER') {
+          return { kind: 'EXTERNAL_FAILURE', reason: 'blocked', code: 'assessment_blocked' }
+        }
+        const resumed = await this.resumeAssessment(invocation, {
+          schemaVersion: 1,
+          assessmentId: assessment.value.assessmentId,
+          expectedAssessmentRevision: assessment.value.assessmentRevision,
+          idempotencyKey: controlPlaneOperationIdempotencyKey('resume', operation.context),
+          reason: {
+            code: 'CONTROL_PLANE_PROVIDER_RECOVERY',
+            summary: 'Reconcile the durable Control Plane Provider invocation after host restart.',
+          },
+        }, options)
+        if (!resumed.ok) return controlPlaneSecurityFailure(resumed.error.code)
+        revision = resumed.value.assessmentRevision
+        continue
+      }
+      if (assessment.value.state === 'CANCELED') {
+        return { kind: 'EXTERNAL_FAILURE', reason: 'canceled', code: 'assessment_canceled' }
+      }
+
+      const changed = await this.waitForAssessmentRevision(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+        afterRevision: revision,
+        timeoutMs: 5_000,
+      }, options)
+      if (!changed.ok) return controlPlaneSecurityFailure(changed.error.code)
+      revision = changed.value.assessmentRevision
+    }
+  }
+
+  private async cancelControlPlaneAssessment(
+    invocation: SecurityInvocation,
+    operation: ControlPlaneCancellationOperation,
+    options: InvocationOptions,
+  ): Promise<ControlPlaneCancellationOperationOutcome> {
+    const started = await lookupControlPlaneAssessment(this, invocation, {
+      idempotencyKey: controlPlaneOperationIdempotencyKey('start', operation.context),
+      repositoryId: operation.repositoryId,
+    })
+    if (started === undefined) return { kind: 'EXTERNAL_ASSESSMENT_NOT_STARTED' }
+
+    for (let reconciliation = 0; reconciliation < 4; reconciliation += 1) {
+      const assessment = await this.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.assessmentId,
+      }, options)
+      if (!assessment.ok) throw new Error(`Security Assessment lookup failed (${assessment.error.code})`)
+      if (assessment.value.state === 'SEALED') {
+        return {
+          kind: 'EXTERNAL_ASSESSMENT_TERMINAL',
+          externalAssessmentId: assessment.value.assessmentId,
+          terminalState: 'sealed',
+        }
+      }
+      if (assessment.value.state === 'CANCELED') {
+        return {
+          kind: 'EXTERNAL_ASSESSMENT_TERMINAL',
+          externalAssessmentId: assessment.value.assessmentId,
+          terminalState: 'canceled',
+        }
+      }
+      const canceled = await this.cancelAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: assessment.value.assessmentId,
+        expectedAssessmentRevision: assessment.value.assessmentRevision,
+        idempotencyKey: controlPlaneOperationIdempotencyKey('cancel', operation.context),
+        reason: {
+          code: 'CONTROL_PLANE_MISSION_CANCELED',
+          summary: 'Cancel the external Assessment because its owning Mission was explicitly canceled.',
+        },
+      }, options)
+      if (!canceled.ok) {
+        if (canceled.error.code === 'CONFLICT') continue
+        throw new Error(`Security Assessment cancellation failed (${canceled.error.code})`)
+      }
+      const terminal = await this.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: assessment.value.assessmentId,
+      }, options)
+      if (!terminal.ok || terminal.value.state !== 'CANCELED') {
+        throw new Error('Security Assessment cancellation did not reach CANCELED')
+      }
+      await reachControlPlaneCancellationCrashCheckpoint(
+        this,
+        'after_assessment_canceled_before_provider_outcome',
+        terminal.value.assessmentId,
+      )
+      return {
+        kind: 'EXTERNAL_ASSESSMENT_CANCELED',
+        externalAssessmentId: terminal.value.assessmentId,
+      }
+    }
+    throw new Error('Security Assessment changed repeatedly during cancellation')
+  }
+
+  private admitsMutations(
+    persistence: SecurityPersistence | undefined,
+  ): persistence is SecurityPersistence {
+    return persistence !== undefined
+      && this.lifecycleState === 'ACTIVE'
+      && this.runtimeCompatible
   }
 
   private startExportDeliveryWorker(): void {
@@ -1787,12 +2079,18 @@ export class SecurityAssuranceService extends Service {
       || record.submission === null
       || record.publicationDigest === null
     ) return undefined
-    await verifyPublishedSealedArtifacts(this.securityRoot, assessmentId, {
-      seal: record.seal,
-      bundleManifest: record.bundleManifest,
-      submission: record.submission,
-      publicationDigest: record.publicationDigest,
-    })
+    try {
+      await verifyPublishedSealedArtifacts(this.securityRoot, assessmentId, {
+        seal: record.seal,
+        bundleManifest: record.bundleManifest,
+        submission: record.submission,
+        publicationDigest: record.publicationDigest,
+      })
+    } catch (error) {
+      throw new SecurityArtifactIntegrityError('Sealed Assessment artifact verification failed', {
+        cause: error,
+      })
+    }
     return {
       bundleManifest: record.bundleManifest,
       submission: record.submission,
@@ -1815,19 +2113,26 @@ export class SecurityAssuranceService extends Service {
     ) return undefined
     const window = record.riskDecisionWindow
     if (window === null) return undefined
-    const values = await readPublishedEvidenceSet(
-      this.securityRoot,
-      assessmentId,
-      record.subject.digest,
-      window.evidenceReceipts,
-    )
+    let values: Awaited<ReturnType<typeof readPublishedEvidenceSet>>
+    try {
+      values = await readPublishedEvidenceSet(
+        this.securityRoot,
+        assessmentId,
+        record.subject.digest,
+        window.evidenceReceipts,
+      )
+    } catch (error) {
+      throw new SecurityArtifactIntegrityError('Risk Decision Window Evidence verification failed', {
+        cause: error,
+      })
+    }
     if (values.length !== window.evidenceReceipts.length) {
-      throw new TypeError('Risk Decision Window Evidence receipt count changed')
+      throw new SecurityArtifactIntegrityError('Risk Decision Window Evidence receipt count changed')
     }
     const evidence = values.map((value, index) => {
       const receipt = window.evidenceReceipts[index]
       if (receipt === undefined || receipt.artifactId !== value.artifactId || receipt.schemaId !== value.schemaId) {
-        throw new TypeError('Risk Decision Window Evidence order or identity changed')
+        throw new SecurityArtifactIntegrityError('Risk Decision Window Evidence order or identity changed')
       }
       return securitySubmissionArtifactV1Schema.parse({
         artifactId: value.artifactId,
@@ -1941,7 +2246,7 @@ export class SecurityAssuranceService extends Service {
     if (error instanceof SecurityPersistenceError) {
       return failure('UNAVAILABLE', 'The private Security Assurance store is unavailable.', true)
     }
-    if (artifactRead && error instanceof Error) {
+    if (artifactRead && error instanceof SecurityArtifactIntegrityError) {
       return failure('UNAVAILABLE', 'The sealed Assessment artifact failed integrity verification.', true)
     }
     return failure('INTERNAL', 'Security Assurance could not complete the operation.', true)
@@ -1964,9 +2269,6 @@ export class SecurityAssuranceService extends Service {
     }
     if (error instanceof SecurityPersistenceError) {
       return failure('UNAVAILABLE', 'The private Security Assurance store is unavailable.', true)
-    }
-    if (error instanceof Error) {
-      return failure('UNAVAILABLE', 'Export delivery could not complete the operation.', true)
     }
     return failure('INTERNAL', 'Security Assurance could not complete the operation.', true)
   }

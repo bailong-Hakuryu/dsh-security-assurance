@@ -1,5 +1,9 @@
 # ADR 0247 & 0248 Compliance Analysis
 
+> Historical draft: the 2026-08-26 audit found that this document overstated
+> test coverage, used two obsolete operation names, and misidentified ADR 0249.
+> Use `adr-0247-0248-audit-correction.md` for the verified result.
+
 ## ADR 0247: Public operations return one typed Security Result envelope
 
 ### Requirements

@@ -33,9 +33,11 @@ describe('ADR 0246: Public DTOs are versioned, JSON-safe, and runtime-validated'
 
     it('DTOs serialize and deserialize through JSON without loss', () => {
       const original: contracts.PublicSecurityError = {
+        schemaVersion: 1,
         code: 'NOT_FOUND',
         message: 'The Assessment does not exist.',
         retryable: false,
+        correlationId: 'sec-00000000-0000-4000-8000-000000000000',
       }
 
       const serialized = JSON.stringify(original)
@@ -84,11 +86,20 @@ describe('ADR 0246: Public DTOs are versioned, JSON-safe, and runtime-validated'
       const snapshot: contracts.RepositorySnapshotV1 = {
         schemaVersion: 1,
         repositoryId: 'repo-00000000-0000-4000-8000-000000000000' as contracts.RepositoryId,
-        registeredAt: '2026-08-26T12:00:00.000Z',
-        currentRevision: 1,
-        canonicalRoot: 'D:\\test\\repo',
+        repositoryRevision: 1,
         state: 'ENABLED',
-        registrationReason: 'explicit',
+        displayName: 'Example Repository',
+        rootIdentityDigest: `sha256:${'0'.repeat(64)}`,
+        bindings: {
+          platform: 'linux',
+          policyId: 'policy/default',
+          assessmentProfileId: 'profile/default',
+          evidenceProtectionId: 'evidence/default',
+          dataEgressPolicyId: 'egress/default',
+          deliveryDestinationIds: [],
+        },
+        createdAt: '2026-08-26T12:00:00.000Z',
+        updatedAt: '2026-08-26T12:00:00.000Z',
       }
 
       const serialized = JSON.stringify(snapshot)
@@ -158,11 +169,13 @@ describe('ADR 0246: Public DTOs are versioned, JSON-safe, and runtime-validated'
     it('RepositoryCommandReceiptV1 has explicit schemaVersion', () => {
       const receipt: contracts.RepositoryCommandReceiptV1 = {
         schemaVersion: 1,
-        operation: 'registerRepository',
+        operation: 'register_repository',
         repositoryId: 'repo-00000000-0000-4000-8000-000000000000' as contracts.RepositoryId,
-        currentRevision: 1,
+        repositoryRevision: 1,
+        idempotencyKey: 'repository-register-v1',
         acceptedState: 'ENABLED',
-        committedAt: '2026-08-26T12:00:00.000Z',
+        acceptedAt: '2026-08-26T12:00:00.000Z',
+        correlationId: 'sec-00000000-0000-4000-8000-000000000000',
       }
 
       expect(receipt.schemaVersion).toBe(1)
@@ -184,12 +197,6 @@ describe('ADR 0246: Public DTOs are versioned, JSON-safe, and runtime-validated'
       expect(id.startsWith('repo-')).toBe(true)
     })
 
-    it('FindingRecordId is a branded string type', () => {
-      const id: contracts.FindingRecordId = 'finding-00000000-0000-4000-8000-000000000000' as contracts.FindingRecordId
-
-      expect(typeof id).toBe('string')
-      expect(id.startsWith('finding-')).toBe(true)
-    })
   })
 
   describe('Runtime validation with schemas', () => {
