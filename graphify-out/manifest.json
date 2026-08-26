@@ -1,0 +1,2222 @@
+{
+  "package.json": {
+    "mtime": 1787649290.2585,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2ea4cb5eeb7ddb85e8ec588b629e0167",
+    "semantic_hash": "2ea4cb5eeb7ddb85e8ec588b629e0167"
+  },
+  "scripts/generate-typert.mjs": {
+    "mtime": 1787543197.019786,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d1828395a71459a2bb52f123171016d4",
+    "semantic_hash": "d1828395a71459a2bb52f123171016d4"
+  },
+  "scripts/packed-browser-e2e.mjs": {
+    "mtime": 1787622583.6934617,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2ad7d60df41bedc6e74224b3a4f0098f",
+    "semantic_hash": "2ad7d60df41bedc6e74224b3a4f0098f"
+  },
+  "scripts/packed-smoke.mjs": {
+    "mtime": 1787661141.0147405,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2b00f70d7cd060d76a5ec05f488b10ca",
+    "semantic_hash": "2b00f70d7cd060d76a5ec05f488b10ca"
+  },
+  "src/analyzer.ts": {
+    "mtime": 1787525261.6902592,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4ad7b20133da560b3b92a09db967cb77",
+    "semantic_hash": "4ad7b20133da560b3b92a09db967cb77"
+  },
+  "src/client/index.ts": {
+    "mtime": 1787632351.2222073,
+    "seen": 1787717226.9584832,
+    "ast_hash": "398a77f4493a97dd2221c920088bb876",
+    "semantic_hash": "398a77f4493a97dd2221c920088bb876"
+  },
+  "src/client/workbench/WorkbenchLauncher.tsx": {
+    "mtime": 1787545900.5137918,
+    "seen": 1787717226.9584832,
+    "ast_hash": "a6a13547593a1682994479141afdd978",
+    "semantic_hash": "a6a13547593a1682994479141afdd978"
+  },
+  "src/client/workbench/WorkbenchOverlay.tsx": {
+    "mtime": 1787632154.686404,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8c0030cb9e988facb934a3a764f014bd",
+    "semantic_hash": "8c0030cb9e988facb934a3a764f014bd"
+  },
+  "src/client/workbench/locales.ts": {
+    "mtime": 1787632169.5202763,
+    "seen": 1787717226.9584832,
+    "ast_hash": "3eac288e240491f941913395a8b8959c",
+    "semantic_hash": "3eac288e240491f941913395a8b8959c"
+  },
+  "src/client/workbench/presentation.ts": {
+    "mtime": 1787545901.3732493,
+    "seen": 1787717226.9584832,
+    "ast_hash": "db4036df608b4b2dbdd6679026a87b90",
+    "semantic_hash": "db4036df608b4b2dbdd6679026a87b90"
+  },
+  "src/client/workbench/styles.ts": {
+    "mtime": 1787620916.175696,
+    "seen": 1787717226.9584832,
+    "ast_hash": "72b7adacfbb30077d57a61d9a83edc93",
+    "semantic_hash": "72b7adacfbb30077d57a61d9a83edc93"
+  },
+  "src/contracts.ts": {
+    "mtime": 1787649288.153889,
+    "seen": 1787717226.9584832,
+    "ast_hash": "32f99289e860adeccf455246385fec3c",
+    "semantic_hash": "32f99289e860adeccf455246385fec3c"
+  },
+  "src/control-plane-provider.ts": {
+    "mtime": 1787534523.9511807,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d8737c2e09c052f8baa66c83d0db6a8f",
+    "semantic_hash": "d8737c2e09c052f8baa66c83d0db6a8f"
+  },
+  "src/digest-envelope.ts": {
+    "mtime": 1787649287.092473,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ae880c2f02ff4584eb3748c031d52bb9",
+    "semantic_hash": "ae880c2f02ff4584eb3748c031d52bb9"
+  },
+  "src/evaluation.ts": {
+    "mtime": 1787661186.8186965,
+    "seen": 1787717226.9584832,
+    "ast_hash": "a07c171482a08ebaa2e66864e4c9181e",
+    "semantic_hash": "a07c171482a08ebaa2e66864e4c9181e"
+  },
+  "src/host-repository-provider.ts": {
+    "mtime": 1787521218.3820152,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f954aa1127c78d618c9ea5f405d98da2",
+    "semantic_hash": "f954aa1127c78d618c9ea5f405d98da2"
+  },
+  "src/index.ts": {
+    "mtime": 1787641781.9826264,
+    "seen": 1787717226.9584832,
+    "ast_hash": "24e1bdce6687397db4312e724aa26eda",
+    "semantic_hash": "24e1bdce6687397db4312e724aa26eda"
+  },
+  "src/internal/analyzer-registry.ts": {
+    "mtime": 1787607596.4392383,
+    "seen": 1787717226.9584832,
+    "ast_hash": "bebf8ace49c4fd4d0425c7d066f6ad25",
+    "semantic_hash": "bebf8ace49c4fd4d0425c7d066f6ad25"
+  },
+  "src/internal/assessment-list-query.ts": {
+    "mtime": 1787546981.1092577,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2a258779af51c6b2dde79ba1ddd7ee59",
+    "semantic_hash": "2a258779af51c6b2dde79ba1ddd7ee59"
+  },
+  "src/internal/assessment-record.ts": {
+    "mtime": 1787601927.1010559,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b60b8c2f1160275ea7ab78bb444a9546",
+    "semantic_hash": "b60b8c2f1160275ea7ab78bb444a9546"
+  },
+  "src/internal/authority.ts": {
+    "mtime": 1787622742.9978983,
+    "seen": 1787717226.9584832,
+    "ast_hash": "586186a2c8d5043ac829b9276c8abae2",
+    "semantic_hash": "586186a2c8d5043ac829b9276c8abae2"
+  },
+  "src/internal/builtin-node-package-lifecycle-analyzer.ts": {
+    "mtime": 1787508697.57452,
+    "seen": 1787717226.9584832,
+    "ast_hash": "23951a8c510237571640b7051e60770e",
+    "semantic_hash": "23951a8c510237571640b7051e60770e"
+  },
+  "src/internal/candidate-validation.ts": {
+    "mtime": 1787538373.400661,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2df7b40878f8808cb5c4d24c704ffb74",
+    "semantic_hash": "2df7b40878f8808cb5c4d24c704ffb74"
+  },
+  "src/internal/canonical.ts": {
+    "mtime": 1787502787.5637765,
+    "seen": 1787717226.9584832,
+    "ast_hash": "40bd8b7795d839ffb98c8ddc17e03070",
+    "semantic_hash": "40bd8b7795d839ffb98c8ddc17e03070"
+  },
+  "src/internal/control-plane-assessment.ts": {
+    "mtime": 1787520337.5835683,
+    "seen": 1787717226.9584832,
+    "ast_hash": "23c8260d63c36c3df7e7ad8cc6f5f075",
+    "semantic_hash": "23c8260d63c36c3df7e7ad8cc6f5f075"
+  },
+  "src/internal/control-plane-cancellation-crash-checkpoint.ts": {
+    "mtime": 1787514824.9458747,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e29639d81fb58ee16a15dc3a4032e8a5",
+    "semantic_hash": "e29639d81fb58ee16a15dc3a4032e8a5"
+  },
+  "src/internal/control-plane-repository-binding.ts": {
+    "mtime": 1787520338.263355,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2ae2978cc4430f5f42351098e1f9b493",
+    "semantic_hash": "2ae2978cc4430f5f42351098e1f9b493"
+  },
+  "src/internal/deterministic-kernel.ts": {
+    "mtime": 1787536410.0493279,
+    "seen": 1787717226.9584832,
+    "ast_hash": "3f51a94aa85601aaf59d1c4fe608b74e",
+    "semantic_hash": "3f51a94aa85601aaf59d1c4fe608b74e"
+  },
+  "src/internal/evidence-persistence.ts": {
+    "mtime": 1787535593.221037,
+    "seen": 1787717226.9584832,
+    "ast_hash": "91fe430ce2350a5a7020a8b2c2a2f8cf",
+    "semantic_hash": "91fe430ce2350a5a7020a8b2c2a2f8cf"
+  },
+  "src/internal/evidence-view.ts": {
+    "mtime": 1787598363.1538384,
+    "seen": 1787717226.9584832,
+    "ast_hash": "6b8669196ebfea098c3c0632c9f4f357",
+    "semantic_hash": "6b8669196ebfea098c3c0632c9f4f357"
+  },
+  "src/internal/export-delivery.ts": {
+    "mtime": 1787641783.0151973,
+    "seen": 1787717226.9584832,
+    "ast_hash": "7f9239d05ee7343ff98b02554483456e",
+    "semantic_hash": "7f9239d05ee7343ff98b02554483456e"
+  },
+  "src/internal/finding-query.ts": {
+    "mtime": 1787538269.2737038,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e7f3f562191b22d372d6eb39cd81b08f",
+    "semantic_hash": "e7f3f562191b22d372d6eb39cd81b08f"
+  },
+  "src/internal/freeze.ts": {
+    "mtime": 1787410176.196139,
+    "seen": 1787717226.9584832,
+    "ast_hash": "63d181302897068e2855dfc088012a0f",
+    "semantic_hash": "63d181302897068e2855dfc088012a0f"
+  },
+  "src/internal/persistence.ts": {
+    "mtime": 1787547640.9169848,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f456fe3a1a6d3c5a42ab90b8f57f0ef5",
+    "semantic_hash": "f456fe3a1a6d3c5a42ab90b8f57f0ef5"
+  },
+  "src/internal/risk-decision.ts": {
+    "mtime": 1787540071.3471296,
+    "seen": 1787717226.9584832,
+    "ast_hash": "02116179175b31e2e68480b252aa9914",
+    "semantic_hash": "02116179175b31e2e68480b252aa9914"
+  },
+  "src/internal/sealed-artifacts.ts": {
+    "mtime": 1787537016.4152677,
+    "seen": 1787717226.9584832,
+    "ast_hash": "a9bd73f50d3c74a1e9e0bba88406ad7f",
+    "semantic_hash": "a9bd73f50d3c74a1e9e0bba88406ad7f"
+  },
+  "src/internal/security-catalog.ts": {
+    "mtime": 1787609057.1131184,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8d89b3890e19aa4153043dad63122fa5",
+    "semantic_hash": "8d89b3890e19aa4153043dad63122fa5"
+  },
+  "src/internal/subject-freeze.ts": {
+    "mtime": 1787517670.1519406,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c3c6bae4a68d71c00c85a00d71bc4698",
+    "semantic_hash": "c3c6bae4a68d71c00c85a00d71bc4698"
+  },
+  "src/tools.ts": {
+    "mtime": 1787638786.2272837,
+    "seen": 1787717226.9584832,
+    "ast_hash": "9fb6f9b4ca4fde94286bca17e31f9eb6",
+    "semantic_hash": "9fb6f9b4ca4fde94286bca17e31f9eb6"
+  },
+  "src/workbench-remote.ts": {
+    "mtime": 1787623061.7568557,
+    "seen": 1787717226.9584832,
+    "ast_hash": "3f8b252444122af203a710237abc2092",
+    "semantic_hash": "3f8b252444122af203a710237abc2092"
+  },
+  "tests/assessment-list.spec.ts": {
+    "mtime": 1787639780.3480916,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8802cf6c9cb85315e8de879599ab698c",
+    "semantic_hash": "8802cf6c9cb85315e8de879599ab698c"
+  },
+  "tests/control-plane-provider.spec.ts": {
+    "mtime": 1787519094.801539,
+    "seen": 1787717226.9584832,
+    "ast_hash": "78203f128692ad19ff738e13bc951f05",
+    "semantic_hash": "78203f128692ad19ff738e13bc951f05"
+  },
+  "tests/deterministic-assessment.spec.ts": {
+    "mtime": 1787632780.724859,
+    "seen": 1787717226.9584832,
+    "ast_hash": "461ad30840c03af744e88e585fd3eeec",
+    "semantic_hash": "461ad30840c03af744e88e585fd3eeec"
+  },
+  "tests/evaluation-metrics.spec.ts": {
+    "mtime": 1787661074.8203347,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b2a91b0f9282feb711c7773f037f82b6",
+    "semantic_hash": "b2a91b0f9282feb711c7773f037f82b6"
+  },
+  "tests/external-analyzer-validation.spec.ts": {
+    "mtime": 1787539934.1461189,
+    "seen": 1787717226.9584832,
+    "ast_hash": "82de4077c05552fd5ab13aa0adf0351c",
+    "semantic_hash": "82de4077c05552fd5ab13aa0adf0351c"
+  },
+  "tests/external-analyzer.spec.ts": {
+    "mtime": 1787524505.9164078,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ba5865da5692c458f708cc5d3ffe3213",
+    "semantic_hash": "ba5865da5692c458f708cc5d3ffe3213"
+  },
+  "tests/health.spec.ts": {
+    "mtime": 1787502016.2711363,
+    "seen": 1787717226.9584832,
+    "ast_hash": "9d86693a5ab87f5b5f056ac7648e9183",
+    "semantic_hash": "9d86693a5ab87f5b5f056ac7648e9183"
+  },
+  "tests/host-repository-provider.spec.ts": {
+    "mtime": 1787521219.06997,
+    "seen": 1787717226.9584832,
+    "ast_hash": "6713cc83b97257b6cbb7a548e1bc8d78",
+    "semantic_hash": "6713cc83b97257b6cbb7a548e1bc8d78"
+  },
+  "tests/qualified-node-analyzer.spec.ts": {
+    "mtime": 1787534301.4374266,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e58935dbd5b8078ba048f0e1e9a2a266",
+    "semantic_hash": "e58935dbd5b8078ba048f0e1e9a2a266"
+  },
+  "tests/repository-registry.spec.ts": {
+    "mtime": 1787503767.7236414,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b0795c29a1c0bf6973865911715d00d7",
+    "semantic_hash": "b0795c29a1c0bf6973865911715d00d7"
+  },
+  "tests/security-catalog.spec.ts": {
+    "mtime": 1787609057.9744008,
+    "seen": 1787717226.9584832,
+    "ast_hash": "88c6d73f2cc56535eb5327e407dc9fca",
+    "semantic_hash": "88c6d73f2cc56535eb5327e407dc9fca"
+  },
+  "tests/security-tools.spec.ts": {
+    "mtime": 1787641512.43309,
+    "seen": 1787717226.9584832,
+    "ast_hash": "11212c0f99d38dfe5fe115f6b13ee410",
+    "semantic_hash": "11212c0f99d38dfe5fe115f6b13ee410"
+  },
+  "tests/subject-freeze.spec.ts": {
+    "mtime": 1787517652.497584,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ef32d4fcdfbfd334ccae29bbd2676ca4",
+    "semantic_hash": "ef32d4fcdfbfd334ccae29bbd2676ca4"
+  },
+  "tests/support/reference-host.ts": {
+    "mtime": 1787621965.4781308,
+    "seen": 1787717226.9584832,
+    "ast_hash": "321a93d5b4b6b32ceeaacdb00bff8388",
+    "semantic_hash": "321a93d5b4b6b32ceeaacdb00bff8388"
+  },
+  "tests/workbench-client.spec.ts": {
+    "mtime": 1787610920.0486104,
+    "seen": 1787717226.9584832,
+    "ast_hash": "0dd4cb3cb11145d46af3c76ee8715f70",
+    "semantic_hash": "0dd4cb3cb11145d46af3c76ee8715f70"
+  },
+  "tests/workbench-remote.spec.ts": {
+    "mtime": 1787622398.3289952,
+    "seen": 1787717226.9584832,
+    "ast_hash": "86080690ba094c2772ec1914940f4d6d",
+    "semantic_hash": "86080690ba094c2772ec1914940f4d6d"
+  },
+  "tests/workbench-ui.client.spec.tsx": {
+    "mtime": 1787632446.6567965,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e1f4fe64744797c6119b2b073131fc05",
+    "semantic_hash": "e1f4fe64744797c6119b2b073131fc05"
+  },
+  "tsconfig.json": {
+    "mtime": 1787544204.5728245,
+    "seen": 1787717226.9584832,
+    "ast_hash": "9446a129a088bdbb1430227d71bccc81",
+    "semantic_hash": "9446a129a088bdbb1430227d71bccc81"
+  },
+  "tsconfig.test.json": {
+    "mtime": 1787410028.3300602,
+    "seen": 1787717226.9584832,
+    "ast_hash": "060e29c6c8610516982f7a06fb902b28",
+    "semantic_hash": "060e29c6c8610516982f7a06fb902b28"
+  },
+  "tsdown.config.ts": {
+    "mtime": 1787641232.7155156,
+    "seen": 1787717226.9584832,
+    "ast_hash": "59d6a55807a9f35ed6186b85c95efdd9",
+    "semantic_hash": "59d6a55807a9f35ed6186b85c95efdd9"
+  },
+  "vitest.config.ts": {
+    "mtime": 1787545488.1767652,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ddc782ea6dff5db45c64d98d77678b0b",
+    "semantic_hash": "ddc782ea6dff5db45c64d98d77678b0b"
+  },
+  "CONTEXT.md": {
+    "mtime": 1787520877.0096848,
+    "seen": 1787717226.9584832,
+    "ast_hash": "0bc2ea7dc7485214c1629050eb93995c",
+    "semantic_hash": "0bc2ea7dc7485214c1629050eb93995c"
+  },
+  "README.md": {
+    "mtime": 1787661164.8789477,
+    "seen": 1787717226.9584832,
+    "ast_hash": "115c4750beccdfc8244ae2982f1075e7",
+    "semantic_hash": "115c4750beccdfc8244ae2982f1075e7"
+  },
+  "cordis.patch.yml": {
+    "mtime": 1787633748.111203,
+    "seen": 1787717226.9584832,
+    "ast_hash": "bc151fc0533a782176a261514aeb5dec",
+    "semantic_hash": "bc151fc0533a782176a261514aeb5dec"
+  },
+  "docs/adr/0001-security-assurance-is-an-independent-companion-product.md": {
+    "mtime": 1787399078.3152857,
+    "seen": 1787717226.9584832,
+    "ast_hash": "bcb0b8418acfc0615ea6fbe9f938ef29",
+    "semantic_hash": "bcb0b8418acfc0615ea6fbe9f938ef29"
+  },
+  "docs/adr/0002-security-verdicts-do-not-own-mission-approval.md": {
+    "mtime": 1787399078.9186714,
+    "seen": 1787717226.9584832,
+    "ast_hash": "303c384c01e42c6d72ce19017d1fdfb9",
+    "semantic_hash": "303c384c01e42c6d72ce19017d1fdfb9"
+  },
+  "docs/adr/0003-codex-security-is-a-reference-not-a-required-runtime.md": {
+    "mtime": 1787399079.5642138,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2cfb319f4169e8f3f9551dbc97e4cc8e",
+    "semantic_hash": "2cfb319f4169e8f3f9551dbc97e4cc8e"
+  },
+  "docs/adr/0004-security-claims-are-scope-and-coverage-bound.md": {
+    "mtime": 1787399080.19157,
+    "seen": 1787717226.9584832,
+    "ast_hash": "9d1fdc640d057e3fdd297f60dcdcf1a9",
+    "semantic_hash": "9d1fdc640d057e3fdd297f60dcdcf1a9"
+  },
+  "docs/adr/0005-one-assessment-engine-serves-both-entry-points.md": {
+    "mtime": 1787399467.3669198,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d405042af977fbc4dd71575a29ae6888",
+    "semantic_hash": "d405042af977fbc4dd71575a29ae6888"
+  },
+  "docs/adr/0006-security-assessments-bind-an-immutable-subject.md": {
+    "mtime": 1787399468.1218464,
+    "seen": 1787717226.9584832,
+    "ast_hash": "50e61c5b8e2675304a11f80f49216cd9",
+    "semantic_hash": "50e61c5b8e2675304a11f80f49216cd9"
+  },
+  "docs/adr/0007-host-policy-and-a-deterministic-evaluator-own-verdict-semantics.md": {
+    "mtime": 1787399468.8563194,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e22201ebae40ac50a2ac92a51822510d",
+    "semantic_hash": "e22201ebae40ac50a2ac92a51822510d"
+  },
+  "docs/adr/0008-security-verdicts-are-tristate-and-fail-closed.md": {
+    "mtime": 1787399469.612262,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5e8c5a438159e0d4e440e7ca71395348",
+    "semantic_hash": "5e8c5a438159e0d4e440e7ca71395348"
+  },
+  "docs/adr/0009-evidence-storage-does-not-modify-the-assessment-subject.md": {
+    "mtime": 1787399470.4248784,
+    "seen": 1787717226.9584832,
+    "ast_hash": "310d8dd2f2ba85a25d5f5daa9ae2a816",
+    "semantic_hash": "310d8dd2f2ba85a25d5f5daa9ae2a816"
+  },
+  "docs/adr/0010-assurance-integration-exchanges-sealed-submissions.md": {
+    "mtime": 1787399471.1833537,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2c57e05371229729185090260eaf52ca",
+    "semantic_hash": "2c57e05371229729185090260eaf52ca"
+  },
+  "docs/adr/0011-assessment-state-and-security-verdict-are-separate.md": {
+    "mtime": 1787400447.2953522,
+    "seen": 1787717226.9584832,
+    "ast_hash": "6404424c1f1b09eaa60f7ffffedfe41f",
+    "semantic_hash": "6404424c1f1b09eaa60f7ffffedfe41f"
+  },
+  "docs/adr/0012-standalone-use-exposes-assessment-control-not-a-second-mission-system.md": {
+    "mtime": 1787400447.960727,
+    "seen": 1787717226.9584832,
+    "ast_hash": "1d678fb59a62d6f42475acf5c68bb06a",
+    "semantic_hash": "1d678fb59a62d6f42475acf5c68bb06a"
+  },
+  "docs/adr/0013-v1-assessment-is-read-only.md": {
+    "mtime": 1787401516.2133603,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d3171bb9a7fc1a074b1a3ae18c5bfdf6",
+    "semantic_hash": "d3171bb9a7fc1a074b1a3ae18c5bfdf6"
+  },
+  "docs/adr/0014-host-policy-controls-provider-activation.md": {
+    "mtime": 1787400449.2662985,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8547879f02616a4c7d96c75443eced74",
+    "semantic_hash": "8547879f02616a4c7d96c75443eced74"
+  },
+  "docs/adr/0015-machine-providers-have-explicit-assessor-identity.md": {
+    "mtime": 1787400449.9039176,
+    "seen": 1787717226.9584832,
+    "ast_hash": "36ccc1e545858e59d50385acc9e4d00f",
+    "semantic_hash": "36ccc1e545858e59d50385acc9e4d00f"
+  },
+  "docs/adr/0016-provider-capability-describes-support-but-grants-no-permission.md": {
+    "mtime": 1787400450.5469894,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5d5b8deeea8600c0c37d6c3b031684c3",
+    "semantic_hash": "5d5b8deeea8600c0c37d6c3b031684c3"
+  },
+  "docs/adr/0017-gate-bearing-assessment-requires-bounded-execution.md": {
+    "mtime": 1787400451.1594644,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d9f65e2ca3eb1e3e18c3c1c94f624454",
+    "semantic_hash": "d9f65e2ca3eb1e3e18c3c1c94f624454"
+  },
+  "docs/adr/0018-provider-composition-is-frozen-into-the-assessment-seal.md": {
+    "mtime": 1787400451.8014975,
+    "seen": 1787717226.9584832,
+    "ast_hash": "08a128676b3e21f5acee0cf7ae01cc7b",
+    "semantic_hash": "08a128676b3e21f5acee0cf7ae01cc7b"
+  },
+  "docs/adr/0019-coverage-is-proven-against-a-frozen-plan.md": {
+    "mtime": 1787400452.460538,
+    "seen": 1787717226.9584832,
+    "ast_hash": "3a88b4c02643795d14b2eaaf8468fbf0",
+    "semantic_hash": "3a88b4c02643795d14b2eaaf8468fbf0"
+  },
+  "docs/adr/0020-assessment-executes-as-a-durable-phase-graph.md": {
+    "mtime": 1787400767.7710004,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f4bc4564d7c77405a91568aaa792747d",
+    "semantic_hash": "f4bc4564d7c77405a91568aaa792747d"
+  },
+  "docs/adr/0021-assessment-modes-bound-the-breadth-of-security-claims.md": {
+    "mtime": 1787400768.4668307,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b9c1c790a2805c4adfb484818d469c9d",
+    "semantic_hash": "b9c1c790a2805c4adfb484818d469c9d"
+  },
+  "docs/adr/0022-policy-layers-may-strengthen-but-not-weaken-the-baseline.md": {
+    "mtime": 1787400769.1674602,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2b7ea186f4a177f446d6a2427667b9bf",
+    "semantic_hash": "2b7ea186f4a177f446d6a2427667b9bf"
+  },
+  "docs/adr/0023-analyzers-enter-through-a-versioned-startup-registry.md": {
+    "mtime": 1787400769.823594,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5136bd63fd4f10f8d7cb4ce2b2b70031",
+    "semantic_hash": "5136bd63fd4f10f8d7cb4ce2b2b70031"
+  },
+  "docs/adr/0024-provider-unavailability-is-distinct-from-an-invalid-contribution.md": {
+    "mtime": 1787400770.4918222,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4d6cf80cef785cc0e1d22a6595e10184",
+    "semantic_hash": "4d6cf80cef785cc0e1d22a6595e10184"
+  },
+  "docs/adr/0025-analyzer-failure-requires-explicit-resume.md": {
+    "mtime": 1787400771.1579313,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5bf599ae5ee2009c8af5f1d829e296f2",
+    "semantic_hash": "5bf599ae5ee2009c8af5f1d829e296f2"
+  },
+  "docs/adr/0026-cancellation-preserves-partial-evidence-but-produces-no-verdict.md": {
+    "mtime": 1787400771.8397305,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c1028d5a56d07af2809e6926a4473b1f",
+    "semantic_hash": "c1028d5a56d07af2809e6926a4473b1f"
+  },
+  "docs/adr/0027-only-sealed-assessments-produce-assurance-submissions.md": {
+    "mtime": 1787400772.5121064,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5841f1794a631ffbb617757691a3c225",
+    "semantic_hash": "5841f1794a631ffbb617757691a3c225"
+  },
+  "docs/adr/0028-severity-confidence-and-policy-significance-are-independent.md": {
+    "mtime": 1787400773.1779568,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5cf3477606ccafb0f5b7702709adc598",
+    "semantic_hash": "5cf3477606ccafb0f5b7702709adc598"
+  },
+  "docs/adr/0029-risk-acceptance-is-authorized-scoped-and-non-destructive.md": {
+    "mtime": 1787400773.8227086,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ebddbc293eed8dc6e8a285a880dc753a",
+    "semantic_hash": "ebddbc293eed8dc6e8a285a880dc753a"
+  },
+  "docs/adr/0030-v1-has-one-complete-supported-ecosystem.md": {
+    "mtime": 1787401292.7041602,
+    "seen": 1787717226.9584832,
+    "ast_hash": "bcacd7329d321062dc443d6cb0f5b196",
+    "semantic_hash": "bcacd7329d321062dc443d6cb0f5b196"
+  },
+  "docs/adr/0031-standard-and-deep-share-policy-but-differ-in-variance-reduction.md": {
+    "mtime": 1787401293.3145096,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2c8bc5fd98fe2348aa7062e882b6f730",
+    "semantic_hash": "2c8bc5fd98fe2348aa7062e882b6f730"
+  },
+  "docs/adr/0032-specialist-agents-remain-subordinate-to-the-assessment-engine.md": {
+    "mtime": 1787401293.9422746,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4eea0a86f76e8559294fba872ea0d6f2",
+    "semantic_hash": "4eea0a86f76e8559294fba872ea0d6f2"
+  },
+  "docs/adr/0033-threat-models-are-versioned-evidence.md": {
+    "mtime": 1787401294.564857,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ec6c15e4de1c9b1f8e505b7bf5585ab4",
+    "semantic_hash": "ec6c15e4de1c9b1f8e505b7bf5585ab4"
+  },
+  "docs/adr/0034-change-assessment-covers-an-impact-cone-not-only-diff-lines.md": {
+    "mtime": 1787401295.1678486,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c4bce62a3763e66c479c31781cc9a1ab",
+    "semantic_hash": "c4bce62a3763e66c479c31781cc9a1ab"
+  },
+  "docs/adr/0035-findings-require-explicit-validation-state.md": {
+    "mtime": 1787401295.7878306,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2db2a3ddacb00131287786ae215fc3fa",
+    "semantic_hash": "2db2a3ddacb00131287786ae215fc3fa"
+  },
+  "docs/adr/0036-source-and-evidence-egress-is-deny-by-default.md": {
+    "mtime": 1787401296.3915303,
+    "seen": 1787717226.9584832,
+    "ast_hash": "fe06faa137dca388d8123507ac0148a6",
+    "semantic_hash": "fe06faa137dca388d8123507ac0148a6"
+  },
+  "docs/adr/0037-cross-assessment-evidence-reuse-is-contract-verified.md": {
+    "mtime": 1787401297.0182643,
+    "seen": 1787717226.9584832,
+    "ast_hash": "cfebc3ea63c304537a09542cfa3fd506",
+    "semantic_hash": "cfebc3ea63c304537a09542cfa3fd506"
+  },
+  "docs/adr/0038-codex-security-capability-breadth-is-a-reference-envelope.md": {
+    "mtime": 1787401515.5679,
+    "seen": 1787717226.9584832,
+    "ast_hash": "a6e67402e876d465b8420bf048d61e48",
+    "semantic_hash": "a6e67402e876d465b8420bf048d61e48"
+  },
+  "docs/adr/0039-finding-identity-is-local-and-lineage-is-explicit.md": {
+    "mtime": 1787401829.7605228,
+    "seen": 1787717226.9584832,
+    "ast_hash": "cdca7230a2f5f331eaba36495bb80e83",
+    "semantic_hash": "cdca7230a2f5f331eaba36495bb80e83"
+  },
+  "docs/adr/0040-validation-is-governed-by-weakness-specific-contracts.md": {
+    "mtime": 1787401830.4374764,
+    "seen": 1787717226.9584832,
+    "ast_hash": "eb2bcbede2d377e31863e15be24d6880",
+    "semantic_hash": "eb2bcbede2d377e31863e15be24d6880"
+  },
+  "docs/adr/0041-attack-paths-are-evidence-graphs-not-dismissal-prerequisites.md": {
+    "mtime": 1787401831.07725,
+    "seen": 1787717226.9584832,
+    "ast_hash": "19e850e49dca4d723928302a96075eb3",
+    "semantic_hash": "19e850e49dca4d723928302a96075eb3"
+  },
+  "docs/adr/0042-remediation-cases-own-one-primary-finding.md": {
+    "mtime": 1787401831.7393425,
+    "seen": 1787717226.9584832,
+    "ast_hash": "26ba67294ed89f4264325e78b4d77206",
+    "semantic_hash": "26ba67294ed89f4264325e78b4d77206"
+  },
+  "docs/adr/0043-hardening-portfolios-are-non-mutating-design-evidence.md": {
+    "mtime": 1787401832.4279473,
+    "seen": 1787717226.9584832,
+    "ast_hash": "0247df01c9f718a7fbf16e881e0a5f7a",
+    "semantic_hash": "0247df01c9f718a7fbf16e881e0a5f7a"
+  },
+  "docs/adr/0044-canonical-assessment-bundles-are-machine-authoritative.md": {
+    "mtime": 1787401833.085019,
+    "seen": 1787717226.9584832,
+    "ast_hash": "31211aecf6a21c7f6fdadaa69cb990f3",
+    "semantic_hash": "31211aecf6a21c7f6fdadaa69cb990f3"
+  },
+  "docs/adr/0045-external-tracking-is-payload-reviewed-and-receipted.md": {
+    "mtime": 1787401833.7454984,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e6f2930f51417ce3fe130c6bd1f1021e",
+    "semantic_hash": "e6f2930f51417ce3fe130c6bd1f1021e"
+  },
+  "docs/adr/0046-all-product-surfaces-share-one-public-service-contract.md": {
+    "mtime": 1787401834.4054933,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5b99eeb8602201de79a4064e78e75bd6",
+    "semantic_hash": "5b99eeb8602201de79a4064e78e75bd6"
+  },
+  "docs/adr/0047-technical-severity-is-normalized-by-frozen-rules.md": {
+    "mtime": 1787401835.0709145,
+    "seen": 1787717226.9584832,
+    "ast_hash": "30e0041407c7752c445945c5b25aa03c",
+    "semantic_hash": "30e0041407c7752c445945c5b25aa03c"
+  },
+  "docs/adr/0048-default-policy-blocks-high-risk-and-material-uncertainty.md": {
+    "mtime": 1787402243.7395074,
+    "seen": 1787717226.9584832,
+    "ast_hash": "fec8bf5bf9fbae8e1553f931bd39eef2",
+    "semantic_hash": "fec8bf5bf9fbae8e1553f931bd39eef2"
+  },
+  "docs/adr/0049-risk-acceptance-has-severity-and-authority-ceilings.md": {
+    "mtime": 1787402244.4086058,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c4c37f80721c55c06377d17eacca33fb",
+    "semantic_hash": "c4c37f80721c55c06377d17eacca33fb"
+  },
+  "docs/adr/0050-patch-generation-and-application-use-separate-authority.md": {
+    "mtime": 1787402245.0787346,
+    "seen": 1787717226.9584832,
+    "ast_hash": "755be4b0fb529e72ae64466452c82e34",
+    "semantic_hash": "755be4b0fb529e72ae64466452c82e34"
+  },
+  "docs/adr/0051-finding-resolution-requires-a-new-sealed-assessment.md": {
+    "mtime": 1787402245.7541254,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f53be0640dd214536166264d2a61a9ed",
+    "semantic_hash": "f53be0640dd214536166264d2a61a9ed"
+  },
+  "docs/adr/0052-reproducers-never-target-production-or-real-credentials.md": {
+    "mtime": 1787402246.4207203,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e4fd82d39fb24984ae16a592c6809edc",
+    "semantic_hash": "e4fd82d39fb24984ae16a592c6809edc"
+  },
+  "docs/adr/0053-sensitive-evidence-is-protected-and-secrets-are-never-retained.md": {
+    "mtime": 1787402247.0631385,
+    "seen": 1787717226.9584832,
+    "ast_hash": "efd5a33339b9d9212016ac4284ccfb98",
+    "semantic_hash": "efd5a33339b9d9212016ac4284ccfb98"
+  },
+  "docs/adr/0054-exports-use-audience-specific-redaction-profiles.md": {
+    "mtime": 1787402247.7277308,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8387e5c0286a3ddf0d19f6bd680bb1f9",
+    "semantic_hash": "8387e5c0286a3ddf0d19f6bd680bb1f9"
+  },
+  "docs/adr/0055-sealed-bundles-are-never-migrated-in-place.md": {
+    "mtime": 1787402248.4037464,
+    "seen": 1787717226.9584832,
+    "ast_hash": "87c370a63100e330b7e5fb840c849908",
+    "semantic_hash": "87c370a63100e330b7e5fb840c849908"
+  },
+  "docs/adr/0056-retention-purges-payloads-with-auditable-tombstones.md": {
+    "mtime": 1787402249.0846548,
+    "seen": 1787717226.9584832,
+    "ast_hash": "be123f595b7a8fe9e1ce2d3f17d4293c",
+    "semantic_hash": "be123f595b7a8fe9e1ce2d3f17d4293c"
+  },
+  "docs/adr/0057-product-proof-separates-conformance-from-effectiveness.md": {
+    "mtime": 1787402249.7413127,
+    "seen": 1787717226.9584832,
+    "ast_hash": "78826e77b4b22199223d8766e209a8c2",
+    "semantic_hash": "78826e77b4b22199223d8766e209a8c2"
+  },
+  "docs/adr/0058-ground-truth-is-hidden-and-independently-adjudicated.md": {
+    "mtime": 1787402637.4158385,
+    "seen": 1787717226.9584832,
+    "ast_hash": "cabfec4371a0bbab31692ef8fcde0125",
+    "semantic_hash": "cabfec4371a0bbab31692ef8fcde0125"
+  },
+  "docs/adr/0059-benchmarks-use-four-complementary-corpus-lanes.md": {
+    "mtime": 1787402638.0827062,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f62d2c523aae6626e750462716aeffb5",
+    "semantic_hash": "f62d2c523aae6626e750462716aeffb5"
+  },
+  "docs/adr/0060-effectiveness-compares-fixed-baseline-and-product-arms.md": {
+    "mtime": 1787402638.7635627,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5b0f6d6ba6cd24b2739cedfc1d70a52d",
+    "semantic_hash": "5b0f6d6ba6cd24b2739cedfc1d70a52d"
+  },
+  "docs/adr/0061-effectiveness-prioritizes-validated-risk-and-honest-indeterminacy.md": {
+    "mtime": 1787402639.4226594,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b8174844d2735fb33e384f9606023502",
+    "semantic_hash": "b8174844d2735fb33e384f9606023502"
+  },
+  "docs/adr/0062-utility-measures-risk-reduction-against-human-and-runtime-cost.md": {
+    "mtime": 1787402640.0728016,
+    "seen": 1787717226.9584832,
+    "ast_hash": "21340579986374b072cfc86f93ffbf9a",
+    "semantic_hash": "21340579986374b072cfc86f93ffbf9a"
+  },
+  "docs/adr/0063-stochastic-evaluation-reports-distributions-not-best-runs.md": {
+    "mtime": 1787402640.7350113,
+    "seen": 1787717226.9584832,
+    "ast_hash": "3e635df0bd7f49f7b5d51eb6c44c9026",
+    "semantic_hash": "3e635df0bd7f49f7b5d51eb6c44c9026"
+  },
+  "docs/adr/0064-ground-truth-leakage-invalidates-the-evaluation-run.md": {
+    "mtime": 1787402641.3951366,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f90892c459eb82337e6bead5770c21c8",
+    "semantic_hash": "f90892c459eb82337e6bead5770c21c8"
+  },
+  "docs/adr/0065-capability-conformance-is-a-reusable-provider-contract-kit.md": {
+    "mtime": 1787402642.0171378,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4d5e1af6527752553ad91ae7b7bf39ed",
+    "semantic_hash": "4d5e1af6527752553ad91ae7b7bf39ed"
+  },
+  "docs/adr/0066-hostile-repositories-are-first-class-conformance-subjects.md": {
+    "mtime": 1787402642.6896446,
+    "seen": 1787717226.9584832,
+    "ast_hash": "a9fe75c44c0413db1d1747b5f4cfd430",
+    "semantic_hash": "a9fe75c44c0413db1d1747b5f4cfd430"
+  },
+  "docs/adr/0067-evaluation-runs-are-immutable-and-pre-registered.md": {
+    "mtime": 1787402643.3346696,
+    "seen": 1787717226.9584832,
+    "ast_hash": "53f9764b527fac136e21fefb799dc456",
+    "semantic_hash": "53f9764b527fac136e21fefb799dc456"
+  },
+  "docs/adr/0068-development-qualification-and-release-corpora-are-separated.md": {
+    "mtime": 1787403106.1472263,
+    "seen": 1787717226.9584832,
+    "ast_hash": "975a48daf9005dbb5e454022a2dbed03",
+    "semantic_hash": "975a48daf9005dbb5e454022a2dbed03"
+  },
+  "docs/adr/0069-ground-truth-adjudication-is-blinded-and-independent.md": {
+    "mtime": 1787403106.7348266,
+    "seen": 1787717226.9584832,
+    "ast_hash": "0baf2fb63ca068612d76571f8aa503c8",
+    "semantic_hash": "0baf2fb63ca068612d76571f8aa503c8"
+  },
+  "docs/adr/0070-finding-matching-is-predeclared-and-one-to-one.md": {
+    "mtime": 1787403107.3463776,
+    "seen": 1787717226.9584832,
+    "ast_hash": "de71e643685e0475d7417db8617b0350",
+    "semantic_hash": "de71e643685e0475d7417db8617b0350"
+  },
+  "docs/adr/0071-insufficient-benchmark-strata-are-inconclusive.md": {
+    "mtime": 1787403107.950708,
+    "seen": 1787717226.9584832,
+    "ast_hash": "9de19b664ed192e8f4709d5b1d406217",
+    "semantic_hash": "9de19b664ed192e8f4709d5b1d406217"
+  },
+  "docs/adr/0072-proof-runs-in-pr-nightly-weekly-and-rc-tiers.md": {
+    "mtime": 1787403108.5875413,
+    "seen": 1787717226.9584832,
+    "ast_hash": "da5adeaa21443a5538c82bc974399784",
+    "semantic_hash": "da5adeaa21443a5538c82bc974399784"
+  },
+  "docs/adr/0073-model-and-provider-drift-requires-requalification.md": {
+    "mtime": 1787403109.2078562,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5286591e73a787ba3ddc2ab67a0b4b1f",
+    "semantic_hash": "5286591e73a787ba3ddc2ab67a0b4b1f"
+  },
+  "docs/adr/0074-benchmark-failures-and-reruns-are-preclassified.md": {
+    "mtime": 1787403109.8332043,
+    "seen": 1787717226.9584832,
+    "ast_hash": "275964936861fa0f9874a24ebd1e152f",
+    "semantic_hash": "275964936861fa0f9874a24ebd1e152f"
+  },
+  "docs/adr/0075-benchmark-major-changes-require-bridge-runs.md": {
+    "mtime": 1787403110.4831288,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e09096817090564ff4821c2263ceeea8",
+    "semantic_hash": "e09096817090564ff4821c2263ceeea8"
+  },
+  "docs/adr/0076-evaluation-budgets-include-compute-network-and-human-cost.md": {
+    "mtime": 1787403111.114322,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ce8fa71febe4483456974e37eb61959e",
+    "semantic_hash": "ce8fa71febe4483456974e37eb61959e"
+  },
+  "docs/adr/0077-dogfood-can-block-release-but-cannot-prove-effectiveness.md": {
+    "mtime": 1787403111.7488513,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8a8ec2b884635851060303abd473a31e",
+    "semantic_hash": "8a8ec2b884635851060303abd473a31e"
+  },
+  "docs/adr/0078-release-thresholds-combine-hard-floors-and-pre-holdout-calibration.md": {
+    "mtime": 1787403417.273726,
+    "seen": 1787717226.9584832,
+    "ast_hash": "15cb9ac22694af0b31a9bb3f70c17a72",
+    "semantic_hash": "15cb9ac22694af0b31a9bb3f70c17a72"
+  },
+  "docs/adr/0079-exposed-release-holdouts-are-retired-after-a-failed-candidate.md": {
+    "mtime": 1787403417.9533477,
+    "seen": 1787717226.9584832,
+    "ast_hash": "48e9e16f36e0beefc0af3c6710e10a51",
+    "semantic_hash": "48e9e16f36e0beefc0af3c6710e10a51"
+  },
+  "docs/adr/0080-releases-must-be-non-inferior-in-every-mandatory-stratum.md": {
+    "mtime": 1787403418.633319,
+    "seen": 1787717226.9584832,
+    "ast_hash": "dbb9a413bb7e8dd78625a265b4dd5881",
+    "semantic_hash": "dbb9a413bb7e8dd78625a265b4dd5881"
+  },
+  "docs/adr/0081-the-first-public-candidate-is-0-1-0-rc-1.md": {
+    "mtime": 1787403419.3029919,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f0e038143004a4d422c6430d2f4baf7f",
+    "semantic_hash": "f0e038143004a4d422c6430d2f4baf7f"
+  },
+  "docs/adr/0082-public-security-claims-are-evidence-and-scope-bound.md": {
+    "mtime": 1787403419.9452853,
+    "seen": 1787717226.9584832,
+    "ast_hash": "a7907d32013870b63b23e65be0ff8038",
+    "semantic_hash": "a7907d32013870b63b23e65be0ff8038"
+  },
+  "docs/adr/0083-the-security-product-has-a-stricter-self-security-release-gate.md": {
+    "mtime": 1787403420.5892563,
+    "seen": 1787717226.9584832,
+    "ast_hash": "319cf591534a86a0faf0468cb4404446",
+    "semantic_hash": "319cf591534a86a0faf0468cb4404446"
+  },
+  "docs/adr/0084-stable-support-requires-windows-linux-and-macos-proof.md": {
+    "mtime": 1787403421.2296302,
+    "seen": 1787717226.9584832,
+    "ast_hash": "39e1e7bcd8fa0b133126a56280c62c5c",
+    "semantic_hash": "39e1e7bcd8fa0b133126a56280c62c5c"
+  },
+  "docs/adr/0085-security-telemetry-is-off-by-default-and-aggregate-only.md": {
+    "mtime": 1787403421.8990233,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f3480b914693793d1349d78124d5e5af",
+    "semantic_hash": "f3480b914693793d1349d78124d5e5af"
+  },
+  "docs/adr/0086-public-scorecards-prove-method-without-exposing-holdouts.md": {
+    "mtime": 1787403422.5645258,
+    "seen": 1787717226.9584832,
+    "ast_hash": "691f4f31b0bd4a4e4806f5afd11d162c",
+    "semantic_hash": "691f4f31b0bd4a4e4806f5afd11d162c"
+  },
+  "docs/adr/0087-stable-promotion-uses-the-exact-qualified-build.md": {
+    "mtime": 1787403423.2446263,
+    "seen": 1787717226.9584832,
+    "ast_hash": "66298bade180106d4e9936a6126376ce",
+    "semantic_hash": "66298bade180106d4e9936a6126376ce"
+  },
+  "docs/adr/0088-security-assurance-ships-as-one-bundle-with-independent-entry-points.md": {
+    "mtime": 1787404432.9441288,
+    "seen": 1787717226.9584832,
+    "ast_hash": "29d68b2dc096b9e7368753a645ba9657",
+    "semantic_hash": "29d68b2dc096b9e7368753a645ba9657"
+  },
+  "docs/adr/0089-public-names-identify-security-assurance.md": {
+    "mtime": 1787404433.572819,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f1c61ed2464f592c2e65629ea5b68a02",
+    "semantic_hash": "f1c61ed2464f592c2e65629ea5b68a02"
+  },
+  "docs/adr/0090-installed-security-entry-points-are-dormant-by-default.md": {
+    "mtime": 1787404434.1920216,
+    "seen": 1787717226.9584832,
+    "ast_hash": "0525b1c4a9d70d9bafafcbbc1a7858c4",
+    "semantic_hash": "0525b1c4a9d70d9bafafcbbc1a7858c4"
+  },
+  "docs/adr/0091-one-security-service-exposes-explicit-domain-operations.md": {
+    "mtime": 1787404434.8280537,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5ca219a329af6d015521e9156c43494b",
+    "semantic_hash": "5ca219a329af6d015521e9156c43494b"
+  },
+  "docs/adr/0092-assessment-start-publishes-a-durable-receipt.md": {
+    "mtime": 1787404435.6354246,
+    "seen": 1787717226.9584832,
+    "ast_hash": "783402e9698aa9d171188cce4a6188ca",
+    "semantic_hash": "783402e9698aa9d171188cce4a6188ca"
+  },
+  "docs/adr/0093-security-mutations-use-branded-identities-revisions-and-idempotency.md": {
+    "mtime": 1787404436.3153002,
+    "seen": 1787717226.9584832,
+    "ast_hash": "a3298a46c0761d37928bca3880519de0",
+    "semantic_hash": "a3298a46c0761d37928bca3880519de0"
+  },
+  "docs/adr/0094-interrupted-analyzer-attempts-require-explicit-resume.md": {
+    "mtime": 1787404437.0613234,
+    "seen": 1787717226.9584832,
+    "ast_hash": "494bc4e7165c32b39c6289e616e87e4e",
+    "semantic_hash": "494bc4e7165c32b39c6289e616e87e4e"
+  },
+  "docs/adr/0095-frozen-provider-composition-survives-hot-replacement.md": {
+    "mtime": 1787404437.7524028,
+    "seen": 1787717226.9584832,
+    "ast_hash": "49a46b3d85fed46b86a2185fdd5a5db5",
+    "semantic_hash": "49a46b3d85fed46b86a2185fdd5a5db5"
+  },
+  "docs/adr/0096-security-role-agents-are-orchestrated-directly-through-subagents.md": {
+    "mtime": 1787404438.4412904,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2815d208a4414805afad710f56b528e4",
+    "semantic_hash": "2815d208a4414805afad710f56b528e4"
+  },
+  "docs/adr/0097-workbench-uses-package-owned-typert-remotes.md": {
+    "mtime": 1787404439.0742943,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d65726f6e771382b5d8fa0a94b505eca",
+    "semantic_hash": "d65726f6e771382b5d8fa0a94b505eca"
+  },
+  "docs/adr/0098-workbench-is-an-additive-harness-web-surface.md": {
+    "mtime": 1787404439.717021,
+    "seen": 1787717226.9584832,
+    "ast_hash": "804c27caf454d6a9d62de29eb297dfdf",
+    "semantic_hash": "804c27caf454d6a9d62de29eb297dfdf"
+  },
+  "docs/adr/0099-workbench-progress-is-revision-driven-long-polling.md": {
+    "mtime": 1787404440.3497245,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c36019663a6e1912a5a3c2a0dff6c7a1",
+    "semantic_hash": "c36019663a6e1912a5a3c2a0dff6c7a1"
+  },
+  "docs/adr/0100-security-assurance-plugin-boundary.md": {
+    "mtime": 1787404440.985717,
+    "seen": 1787717226.9584832,
+    "ast_hash": "7809b7a5c26668c2a8defd35d9b51ea5",
+    "semantic_hash": "7809b7a5c26668c2a8defd35d9b51ea5"
+  },
+  "docs/adr/0101-security-service-is-sole-mutation-boundary.md": {
+    "mtime": 1787404441.6043203,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8f7a423911e37bc7312d1aadbb2d824a",
+    "semantic_hash": "8f7a423911e37bc7312d1aadbb2d824a"
+  },
+  "docs/adr/0102-assessment-subject-sources-are-explicit-and-immutable.md": {
+    "mtime": 1787404980.6978116,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5325158d419d8d73b2ad24ba522cd720",
+    "semantic_hash": "5325158d419d8d73b2ad24ba522cd720"
+  },
+  "docs/adr/0103-analyzers-read-only-content-addressed-subject-snapshots.md": {
+    "mtime": 1787404981.349806,
+    "seen": 1787717226.9584832,
+    "ast_hash": "1e7b7c411a87bcd7f39bb6ae9333fd2b",
+    "semantic_hash": "1e7b7c411a87bcd7f39bb6ae9333fd2b"
+  },
+  "docs/adr/0104-special-repository-objects-never-expand-implicitly.md": {
+    "mtime": 1787404981.9972708,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f8c88d649d3cd393427e0d6fcf924538",
+    "semantic_hash": "f8c88d649d3cd393427e0d6fcf924538"
+  },
+  "docs/adr/0105-security-private-state-lives-under-dsh-home.md": {
+    "mtime": 1787404982.6652832,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c142bd3018d36e2237b7c381b1de9468",
+    "semantic_hash": "c142bd3018d36e2237b7c381b1de9468"
+  },
+  "docs/adr/0106-assessment-execution-uses-revision-cas-leases-and-fencing.md": {
+    "mtime": 1787404983.3267205,
+    "seen": 1787717226.9584832,
+    "ast_hash": "26e5eabe87e21ab65963af24418d15cf",
+    "semantic_hash": "26e5eabe87e21ab65963af24418d15cf"
+  },
+  "docs/adr/0107-sensitive-evidence-requires-an-explicit-key-provider.md": {
+    "mtime": 1787404984.0019765,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4162f980d2fca87b5df6a0497836a168",
+    "semantic_hash": "4162f980d2fca87b5df6a0497836a168"
+  },
+  "docs/adr/0108-analyzer-execution-class-determines-verdict-eligibility.md": {
+    "mtime": 1787404984.6519492,
+    "seen": 1787717226.9584832,
+    "ast_hash": "9ead6e3d030e3dacf5d0e28d9ff3368e",
+    "semantic_hash": "9ead6e3d030e3dacf5d0e28d9ff3368e"
+  },
+  "docs/adr/0109-v0-1-gate-bearing-local-analyzers-use-bounded-harness-capabilities.md": {
+    "mtime": 1787404985.3277385,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b65e497842b299b7ae167b2395cfb21e",
+    "semantic_hash": "b65e497842b299b7ae167b2395cfb21e"
+  },
+  "docs/adr/0110-model-egress-uses-minimal-redacted-source-slices.md": {
+    "mtime": 1787404985.973746,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5a599164762fd8694ee1227484984b19",
+    "semantic_hash": "5a599164762fd8694ee1227484984b19"
+  },
+  "docs/adr/0111-ts-js-node-support-uses-a-hybrid-analyzer-portfolio.md": {
+    "mtime": 1787404986.6761315,
+    "seen": 1787717226.9584832,
+    "ast_hash": "fb10259f923e4cad8d8bbffacb71b2fd",
+    "semantic_hash": "fb10259f923e4cad8d8bbffacb71b2fd"
+  },
+  "docs/adr/0112-dependency-advisories-are-versioned-offline-snapshots.md": {
+    "mtime": 1787404987.3079677,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d4a341fc628ae90705860654012409f7",
+    "semantic_hash": "d4a341fc628ae90705860654012409f7"
+  },
+  "docs/adr/0113-standard-and-deep-have-explicit-qualified-analysis-paths.md": {
+    "mtime": 1787404987.9583044,
+    "seen": 1787717226.9584832,
+    "ast_hash": "46f170bee78f0c5e1d64b6e87e798f50",
+    "semantic_hash": "46f170bee78f0c5e1d64b6e87e798f50"
+  },
+  "docs/adr/0114-required-analyzer-failure-cannot-become-security-failure-or-satisfaction.md": {
+    "mtime": 1787404988.6450408,
+    "seen": 1787717226.9584832,
+    "ast_hash": "31cb3f39329a8ce6f4776c120be08d9f",
+    "semantic_hash": "31cb3f39329a8ce6f4776c120be08d9f"
+  },
+  "docs/adr/0115-repository-content-is-untrusted-data-not-instruction.md": {
+    "mtime": 1787404989.269772,
+    "seen": 1787717226.9584832,
+    "ast_hash": "9232de02a2c7f55e94d3a10b34df8ba8",
+    "semantic_hash": "9232de02a2c7f55e94d3a10b34df8ba8"
+  },
+  "docs/adr/0116-first-release-candidate-proves-the-read-only-assessment-core.md": {
+    "mtime": 1787404989.8874147,
+    "seen": 1787717226.9584832,
+    "ast_hash": "caff5db3d28f877e74b40ef88dff0ae0",
+    "semantic_hash": "caff5db3d28f877e74b40ef88dff0ae0"
+  },
+  "docs/adr/0117-first-harness-compatibility-target-is-exact-0-1-1-rc-2.md": {
+    "mtime": 1787404990.5067413,
+    "seen": 1787717226.9584832,
+    "ast_hash": "eb7d52caf23f36fe77cc48ddf7978d7b",
+    "semantic_hash": "eb7d52caf23f36fe77cc48ddf7978d7b"
+  },
+  "docs/adr/0118-security-authority-is-derived-from-the-real-caller-channel.md": {
+    "mtime": 1787405485.8117006,
+    "seen": 1787717226.9584832,
+    "ast_hash": "bde5e0bb99ae67e914a3b0af21f46137",
+    "semantic_hash": "bde5e0bb99ae67e914a3b0af21f46137"
+  },
+  "docs/adr/0119-assessment-subjects-come-from-a-host-owned-repository-registry.md": {
+    "mtime": 1787405486.4080496,
+    "seen": 1787717226.9584832,
+    "ast_hash": "1215f6e2b7265d48e3ed7983d519ed92",
+    "semantic_hash": "1215f6e2b7265d48e3ed7983d519ed92"
+  },
+  "docs/adr/0120-start-requests-reference-host-resolved-security-configuration.md": {
+    "mtime": 1787405487.0326717,
+    "seen": 1787717226.9584832,
+    "ast_hash": "122b57278266e09b38aaee6f975050b8",
+    "semantic_hash": "122b57278266e09b38aaee6f975050b8"
+  },
+  "docs/adr/0121-security-service-exposes-fixed-commands-and-bounded-queries.md": {
+    "mtime": 1787405487.6501393,
+    "seen": 1787717226.9584832,
+    "ast_hash": "dc3c46c01a748b3592bc9af59dccb5cc",
+    "semantic_hash": "dc3c46c01a748b3592bc9af59dccb5cc"
+  },
+  "docs/adr/0122-only-coverage-reconciliation-can-seal-indeterminate.md": {
+    "mtime": 1787405488.2622392,
+    "seen": 1787717226.9584832,
+    "ast_hash": "7d78d11b2ac7b7d26d977c53073e7f66",
+    "semantic_hash": "7d78d11b2ac7b7d26d977c53073e7f66"
+  },
+  "docs/adr/0123-cancellation-commits-only-after-proven-quiescence.md": {
+    "mtime": 1787405488.8939247,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2365650057932f61b87cc422a748b2e5",
+    "semantic_hash": "2365650057932f61b87cc422a748b2e5"
+  },
+  "docs/adr/0124-resume-preserves-the-frozen-assessment-contract.md": {
+    "mtime": 1787405489.495292,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d2929fbbdf0b73d0ce5e3735f55d048b",
+    "semantic_hash": "d2929fbbdf0b73d0ce5e3735f55d048b"
+  },
+  "docs/adr/0125-risk-acceptance-occurs-before-seal-in-a-decision-window.md": {
+    "mtime": 1787405490.1241193,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8d554749a2e08ef8b29823222299dd1c",
+    "semantic_hash": "8d554749a2e08ef8b29823222299dd1c"
+  },
+  "docs/adr/0126-risk-acceptance-requires-human-or-control-plane-decision-authority.md": {
+    "mtime": 1787405490.7582319,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b8f0ef6fc1fb75a1b1f6747196590695",
+    "semantic_hash": "b8f0ef6fc1fb75a1b1f6747196590695"
+  },
+  "docs/adr/0127-official-exports-require-a-sealed-assessment.md": {
+    "mtime": 1787405491.3579485,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c0586eb313d1add9731c9315793b9cdc",
+    "semantic_hash": "c0586eb313d1add9731c9315793b9cdc"
+  },
+  "docs/adr/0128-seal-verdict-bundle-and-submission-commit-atomically.md": {
+    "mtime": 1787405491.9779482,
+    "seen": 1787717226.9584832,
+    "ast_hash": "a18a52591c3bf54b53cc3ec4a6b167ba",
+    "semantic_hash": "a18a52591c3bf54b53cc3ec4a6b167ba"
+  },
+  "docs/adr/0129-model-tools-expose-explicit-assessment-operations-without-risk-acceptance.md": {
+    "mtime": 1787405492.586365,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c7b90343ae36e9dc8a81d886b677c497",
+    "semantic_hash": "c7b90343ae36e9dc8a81d886b677c497"
+  },
+  "docs/adr/0130-model-results-are-bounded-and-redacted-by-default.md": {
+    "mtime": 1787405493.2069168,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b40c08a207e414e50c27f8fa3204aeaf",
+    "semantic_hash": "b40c08a207e414e50c27f8fa3204aeaf"
+  },
+  "docs/adr/0131-third-party-analyzers-register-through-the-security-service.md": {
+    "mtime": 1787405493.839221,
+    "seen": 1787717226.9584832,
+    "ast_hash": "eadf9ecc6c99c8655ec3d0e19f620a77",
+    "semantic_hash": "eadf9ecc6c99c8655ec3d0e19f620a77"
+  },
+  "docs/adr/0132-config-replacement-quiesces-before-recovery.md": {
+    "mtime": 1787405494.4377124,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4cb5a213767be6416ee2795d604c2dc0",
+    "semantic_hash": "4cb5a213767be6416ee2795d604c2dc0"
+  },
+  "docs/adr/0133-assessment-aggregate-has-a-narrow-consistency-boundary.md": {
+    "mtime": 1787405880.518695,
+    "seen": 1787717226.9584832,
+    "ast_hash": "feec0b5f790334c069285a6d75371c3a",
+    "semantic_hash": "feec0b5f790334c069285a6d75371c3a"
+  },
+  "docs/adr/0134-persistence-combines-a-revision-journal-with-current-projections.md": {
+    "mtime": 1787405881.1393673,
+    "seen": 1787717226.9584832,
+    "ast_hash": "420bf0300ae4b8513727d5668fc0a807",
+    "semantic_hash": "420bf0300ae4b8513727d5668fc0a807"
+  },
+  "docs/adr/0135-commands-publish-durable-work-transactionally.md": {
+    "mtime": 1787405881.7758284,
+    "seen": 1787717226.9584832,
+    "ast_hash": "613d85dc700d275893161a532ff93c1f",
+    "semantic_hash": "613d85dc700d275893161a532ff93c1f"
+  },
+  "docs/adr/0136-revisions-advance-once-per-externally-observable-transaction.md": {
+    "mtime": 1787405882.3666458,
+    "seen": 1787717226.9584832,
+    "ast_hash": "9b1a9c3d3619cd86f871a6b6e81fe678",
+    "semantic_hash": "9b1a9c3d3619cd86f871a6b6e81fe678"
+  },
+  "docs/adr/0137-idempotency-binds-authority-operation-target-and-request.md": {
+    "mtime": 1787405882.9846156,
+    "seen": 1787717226.9584832,
+    "ast_hash": "0c00cf5c27c0a94f69bd0bc519aa2119",
+    "semantic_hash": "0c00cf5c27c0a94f69bd0bc519aa2119"
+  },
+  "docs/adr/0138-state-transitions-are-exhaustive-and-declarative.md": {
+    "mtime": 1787405883.5952978,
+    "seen": 1787717226.9584832,
+    "ast_hash": "3dd8fddfa779449a45c69549374d92ff",
+    "semantic_hash": "3dd8fddfa779449a45c69549374d92ff"
+  },
+  "docs/adr/0139-execution-may-repeat-but-result-admission-is-at-most-once.md": {
+    "mtime": 1787405884.2007084,
+    "seen": 1787717226.9584832,
+    "ast_hash": "eb06e404b965863719635044f509edee",
+    "semantic_hash": "eb06e404b965863719635044f509edee"
+  },
+  "docs/adr/0140-evidence-enters-through-staged-verified-publication.md": {
+    "mtime": 1787405884.8300064,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4374e0701ace52d6fad423441daba7b2",
+    "semantic_hash": "4374e0701ace52d6fad423441daba7b2"
+  },
+  "docs/adr/0141-digests-use-versioned-deterministic-envelopes.md": {
+    "mtime": 1787405885.423734,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c7425273d26da564e8ea39b788352808",
+    "semantic_hash": "c7425273d26da564e8ea39b788352808"
+  },
+  "docs/adr/0142-sqlite-migrations-are-monotonic-verified-and-fail-closed.md": {
+    "mtime": 1787405886.0380957,
+    "seen": 1787717226.9584832,
+    "ast_hash": "fec483124cb4d2445ed69c1b013943b4",
+    "semantic_hash": "fec483124cb4d2445ed69c1b013943b4"
+  },
+  "docs/adr/0143-crash-recovery-never-silently-resumes-assessment-work.md": {
+    "mtime": 1787405886.6419356,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c4d528cfbe71bef184f3d7277f71103b",
+    "semantic_hash": "c4d528cfbe71bef184f3d7277f71103b"
+  },
+  "docs/adr/0144-execution-lease-takeover-requires-expiry-and-stronger-fencing.md": {
+    "mtime": 1787405887.2383435,
+    "seen": 1787717226.9584832,
+    "ast_hash": "51c665a886d64fbcf1dd50ef82b739f8",
+    "semantic_hash": "51c665a886d64fbcf1dd50ef82b739f8"
+  },
+  "docs/adr/0145-pagination-cursors-bind-query-authority-and-watermark.md": {
+    "mtime": 1787405887.8668013,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2771b8c5d2ffe38e2b25defdf3c56a3d",
+    "semantic_hash": "2771b8c5d2ffe38e2b25defdf3c56a3d"
+  },
+  "docs/adr/0146-wait-for-revision-is-bounded-cancellable-and-transaction-free.md": {
+    "mtime": 1787405888.4587848,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ef24fbe9059f9d5692d9f8149041d434",
+    "semantic_hash": "ef24fbe9059f9d5692d9f8149041d434"
+  },
+  "docs/adr/0147-public-errors-are-stable-typed-and-redacted.md": {
+    "mtime": 1787405889.0748737,
+    "seen": 1787717226.9584832,
+    "ast_hash": "87aeec9c6fd4a9850b5dfa3c4ef1ef6c",
+    "semantic_hash": "87aeec9c6fd4a9850b5dfa3c4ef1ef6c"
+  },
+  "docs/adr/0148-analyzer-identity-binds-version-schema-and-build.md": {
+    "mtime": 1787406347.243788,
+    "seen": 1787717226.9584832,
+    "ast_hash": "13d16be8b30f0c93fb6133e7ca2080d0",
+    "semantic_hash": "13d16be8b30f0c93fb6133e7ca2080d0"
+  },
+  "docs/adr/0149-analyzer-descriptors-are-frozen-validated-pure-data.md": {
+    "mtime": 1787406347.9128664,
+    "seen": 1787717226.9584832,
+    "ast_hash": "aa39bb5b054138e749187a935ba3197b",
+    "semantic_hash": "aa39bb5b054138e749187a935ba3197b"
+  },
+  "docs/adr/0150-analyzer-capabilities-use-a-versioned-taxonomy.md": {
+    "mtime": 1787406348.5594668,
+    "seen": 1787717226.9584832,
+    "ast_hash": "bad4d12bedecdb077cb08da45a6622a4",
+    "semantic_hash": "bad4d12bedecdb077cb08da45a6622a4"
+  },
+  "docs/adr/0151-the-kernel-computes-and-freezes-verdict-eligibility.md": {
+    "mtime": 1787406349.2107959,
+    "seen": 1787717226.9584832,
+    "ast_hash": "3e1d789021e1d5e915e5ea099bd18684",
+    "semantic_hash": "3e1d789021e1d5e915e5ea099bd18684"
+  },
+  "docs/adr/0152-analyzer-instances-are-attempt-scoped-and-disposable.md": {
+    "mtime": 1787406349.8525512,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d9f3e94838bb8f2df5015f1fdc1831f9",
+    "semantic_hash": "d9f3e94838bb8f2df5015f1fdc1831f9"
+  },
+  "docs/adr/0153-analyzer-inputs-are-immutable-bounded-and-authority-free.md": {
+    "mtime": 1787406350.4743636,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d184f1333bea23c0ba2666550ab75fb8",
+    "semantic_hash": "d184f1333bea23c0ba2666550ab75fb8"
+  },
+  "docs/adr/0154-analyzer-contributions-are-versioned-and-cannot-decide-verdicts.md": {
+    "mtime": 1787406351.1177638,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f35afad2bacc620545f06e99673570f4",
+    "semantic_hash": "f35afad2bacc620545f06e99673570f4"
+  },
+  "docs/adr/0155-runner-progress-events-are-bounded-and-non-authoritative.md": {
+    "mtime": 1787406351.7665038,
+    "seen": 1787717226.9584832,
+    "ast_hash": "1db9d5fba6e450257753f19c604cd0e3",
+    "semantic_hash": "1db9d5fba6e450257753f19c604cd0e3"
+  },
+  "docs/adr/0156-attempt-cancellation-fences-late-results-and-requires-cleanup.md": {
+    "mtime": 1787406352.3892436,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d0d50e8de039f9a82f7a3601dbb77bfd",
+    "semantic_hash": "d0d50e8de039f9a82f7a3601dbb77bfd"
+  },
+  "docs/adr/0157-the-kernel-reserves-and-meters-nested-attempt-budgets.md": {
+    "mtime": 1787406353.0377674,
+    "seen": 1787717226.9584832,
+    "ast_hash": "3977491e457f53efb03253b089fa0bb1",
+    "semantic_hash": "3977491e457f53efb03253b089fa0bb1"
+  },
+  "docs/adr/0158-scheduling-enforces-hierarchical-fair-concurrency.md": {
+    "mtime": 1787406353.6627457,
+    "seen": 1787717226.9584832,
+    "ast_hash": "31d4bca3b779505c69d15a0941321465",
+    "semantic_hash": "31d4bca3b779505c69d15a0941321465"
+  },
+  "docs/adr/0159-in-process-extensions-are-trusted-host-code-not-a-sandbox.md": {
+    "mtime": 1787406354.3047245,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8e02bd6ba628336b2b02c222cfcc0544",
+    "semantic_hash": "8e02bd6ba628336b2b02c222cfcc0544"
+  },
+  "docs/adr/0160-analyzers-receive-only-attempt-scoped-capability-handles.md": {
+    "mtime": 1787406354.9529183,
+    "seen": 1787717226.9584832,
+    "ast_hash": "aed9dc4848c91d0a5b19b2e5ccc618f1",
+    "semantic_hash": "aed9dc4848c91d0a5b19b2e5ccc618f1"
+  },
+  "docs/adr/0161-external-network-access-passes-through-governed-brokers.md": {
+    "mtime": 1787406355.5692296,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4bcbf7bb3c62187082cf798819ce5811",
+    "semantic_hash": "4bcbf7bb3c62187082cf798819ce5811"
+  },
+  "docs/adr/0162-authoritative-contributions-are-not-reused-across-assessments-in-v0-1.md": {
+    "mtime": 1787406356.2175772,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4df47cc37e8cd7c4fdc34e27e2e42761",
+    "semantic_hash": "4df47cc37e8cd7c4fdc34e27e2e42761"
+  },
+  "docs/adr/0163-gate-bearing-analyzers-require-scoped-qualification-records.md": {
+    "mtime": 1787406356.8565764,
+    "seen": 1787717226.9584832,
+    "ast_hash": "491c189de9863c1b5a8e7f5d9a6c1fdd",
+    "semantic_hash": "491c189de9863c1b5a8e7f5d9a6c1fdd"
+  },
+  "docs/adr/0164-assessment-roles-come-from-a-fixed-security-role-catalog.md": {
+    "mtime": 1787406650.5638525,
+    "seen": 1787717226.9584832,
+    "ast_hash": "7accc120bdb43c6ee8ad6b61e470a279",
+    "semantic_hash": "7accc120bdb43c6ee8ad6b61e470a279"
+  },
+  "docs/adr/0165-role-definitions-are-versioned-immutable-product-assets.md": {
+    "mtime": 1787406651.2049825,
+    "seen": 1787717226.9584832,
+    "ast_hash": "680ea34791a241dd6e169cb7c4c7bd19",
+    "semantic_hash": "680ea34791a241dd6e169cb7c4c7bd19"
+  },
+  "docs/adr/0166-the-kernel-admits-roles-from-policy-and-the-coverage-plan.md": {
+    "mtime": 1787406651.8505673,
+    "seen": 1787717226.9584832,
+    "ast_hash": "36d90bce1701e63ddf13e51ff3127551",
+    "semantic_hash": "36d90bce1701e63ddf13e51ff3127551"
+  },
+  "docs/adr/0167-prompt-compilation-separates-trusted-rules-from-untrusted-data.md": {
+    "mtime": 1787406652.4701493,
+    "seen": 1787717226.9584832,
+    "ast_hash": "3b4368cab731f66239ffab19367d57ad",
+    "semantic_hash": "3b4368cab731f66239ffab19367d57ad"
+  },
+  "docs/adr/0168-role-agents-receive-minimal-context-grants.md": {
+    "mtime": 1787406653.1060472,
+    "seen": 1787717226.9584832,
+    "ast_hash": "aaed2a32115098b1e487081e1f6f9623",
+    "semantic_hash": "aaed2a32115098b1e487081e1f6f9623"
+  },
+  "docs/adr/0169-each-role-attempt-uses-a-fresh-isolated-subagent-session.md": {
+    "mtime": 1787406653.7031448,
+    "seen": 1787717226.9584832,
+    "ast_hash": "24e35f5c8f06e4d016a23e9d232ee48e",
+    "semantic_hash": "24e35f5c8f06e4d016a23e9d232ee48e"
+  },
+  "docs/adr/0170-role-tools-are-fixed-least-privilege-manifests.md": {
+    "mtime": 1787406654.3346977,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8a461a950358cfd30ef4ea44a513b906",
+    "semantic_hash": "8a461a950358cfd30ef4ea44a513b906"
+  },
+  "docs/adr/0171-role-agents-request-follow-up-work-through-the-kernel.md": {
+    "mtime": 1787406654.9628797,
+    "seen": 1787717226.9584832,
+    "ast_hash": "19f5da5dd075a4f5ef3b4e59a66c4c64",
+    "semantic_hash": "19f5da5dd075a4f5ef3b4e59a66c4c64"
+  },
+  "docs/adr/0172-roles-communicate-through-immutable-governed-artifacts.md": {
+    "mtime": 1787406655.5648847,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5324e55d3b21f121c77f9f120c25192f",
+    "semantic_hash": "5324e55d3b21f121c77f9f120c25192f"
+  },
+  "docs/adr/0173-deep-independent-passes-remain-blind-until-initial-submission.md": {
+    "mtime": 1787406656.1976335,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ba01b6323b45bbca8f5b213d4ea01102",
+    "semantic_hash": "ba01b6323b45bbca8f5b213d4ea01102"
+  },
+  "docs/adr/0174-cross-challenge-never-rewrites-an-original-contribution.md": {
+    "mtime": 1787406656.8088994,
+    "seen": 1787717226.9584832,
+    "ast_hash": "7a1a532570cf06f5753ab799066d1010",
+    "semantic_hash": "7a1a532570cf06f5753ab799066d1010"
+  },
+  "docs/adr/0175-evidence-contracts-not-agent-votes-determine-convergence.md": {
+    "mtime": 1787406657.42353,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5cacf08ec1ca563ea35419d722f63306",
+    "semantic_hash": "5cacf08ec1ca563ea35419d722f63306"
+  },
+  "docs/adr/0176-role-contributions-are-versioned-structured-proposals.md": {
+    "mtime": 1787406658.0425997,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e92bc536a44ec6b90258b9a90403ef3f",
+    "semantic_hash": "e92bc536a44ec6b90258b9a90403ef3f"
+  },
+  "docs/adr/0177-malformed-role-output-allows-at-most-one-governed-format-repair.md": {
+    "mtime": 1787406658.6430478,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d36f6439a22868974b40325805031f7f",
+    "semantic_hash": "d36f6439a22868974b40325805031f7f"
+  },
+  "docs/adr/0178-model-invocations-have-complete-protected-lineage.md": {
+    "mtime": 1787406659.2699375,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d2da4844c8713d186c177c3ce7abb320",
+    "semantic_hash": "d2da4844c8713d186c177c3ce7abb320"
+  },
+  "docs/adr/0179-required-role-failure-blocks-until-explicit-resume.md": {
+    "mtime": 1787406659.8865132,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e43ca11f92d1c340fec28e8c27cefaa0",
+    "semantic_hash": "e43ca11f92d1c340fec28e8c27cefaa0"
+  },
+  "docs/adr/0180-deterministic-only-profiles-are-explicit-and-cannot-impersonate-agent-coverage.md": {
+    "mtime": 1787406660.50982,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d7b39429bda4bfe010cb3bfee8f47cbe",
+    "semantic_hash": "d7b39429bda4bfe010cb3bfee8f47cbe"
+  },
+  "docs/adr/0181-candidates-remain-immutable-and-validation-creates-separate-outcomes.md": {
+    "mtime": 1787407076.7913952,
+    "seen": 1787717226.9584832,
+    "ast_hash": "bc63f2550983c8c0884b067789214729",
+    "semantic_hash": "bc63f2550983c8c0884b067789214729"
+  },
+  "docs/adr/0182-candidate-admission-enforces-schema-provenance-anchors-and-bounds.md": {
+    "mtime": 1787407077.4146855,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2acbb3a0fb7c63113157e7fe1b385d7b",
+    "semantic_hash": "2acbb3a0fb7c63113157e7fe1b385d7b"
+  },
+  "docs/adr/0183-candidate-clusters-never-merge-evidence-automatically.md": {
+    "mtime": 1787407078.0518546,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5c42555eb167366884800a17dc492086",
+    "semantic_hash": "5c42555eb167366884800a17dc492086"
+  },
+  "docs/adr/0184-finding-changes-append-revisions-and-sealed-versions-remain-immutable.md": {
+    "mtime": 1787407078.6577635,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f8062b17fd09e7f90be7b53e5c020c98",
+    "semantic_hash": "f8062b17fd09e7f90be7b53e5c020c98"
+  },
+  "docs/adr/0185-weakness-classification-is-versioned-namespaced-and-explicit-about-unknowns.md": {
+    "mtime": 1787407079.292794,
+    "seen": 1787717226.9584832,
+    "ast_hash": "cde7f54875ad6003445637eea8b3fea8",
+    "semantic_hash": "cde7f54875ad6003445637eea8b3fea8"
+  },
+  "docs/adr/0186-source-anchors-bind-subject-content-and-stable-spans.md": {
+    "mtime": 1787407079.8944042,
+    "seen": 1787717226.9584832,
+    "ast_hash": "9db144b0f679ead8c50dbc79fd284b9a",
+    "semantic_hash": "9db144b0f679ead8c50dbc79fd284b9a"
+  },
+  "docs/adr/0187-evidence-kinds-use-a-versioned-core-registry.md": {
+    "mtime": 1787407080.5175343,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8caddaf00a6e5e25a2060b5a848741eb",
+    "semantic_hash": "8caddaf00a6e5e25a2060b5a848741eb"
+  },
+  "docs/adr/0188-the-kernel-decides-evidence-eligibility-per-claim-and-contract.md": {
+    "mtime": 1787407081.1509445,
+    "seen": 1787717226.9584832,
+    "ast_hash": "47356e2ef886848661b288a2c54edd2d",
+    "semantic_hash": "47356e2ef886848661b288a2c54edd2d"
+  },
+  "docs/adr/0189-the-kernel-freezes-validation-contract-resolution.md": {
+    "mtime": 1787407081.7339604,
+    "seen": 1787717226.9584832,
+    "ast_hash": "78c19400dcb2df4b434ad16eba85c12b",
+    "semantic_hash": "78c19400dcb2df4b434ad16eba85c12b"
+  },
+  "docs/adr/0190-validation-outcomes-are-validated-rejected-or-unresolved.md": {
+    "mtime": 1787407082.3605099,
+    "seen": 1787717226.9584832,
+    "ast_hash": "7a9d59596c3939a5e60acccffadd018a",
+    "semantic_hash": "7a9d59596c3939a5e60acccffadd018a"
+  },
+  "docs/adr/0191-rejection-requires-contract-satisfying-counter-evidence.md": {
+    "mtime": 1787407082.9865859,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c465521aa423ef3f78d583670e365b9e",
+    "semantic_hash": "c465521aa423ef3f78d583670e365b9e"
+  },
+  "docs/adr/0192-independent-validation-is-established-from-the-provenance-graph.md": {
+    "mtime": 1787407083.596029,
+    "seen": 1787717226.9584832,
+    "ast_hash": "0164423eb046410596392d15a1c048e1",
+    "semantic_hash": "0164423eb046410596392d15a1c048e1"
+  },
+  "docs/adr/0193-attack-paths-are-typed-evidence-graphs-with-explicit-unknowns.md": {
+    "mtime": 1787407084.2194614,
+    "seen": 1787717226.9584832,
+    "ast_hash": "93fab30c076d415a89eda933fdfbb0d5",
+    "semantic_hash": "93fab30c076d415a89eda933fdfbb0d5"
+  },
+  "docs/adr/0194-technical-severity-uses-a-versioned-evidence-derived-method.md": {
+    "mtime": 1787407084.8157022,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b7c2c80a805cac5ec34b0546301b1f9a",
+    "semantic_hash": "b7c2c80a805cac5ec34b0546301b1f9a"
+  },
+  "docs/adr/0195-evidence-confidence-uses-a-deterministic-multidimensional-rubric.md": {
+    "mtime": 1787407085.4444518,
+    "seen": 1787717226.9584832,
+    "ast_hash": "377459ae5b5f4eef0483bf94fc6ac44d",
+    "semantic_hash": "377459ae5b5f4eef0483bf94fc6ac44d"
+  },
+  "docs/adr/0196-candidate-overflow-creates-an-explicit-coverage-gap.md": {
+    "mtime": 1787407086.0511243,
+    "seen": 1787717226.9584832,
+    "ast_hash": "566c8db12c4e7812abd0de78054b94c8",
+    "semantic_hash": "566c8db12c4e7812abd0de78054b94c8"
+  },
+  "docs/adr/0197-evidence-links-bind-each-use-to-claim-contract-and-eligibility.md": {
+    "mtime": 1787407086.6615987,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2a0557b8c6be54cba214ed842cf5f625",
+    "semantic_hash": "2a0557b8c6be54cba214ed842cf5f625"
+  },
+  "docs/adr/0198-security-policies-are-versioned-declarative-data.md": {
+    "mtime": 1787407505.0954268,
+    "seen": 1787717226.9584832,
+    "ast_hash": "0a3dc8916f8e8abe276375674bd045f8",
+    "semantic_hash": "0a3dc8916f8e8abe276375674bd045f8"
+  },
+  "docs/adr/0199-policy-layers-preserve-source-identity-and-trust.md": {
+    "mtime": 1787407505.7021458,
+    "seen": 1787717226.9584832,
+    "ast_hash": "dcacd9fcba142c33bfad6e0466c5cd34",
+    "semantic_hash": "dcacd9fcba142c33bfad6e0466c5cd34"
+  },
+  "docs/adr/0200-policy-composition-is-monotonic-and-conflicts-fail-closed.md": {
+    "mtime": 1787407506.3344994,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f5e53029b56197d3e139134a9e6aadd9",
+    "semantic_hash": "f5e53029b56197d3e139134a9e6aadd9"
+  },
+  "docs/adr/0201-policy-compilation-is-deterministic-and-recorded.md": {
+    "mtime": 1787407506.958655,
+    "seen": 1787717226.9584832,
+    "ast_hash": "9567411ebeb81b8d5dffd1072f48c9f4",
+    "semantic_hash": "9567411ebeb81b8d5dffd1072f48c9f4"
+  },
+  "docs/adr/0202-coverage-planning-requires-an-evidence-backed-subject-inventory.md": {
+    "mtime": 1787407507.5814106,
+    "seen": 1787717226.9584832,
+    "ast_hash": "3d83bc198d20b59eb4983f6f636e0f33",
+    "semantic_hash": "3d83bc198d20b59eb4983f6f636e0f33"
+  },
+  "docs/adr/0203-coverage-obligations-are-stable-typed-completion-contracts.md": {
+    "mtime": 1787407508.196002,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f3febe956e16e3f84d9f0ddbeeb9528e",
+    "semantic_hash": "f3febe956e16e3f84d9f0ddbeeb9528e"
+  },
+  "docs/adr/0204-the-coverage-plan-is-an-immutable-obligation-dependency-graph.md": {
+    "mtime": 1787407508.8005862,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b99a7c601e2d553b67ca257c3a1e0ce0",
+    "semantic_hash": "b99a7c601e2d553b67ca257c3a1e0ce0"
+  },
+  "docs/adr/0205-plan-amendments-only-add-or-strengthen-obligations.md": {
+    "mtime": 1787407509.4321356,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e7b49ad89a8b9a2bb63ec672b0f4e4d4",
+    "semantic_hash": "e7b49ad89a8b9a2bb63ec672b0f4e4d4"
+  },
+  "docs/adr/0206-coverage-claims-are-proposals-and-the-kernel-resolves-them.md": {
+    "mtime": 1787407510.067201,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c9f4e4195913cdd0cb4f00ad4ff48936",
+    "semantic_hash": "c9f4e4195913cdd0cb4f00ad4ff48936"
+  },
+  "docs/adr/0207-obligations-resolve-as-satisfied-not-applicable-or-gap.md": {
+    "mtime": 1787407510.664755,
+    "seen": 1787717226.9584832,
+    "ast_hash": "af230404a8ff386f76a36ecfd25c4889",
+    "semantic_hash": "af230404a8ff386f76a36ecfd25c4889"
+  },
+  "docs/adr/0208-not-applicable-requires-eligible-negative-proof.md": {
+    "mtime": 1787407511.289427,
+    "seen": 1787717226.9584832,
+    "ast_hash": "767ec33bd8da01003b8175a0e9397500",
+    "semantic_hash": "767ec33bd8da01003b8175a0e9397500"
+  },
+  "docs/adr/0209-coverage-hierarchy-requires-every-mandatory-child.md": {
+    "mtime": 1787407511.9029064,
+    "seen": 1787717226.9584832,
+    "ast_hash": "1b0ca3798e5cff5f3348079ddd05b088",
+    "semantic_hash": "1b0ca3798e5cff5f3348079ddd05b088"
+  },
+  "docs/adr/0210-advisory-work-cannot-compensate-for-mandatory-gaps.md": {
+    "mtime": 1787407512.5282176,
+    "seen": 1787717226.9584832,
+    "ast_hash": "1157ed7b69cc1c8b50cd70f228a76c47",
+    "semantic_hash": "1157ed7b69cc1c8b50cd70f228a76c47"
+  },
+  "docs/adr/0211-policy-significance-is-derived-by-a-deterministic-rule-trace.md": {
+    "mtime": 1787407513.1497717,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f8a422e5aa095a86ac7abacc36ea594e",
+    "semantic_hash": "f8a422e5aa095a86ac7abacc36ea594e"
+  },
+  "docs/adr/0212-policy-evaluation-uses-one-recorded-instant.md": {
+    "mtime": 1787407513.7528832,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e2302fe14f2f81fbe7465ae9b71db67e",
+    "semantic_hash": "e2302fe14f2f81fbe7465ae9b71db67e"
+  },
+  "docs/adr/0213-a-proven-blocking-violation-takes-precedence-over-incomplete-coverage.md": {
+    "mtime": 1787407514.3966806,
+    "seen": 1787717226.9584832,
+    "ast_hash": "0951451613ebb8d18c2c8fe1a9a67b92",
+    "semantic_hash": "0951451613ebb8d18c2c8fe1a9a67b92"
+  },
+  "docs/adr/0214-the-policy-evaluator-is-pure-and-emits-a-complete-trace.md": {
+    "mtime": 1787407515.0296202,
+    "seen": 1787717226.9584832,
+    "ast_hash": "1a025c02067fbc3fab45aea8713d1a3a",
+    "semantic_hash": "1a025c02067fbc3fab45aea8713d1a3a"
+  },
+  "docs/adr/0215-sealing-requires-an-independent-deterministic-readiness-check.md": {
+    "mtime": 1787407515.64151,
+    "seen": 1787717226.9584832,
+    "ast_hash": "129a3a382f6fc47fd600d51049dc13db",
+    "semantic_hash": "129a3a382f6fc47fd600d51049dc13db"
+  },
+  "docs/adr/0216-release-conformance-targets-a-packed-fresh-harness-installation.md": {
+    "mtime": 1787407909.5611472,
+    "seen": 1787717226.9584832,
+    "ast_hash": "905f5440815ac7cc00b10c3077b19976",
+    "semantic_hash": "905f5440815ac7cc00b10c3077b19976"
+  },
+  "docs/adr/0217-the-reference-test-host-uses-real-harness-composition.md": {
+    "mtime": 1787407910.1917908,
+    "seen": 1787717226.9584832,
+    "ast_hash": "aa59b449f4bb5e98b6cd7a594a20a26a",
+    "semantic_hash": "aa59b449f4bb5e98b6cd7a594a20a26a"
+  },
+  "docs/adr/0218-tests-have-no-security-semantic-bypass.md": {
+    "mtime": 1787407910.8001208,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f0ffc4b2a367ae8aef254f56a2242bb3",
+    "semantic_hash": "f0ffc4b2a367ae8aef254f56a2242bb3"
+  },
+  "docs/adr/0219-deterministic-reference-fakes-exercise-official-seams.md": {
+    "mtime": 1787407911.4367518,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2fd0ac18bbfc6a436f164dc8978b7c2f",
+    "semantic_hash": "2fd0ac18bbfc6a436f164dc8978b7c2f"
+  },
+  "docs/adr/0220-the-transition-matrix-receives-model-based-conformance.md": {
+    "mtime": 1787407912.0679975,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b6e1c0a73d5992d0e6f7404767625132",
+    "semantic_hash": "b6e1c0a73d5992d0e6f7404767625132"
+  },
+  "docs/adr/0221-crash-conformance-hard-kills-at-named-persistence-checkpoints.md": {
+    "mtime": 1787407912.6636631,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4fdab483c9e5f948ff25dd15c8faeaa6",
+    "semantic_hash": "4fdab483c9e5f948ff25dd15c8faeaa6"
+  },
+  "docs/adr/0222-multiprocess-races-prove-cas-leases-fencing-and-sealing.md": {
+    "mtime": 1787407913.3014598,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e136231bb2468f8748dd5bee0b7d6411",
+    "semantic_hash": "e136231bb2468f8748dd5bee0b7d6411"
+  },
+  "docs/adr/0223-adversarial-filesystem-proof-is-platform-specific.md": {
+    "mtime": 1787407913.9201622,
+    "seen": 1787717226.9584832,
+    "ast_hash": "1ded8347f35e3acca949c9c314166288",
+    "semantic_hash": "1ded8347f35e3acca949c9c314166288"
+  },
+  "docs/adr/0224-canonical-security-artifacts-have-reviewed-golden-vectors.md": {
+    "mtime": 1787407914.5324714,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c9c7354a6dd1832fdad2154ea2886090",
+    "semantic_hash": "c9c7354a6dd1832fdad2154ea2886090"
+  },
+  "docs/adr/0225-all-public-surfaces-pass-one-semantic-parity-suite.md": {
+    "mtime": 1787407915.1663656,
+    "seen": 1787717226.9584832,
+    "ast_hash": "04debac149088c08b93b9c8e87b5ef3a",
+    "semantic_hash": "04debac149088c08b93b9c8e87b5ef3a"
+  },
+  "docs/adr/0226-workbench-e2e-uses-a-packed-host-real-browser-and-real-authority.md": {
+    "mtime": 1787407915.7593453,
+    "seen": 1787717226.9584832,
+    "ast_hash": "1c4f00d4bc96bf66e36277b6bbbf20e7",
+    "semantic_hash": "1c4f00d4bc96bf66e36277b6bbbf20e7"
+  },
+  "docs/adr/0227-lifecycle-conformance-proves-dormancy-activation-disposal-and-hmr.md": {
+    "mtime": 1787407916.3793273,
+    "seen": 1787717226.9584832,
+    "ast_hash": "9c8f38380435f4f8119933168c3be23a",
+    "semantic_hash": "9c8f38380435f4f8119933168c3be23a"
+  },
+  "docs/adr/0228-benchmark-arms-and-repetitions-are-state-isolated.md": {
+    "mtime": 1787407917.0001712,
+    "seen": 1787717226.9584832,
+    "ast_hash": "274e36ff4b9ce09adecd595236f32361",
+    "semantic_hash": "274e36ff4b9ce09adecd595236f32361"
+  },
+  "docs/adr/0229-ground-truth-is-unavailable-to-scanning-runners.md": {
+    "mtime": 1787407917.6088986,
+    "seen": 1787717226.9584832,
+    "ast_hash": "42b9dff44d5e83459d0434a88b43f392",
+    "semantic_hash": "42b9dff44d5e83459d0434a88b43f392"
+  },
+  "docs/adr/0230-the-versioned-metrics-engine-has-synthetic-golden-oracles.md": {
+    "mtime": 1787407918.233838,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b37cde90eed421caee848630a7c048d2",
+    "semantic_hash": "b37cde90eed421caee848630a7c048d2"
+  },
+  "docs/adr/0231-conformance-mutants-must-be-killed-before-release.md": {
+    "mtime": 1787407918.8292923,
+    "seen": 1787717226.9584832,
+    "ast_hash": "7eeafb7847da7ea81d1bffe9bb73a942",
+    "semantic_hash": "7eeafb7847da7ea81d1bffe9bb73a942"
+  },
+  "docs/adr/0232-resource-proof-measures-limits-leaks-and-recovery.md": {
+    "mtime": 1787407919.4705627,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8c93ea570d4d4cd4f3a2321a4d764663",
+    "semantic_hash": "8c93ea570d4d4cd4f3a2321a4d764663"
+  },
+  "docs/adr/0233-release-evidence-manifests-bind-exact-artifacts-to-proof.md": {
+    "mtime": 1787407920.100672,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b789bb0c4c4bbf78a5009160761b7e8b",
+    "semantic_hash": "b789bb0c4c4bbf78a5009160761b7e8b"
+  },
+  "docs/adr/0234-deterministic-failures-cannot-be-erased-by-reruns.md": {
+    "mtime": 1787407920.7093863,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4b72b9fddc1e99f987e75c4598a4696c",
+    "semantic_hash": "4b72b9fddc1e99f987e75c4598a4696c"
+  },
+  "docs/adr/0235-security-service-is-the-sole-external-business-interface.md": {
+    "mtime": 1787408317.8075602,
+    "seen": 1787717226.9584832,
+    "ast_hash": "dc46994f9e41a131041260623b0e8234",
+    "semantic_hash": "dc46994f9e41a131041260623b0e8234"
+  },
+  "docs/adr/0236-security-service-is-one-deep-module-with-explicit-operations.md": {
+    "mtime": 1787408318.4222898,
+    "seen": 1787717226.9584832,
+    "ast_hash": "7687b242bb3b54c182ce091bd0fdc6f2",
+    "semantic_hash": "7687b242bb3b54c182ce091bd0fdc6f2"
+  },
+  "docs/adr/0237-callers-act-through-resolver-issued-security-invocations.md": {
+    "mtime": 1787408319.0570326,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f478883c376b94c29521509b75f0eba0",
+    "semantic_hash": "f478883c376b94c29521509b75f0eba0"
+  },
+  "docs/adr/0238-security-assessment-kernel-is-a-pure-deep-module.md": {
+    "mtime": 1787408319.707391,
+    "seen": 1787717226.9584832,
+    "ast_hash": "190b7bfc1de9b742f37b16c3a6f760f7",
+    "semantic_hash": "190b7bfc1de9b742f37b16c3a6f760f7"
+  },
+  "docs/adr/0239-assessment-engine-is-package-private-and-hides-phase-orchestration.md": {
+    "mtime": 1787408320.3146894,
+    "seen": 1787717226.9584832,
+    "ast_hash": "206a372a28416263578b8486794d4b95",
+    "semantic_hash": "206a372a28416263578b8486794d4b95"
+  },
+  "docs/adr/0240-sqlite-persistence-is-a-package-private-deep-module.md": {
+    "mtime": 1787408320.9457846,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ba49672876f4662fcc4ff336c11dc7f2",
+    "semantic_hash": "ba49672876f4662fcc4ff336c11dc7f2"
+  },
+  "docs/adr/0241-evidence-persistence-is-a-separate-package-private-deep-module.md": {
+    "mtime": 1787408321.581931,
+    "seen": 1787717226.9584832,
+    "ast_hash": "1d08863b95ccda3bafd4e9499934c3fa",
+    "semantic_hash": "1d08863b95ccda3bafd4e9499934c3fa"
+  },
+  "docs/adr/0242-seams-exist-only-where-multiple-adapters-justify-them.md": {
+    "mtime": 1787408322.1970694,
+    "seen": 1787717226.9584832,
+    "ast_hash": "07c5182a6cf0fb7655d18be39d569b9e",
+    "semantic_hash": "07c5182a6cf0fb7655d18be39d569b9e"
+  },
+  "docs/adr/0243-dependencies-point-inward-toward-domain-values-and-the-kernel.md": {
+    "mtime": 1787408322.8499596,
+    "seen": 1787717226.9584832,
+    "ast_hash": "3c05c8c54923cb9b52b95b71d0415ff8",
+    "semantic_hash": "3c05c8c54923cb9b52b95b71d0415ff8"
+  },
+  "docs/adr/0244-one-package-exposes-separated-runtime-and-contract-entry-points.md": {
+    "mtime": 1787408323.4911695,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5aa4851312ea7337b707b7a3f3c1fa25",
+    "semantic_hash": "5aa4851312ea7337b707b7a3f3c1fa25"
+  },
+  "docs/adr/0245-contract-imports-are-side-effect-free-and-runtime-entries-start-dormant.md": {
+    "mtime": 1787408324.1542537,
+    "seen": 1787717226.9584832,
+    "ast_hash": "80d20a609a47ea90ae8cf44c1bde2d8d",
+    "semantic_hash": "80d20a609a47ea90ae8cf44c1bde2d8d"
+  },
+  "docs/adr/0246-public-dtos-are-versioned-json-safe-and-runtime-validated.md": {
+    "mtime": 1787408324.8315992,
+    "seen": 1787717226.9584832,
+    "ast_hash": "0e91ad15dcbbba9627217fb0e3399808",
+    "semantic_hash": "0e91ad15dcbbba9627217fb0e3399808"
+  },
+  "docs/adr/0247-public-operations-return-one-typed-security-result-envelope.md": {
+    "mtime": 1787408325.4776416,
+    "seen": 1787717226.9584832,
+    "ast_hash": "dde72b519049abb74e33df9644dc6841",
+    "semantic_hash": "dde72b519049abb74e33df9644dc6841"
+  },
+  "docs/adr/0248-commands-return-receipts-and-queries-return-immutable-snapshots.md": {
+    "mtime": 1787408326.1439753,
+    "seen": 1787717226.9584832,
+    "ast_hash": "5ec0cc07161ac94a7e66fb33280b775a",
+    "semantic_hash": "5ec0cc07161ac94a7e66fb33280b775a"
+  },
+  "docs/adr/0249-repository-administration-is-explicit-versioned-and-non-destructive.md": {
+    "mtime": 1787408326.800858,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4271ff2d3dd04f132c3210b9774f7d21",
+    "semantic_hash": "4271ff2d3dd04f132c3210b9774f7d21"
+  },
+  "docs/adr/0250-plugin-config-references-authorities-and-providers-but-contains-no-secrets.md": {
+    "mtime": 1787408327.408919,
+    "seen": 1787717226.9584832,
+    "ast_hash": "41ce4a10cb3d84f39f9534968e09df16",
+    "semantic_hash": "41ce4a10cb3d84f39f9534968e09df16"
+  },
+  "docs/adr/0251-service-health-is-explicit-and-safe-mode-remains-queryable.md": {
+    "mtime": 1787408328.0618412,
+    "seen": 1787717226.9584832,
+    "ast_hash": "7796e22b778d4dad2df066dc8bc68e95",
+    "semantic_hash": "7796e22b778d4dad2df066dc8bc68e95"
+  },
+  "docs/adr/0252-transport-adapters-contain-no-domain-policy.md": {
+    "mtime": 1787408328.6752234,
+    "seen": 1787717226.9584832,
+    "ast_hash": "cf61ca0f9155a925b27a5653032ef437",
+    "semantic_hash": "cf61ca0f9155a925b27a5653032ef437"
+  },
+  "docs/adr/0253-the-invariant-entry-verifies-composition-without-patching-harness.md": {
+    "mtime": 1787408329.281236,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b1c149c92174f48f63d186e6df9c5846",
+    "semantic_hash": "b1c149c92174f48f63d186e6df9c5846"
+  },
+  "docs/adr/0254-the-conformance-module-tests-public-contracts-without-bypasses.md": {
+    "mtime": 1787408329.9110198,
+    "seen": 1787717226.9584832,
+    "ast_hash": "7b0bccc761a197f7e52cda3f1fc8a63e",
+    "semantic_hash": "7b0bccc761a197f7e52cda3f1fc8a63e"
+  },
+  "docs/adr/0255-v0-1-service-operations-are-fixed-and-explicit.md": {
+    "mtime": 1787408775.1308386,
+    "seen": 1787717226.9584832,
+    "ast_hash": "189a42bbb4a19a1dfe7c129f4eb451c4",
+    "semantic_hash": "189a42bbb4a19a1dfe7c129f4eb451c4"
+  },
+  "docs/adr/0256-public-operations-are-async-results-except-local-analyzer-registration.md": {
+    "mtime": 1787408775.792668,
+    "seen": 1787717226.9584832,
+    "ast_hash": "06aac52a34365d9ec6337737aeb4d3bd",
+    "semantic_hash": "06aac52a34365d9ec6337737aeb4d3bd"
+  },
+  "docs/adr/0257-invocation-request-and-local-execution-options-are-separate.md": {
+    "mtime": 1787408776.4488497,
+    "seen": 1787717226.9584832,
+    "ast_hash": "3c80a88375ed548843ff7f2a5af30873",
+    "semantic_hash": "3c80a88375ed548843ff7f2a5af30873"
+  },
+  "docs/adr/0258-analyzer-registration-is-local-composition-and-effect-owned.md": {
+    "mtime": 1787408777.1522906,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4d9d186d9d4f0f73c9c7f1ada3fabb78",
+    "semantic_hash": "4d9d186d9d4f0f73c9c7f1ada3fabb78"
+  },
+  "docs/adr/0259-security-catalog-reports-effective-capability-without-exposing-registries.md": {
+    "mtime": 1787408777.80412,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f9bd6ae21c09748acb58fd3ff7184f42",
+    "semantic_hash": "f9bd6ae21c09748acb58fd3ff7184f42"
+  },
+  "docs/adr/0260-repository-admin-dtos-bind-host-resolved-security-configuration.md": {
+    "mtime": 1787408778.4450722,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d984c87bdc1534272712ba447360f173",
+    "semantic_hash": "d984c87bdc1534272712ba447360f173"
+  },
+  "docs/adr/0261-repository-mutations-use-revision-cas-and-idempotency.md": {
+    "mtime": 1787408779.1073508,
+    "seen": 1787717226.9584832,
+    "ast_hash": "df7defc3d3ea5f129eda6cb54b662e42",
+    "semantic_hash": "df7defc3d3ea5f129eda6cb54b662e42"
+  },
+  "docs/adr/0262-start-requests-carry-references-selectors-and-stronger-controls-only.md": {
+    "mtime": 1787408779.752381,
+    "seen": 1787717226.9584832,
+    "ast_hash": "80b4a2dc811842a76afc9d74a1c24b50",
+    "semantic_hash": "80b4a2dc811842a76afc9d74a1c24b50"
+  },
+  "docs/adr/0263-target-selectors-use-mode-specific-discriminated-schemas.md": {
+    "mtime": 1787408780.3915753,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d112d86671bd6160b9c579b41addf338",
+    "semantic_hash": "d112d86671bd6160b9c579b41addf338"
+  },
+  "docs/adr/0264-assessment-creation-commits-only-after-subject-freeze-succeeds.md": {
+    "mtime": 1787408781.0349152,
+    "seen": 1787717226.9584832,
+    "ast_hash": "0e53c494ecadeb6d32b3e94da076e867",
+    "semantic_hash": "0e53c494ecadeb6d32b3e94da076e867"
+  },
+  "docs/adr/0265-assessment-queries-return-revision-bound-snapshots-and-watermarked-lists.md": {
+    "mtime": 1787408781.6665118,
+    "seen": 1787717226.9584832,
+    "ast_hash": "dfc631a8ad854ed9288c22d107c833df",
+    "semantic_hash": "dfc631a8ad854ed9288c22d107c833df"
+  },
+  "docs/adr/0266-revision-wait-returns-a-change-signal-not-an-event-stream.md": {
+    "mtime": 1787408782.3204293,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f11503eb9133613e03fb38506e02c41d",
+    "semantic_hash": "f11503eb9133613e03fb38506e02c41d"
+  },
+  "docs/adr/0267-resume-and-cancel-require-revision-idempotency-and-reason.md": {
+    "mtime": 1787408782.9654155,
+    "seen": 1787717226.9584832,
+    "ast_hash": "a65396ba7c068011f467ec79a1521bcb",
+    "semantic_hash": "a65396ba7c068011f467ec79a1521bcb"
+  },
+  "docs/adr/0268-finding-queries-separate-redacted-summaries-from-revision-detail.md": {
+    "mtime": 1787408783.607306,
+    "seen": 1787717226.9584832,
+    "ast_hash": "9bd70b59d5696c5509f9a1ada7cd0403",
+    "semantic_hash": "9bd70b59d5696c5509f9a1ada7cd0403"
+  },
+  "docs/adr/0269-evidence-disclosure-is-purpose-and-profile-bound.md": {
+    "mtime": 1787408784.2637193,
+    "seen": 1787717226.9584832,
+    "ast_hash": "962d6d9dcf046bb4eefb065d9ec26bff",
+    "semantic_hash": "962d6d9dcf046bb4eefb065d9ec26bff"
+  },
+  "docs/adr/0270-risk-decisions-derive-authority-and-critical-acceptance-requires-two.md": {
+    "mtime": 1787408784.9104013,
+    "seen": 1787717226.9584832,
+    "ast_hash": "81273d4a61c31634014f0f25eb4c3e17",
+    "semantic_hash": "81273d4a61c31634014f0f25eb4c3e17"
+  },
+  "docs/adr/0271-bundle-manifest-is-a-view-and-submission-is-self-contained.md": {
+    "mtime": 1787408785.5535927,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e8676a275d3a41a92388c964afc80d4d",
+    "semantic_hash": "e8676a275d3a41a92388c964afc80d4d"
+  },
+  "docs/adr/0272-exports-use-host-registered-destinations-and-durable-receipts.md": {
+    "mtime": 1787408786.2185557,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f89fec679d9c8545c45645d385d5a199",
+    "semantic_hash": "f89fec679d9c8545c45645d385d5a199"
+  },
+  "docs/adr/0273-mutations-share-a-versioned-idempotent-cas-envelope.md": {
+    "mtime": 1787408786.857581,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ec2611e096e5cb90f4b23189868103f2",
+    "semantic_hash": "ec2611e096e5cb90f4b23189868103f2"
+  },
+  "docs/adr/0274-contract-majors-govern-semantic-compatibility.md": {
+    "mtime": 1787408787.5068066,
+    "seen": 1787717226.9584832,
+    "ast_hash": "de5821dc0d55aa042a775de1f68d9c99",
+    "semantic_hash": "de5821dc0d55aa042a775de1f68d9c99"
+  },
+  "docs/adr/0275-workbench-is-a-service-client-not-an-authority.md": {
+    "mtime": 1787409111.529898,
+    "seen": 1787717226.9584832,
+    "ast_hash": "aef75bf9e95186aa13cee7e412d2ae82",
+    "semantic_hash": "aef75bf9e95186aa13cee7e412d2ae82"
+  },
+  "docs/adr/0276-workbench-mounts-as-an-additive-launcher-and-overlay.md": {
+    "mtime": 1787409112.2241042,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4b7200f95ff15147193b3f3170ff694e",
+    "semantic_hash": "4b7200f95ff15147193b3f3170ff694e"
+  },
+  "docs/adr/0277-workbench-information-architecture-is-fixed-for-v0-1.md": {
+    "mtime": 1787409112.9250095,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ba98653ff54dd19364ac519041c0ab64",
+    "semantic_hash": "ba98653ff54dd19364ac519041c0ab64"
+  },
+  "docs/adr/0278-workbench-route-state-contains-only-low-sensitivity-identifiers.md": {
+    "mtime": 1787409113.631485,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ac2376a38e24c2933508456fa2cc602d",
+    "semantic_hash": "ac2376a38e24c2933508456fa2cc602d"
+  },
+  "docs/adr/0279-new-assessment-wizard-uses-registered-choices-and-resolved-values.md": {
+    "mtime": 1787409114.3168876,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b64148e369f8849abf49969ce69bcaa7",
+    "semantic_hash": "b64148e369f8849abf49969ce69bcaa7"
+  },
+  "docs/adr/0280-start-preflight-discloses-the-effective-contract-before-confirmation.md": {
+    "mtime": 1787409115.0268755,
+    "seen": 1787717226.9584832,
+    "ast_hash": "f669d63aa06859078fa397c2cfe1eac9",
+    "semantic_hash": "f669d63aa06859078fa397c2cfe1eac9"
+  },
+  "docs/adr/0281-assessment-progress-is-a-revision-bound-phase-and-coverage-view.md": {
+    "mtime": 1787409115.7287161,
+    "seen": 1787717226.9584832,
+    "ast_hash": "ee55cbc8eebbb6fbfcd8a87657ceca31",
+    "semantic_hash": "ee55cbc8eebbb6fbfcd8a87657ceca31"
+  },
+  "docs/adr/0282-role-cards-show-governed-lineage-not-chat-authority.md": {
+    "mtime": 1787409116.4119635,
+    "seen": 1787717226.9584832,
+    "ast_hash": "d1f7cb4e62d054e6381facc5ffd88e8e",
+    "semantic_hash": "d1f7cb4e62d054e6381facc5ffd88e8e"
+  },
+  "docs/adr/0283-role-detail-is-immutable-and-cannot-accept-ad-hoc-instructions.md": {
+    "mtime": 1787409117.1228285,
+    "seen": 1787717226.9584832,
+    "ast_hash": "86676963a6cae3768154728f168cf3a2",
+    "semantic_hash": "86676963a6cae3768154728f168cf3a2"
+  },
+  "docs/adr/0284-deep-independent-passes-remain-hidden-from-peers-until-frozen.md": {
+    "mtime": 1787409117.8290975,
+    "seen": 1787717226.9584832,
+    "ast_hash": "a71cde0dcf5d525562890d11961c0028",
+    "semantic_hash": "a71cde0dcf5d525562890d11961c0028"
+  },
+  "docs/adr/0285-available-actions-are-service-projected-not-client-inferred.md": {
+    "mtime": 1787409118.5284226,
+    "seen": 1787717226.9584832,
+    "ast_hash": "e53dc8206b76d40d7d16acd866c44fc3",
+    "semantic_hash": "e53dc8206b76d40d7d16acd866c44fc3"
+  },
+  "docs/adr/0286-blocked-view-explains-recovery-without-offering-a-bypass.md": {
+    "mtime": 1787409119.220003,
+    "seen": 1787717226.9584832,
+    "ast_hash": "fa84ad2cf616ba11c45d9910ed582180",
+    "semantic_hash": "fa84ad2cf616ba11c45d9910ed582180"
+  },
+  "docs/adr/0287-finding-triage-view-keeps-domain-dimensions-separate.md": {
+    "mtime": 1787409119.9162712,
+    "seen": 1787717226.9584832,
+    "ast_hash": "45f7320c994e5d1efafef62146c8a8c7",
+    "semantic_hash": "45f7320c994e5d1efafef62146c8a8c7"
+  },
+  "docs/adr/0288-evidence-view-starts-redacted-and-reauthorizes-sensitive-content.md": {
+    "mtime": 1787409120.6242902,
+    "seen": 1787717226.9584832,
+    "ast_hash": "252730d111f0953140eaff0ec9a21af0",
+    "semantic_hash": "252730d111f0953140eaff0ec9a21af0"
+  },
+  "docs/adr/0289-risk-decision-form-records-a-governed-immutable-decision.md": {
+    "mtime": 1787409121.3225224,
+    "seen": 1787717226.9584832,
+    "ast_hash": "39a38693f85a65978dd4173f12f80946",
+    "semantic_hash": "39a38693f85a65978dd4173f12f80946"
+  },
+  "docs/adr/0290-critical-break-glass-requires-two-independent-operator-invocations.md": {
+    "mtime": 1787409122.021394,
+    "seen": 1787717226.9584832,
+    "ast_hash": "83fffd86b98092c6d93f3472b45ea051",
+    "semantic_hash": "83fffd86b98092c6d93f3472b45ea051"
+  },
+  "docs/adr/0291-export-ui-previews-profile-and-destination-while-service-performs-delivery.md": {
+    "mtime": 1787409122.7177663,
+    "seen": 1787717226.9584832,
+    "ast_hash": "658c886c8e6879ed0151d582f6ada3d6",
+    "semantic_hash": "658c886c8e6879ed0151d582f6ada3d6"
+  },
+  "docs/adr/0292-reconnect-recovers-from-id-revision-and-idempotency.md": {
+    "mtime": 1787409123.4119556,
+    "seen": 1787717226.9584832,
+    "ast_hash": "6b8af7299ea62d55f1ad82f5f15dd23b",
+    "semantic_hash": "6b8af7299ea62d55f1ad82f5f15dd23b"
+  },
+  "docs/adr/0293-browser-persistence-excludes-sensitive-assessment-payloads.md": {
+    "mtime": 1787409124.2149463,
+    "seen": 1787717226.9584832,
+    "ast_hash": "86a099322fd56d319a6c713c29d8fbcb",
+    "semantic_hash": "86a099322fd56d319a6c713c29d8fbcb"
+  },
+  "docs/adr/0294-workbench-inherits-host-web-security-and-is-accessible-and-bilingual.md": {
+    "mtime": 1787409125.0401013,
+    "seen": 1787717226.9584832,
+    "ast_hash": "4e2a3ec880d3c17bf70d41d2d0d369f8",
+    "semantic_hash": "4e2a3ec880d3c17bf70d41d2d0d369f8"
+  },
+  "docs/adr/0295-control-plane-integration-is-an-optional-by-value-adapter.md": {
+    "mtime": 1787519225.1323006,
+    "seen": 1787717226.9584832,
+    "ast_hash": "eb9dd2b3fe791c49f12b91afeb8694a7",
+    "semantic_hash": "eb9dd2b3fe791c49f12b91afeb8694a7"
+  },
+  "docs/adr/0296-control-plane-cancellation-resolves-only-an-existing-assessment.md": {
+    "mtime": 1787513678.8309321,
+    "seen": 1787717226.9584832,
+    "ast_hash": "2c7561f62af4a09076e4ce827f9efb71",
+    "semantic_hash": "2c7561f62af4a09076e4ce827f9efb71"
+  },
+  "docs/adr/0297-cancellation-crash-checkpoint-preserves-the-exact-assessment.md": {
+    "mtime": 1787514916.9499104,
+    "seen": 1787717226.9584832,
+    "ast_hash": "97a9b96d1c9068a0e023cf17fcde90df",
+    "semantic_hash": "97a9b96d1c9068a0e023cf17fcde90df"
+  },
+  "docs/adr/0298-control-plane-external-failure-uses-provider-neutral-constructor.md": {
+    "mtime": 1787515959.7271667,
+    "seen": 1787717226.9584832,
+    "ast_hash": "b31dbbc68c1ef7a2b14e01a4c36278c3",
+    "semantic_hash": "b31dbbc68c1ef7a2b14e01a4c36278c3"
+  },
+  "docs/adr/0299-control-plane-assurance-retry-starts-a-distinct-assessment.md": {
+    "mtime": 1787519244.8682334,
+    "seen": 1787717226.9584832,
+    "ast_hash": "7f29eb56f650b2c9d3cd4b720d1bc281",
+    "semantic_hash": "7f29eb56f650b2c9d3cd4b720d1bc281"
+  },
+  "docs/adr/0300-control-plane-repository-binding-precedes-assessment-start.md": {
+    "mtime": 1787519225.8142357,
+    "seen": 1787717226.9584832,
+    "ast_hash": "c963ba28d7ff70215fe6cd34634ba3e6",
+    "semantic_hash": "c963ba28d7ff70215fe6cd34634ba3e6"
+  },
+  "docs/adr/0301-host-repository-provider-is-a-trusted-composition-adapter.md": {
+    "mtime": 1787520879.0677822,
+    "seen": 1787717226.9584832,
+    "ast_hash": "8d7caf398c3adb8330d179e0b31f5def",
+    "semantic_hash": "8d7caf398c3adb8330d179e0b31f5def"
+  },
+  "docs/adr/0302-package-private-protocol-symbols-have-versioned-process-identities.md": {
+    "mtime": 1787520879.7598898,
+    "seen": 1787717226.9584832,
+    "ast_hash": "24812d3b647edfe0bd35c243106f6302",
+    "semantic_hash": "24812d3b647edfe0bd35c243106f6302"
+  },
+  "docs/adr/0303-export-delivery-recovery-is-service-owned-and-bounded.md": {
+    "mtime": 1787626491.653759,
+    "seen": 1787717226.9584832,
+    "ast_hash": "19ab18d4803166ab737245f1658ee81a",
+    "semantic_hash": "19ab18d4803166ab737245f1658ee81a"
+  },
+  "docs/adr/0304-export-expiry-uses-two-phase-exact-target-reaping.md": {
+    "mtime": 1787632366.1672225,
+    "seen": 1787717226.9584832,
+    "ast_hash": "aca8647d10ed5b85a17fde0b1238704f",
+    "semantic_hash": "aca8647d10ed5b85a17fde0b1238704f"
+  },
+  "docs/deepseek-harness-plugin-surface-study.md": {
+    "mtime": 1787404009.0612035,
+    "seen": 1787717226.9584832,
+    "ast_hash": "fe21d094e21cf7886fdc7e1fd00ecc18",
+    "semantic_hash": "fe21d094e21cf7886fdc7e1fd00ecc18"
+  },
+  "docs/implementation-specification.md": {
+    "mtime": 1787520878.3943515,
+    "seen": 1787717226.9584832,
+    "ast_hash": "6adee9ff43315d47b14c121158038ef7",
+    "semantic_hash": "6adee9ff43315d47b14c121158038ef7"
+  }
+}

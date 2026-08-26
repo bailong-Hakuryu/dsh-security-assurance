@@ -11,6 +11,10 @@ import {
   calculatePairedArmComparisonV1,
   calculateUtilityMetricsV1,
   assembleReleaseEvidenceManifestV1,
+  DETERMINISTIC_FAILURE_HISTORY_ENGINE_ID,
+  DETERMINISTIC_RELEASE_PROOF_KINDS,
+  type DeterministicFailureHistoryRequestV1,
+  evaluateDeterministicFailureHistoryV1,
   EFFECTIVENESS_METRICS_ENGINE_ID,
   effectivenessMetricsRequestV1Schema,
   effectivenessMetricsV1Schema,
@@ -849,6 +853,185 @@ describe('Effectiveness Metrics Engine v1', () => {
     ]) {
       expect(effectivenessMetricsRequestV1Schema.safeParse({ ...candidate, ...extra }).success).toBe(false)
     }
+  })
+})
+
+describe('Deterministic Failure History v1', () => {
+  function historyDigest(character: string) {
+    return {
+      schemaVersion: 1 as const,
+      algorithm: 'sha256' as const,
+      mediaType: 'application/json',
+      byteLength: 128,
+      canonicalization: 'dsh-canonical-json-v1' as const,
+      value: character.repeat(64),
+    }
+  }
+
+  it('keeps an original deterministic failure blocking when a diagnostic rerun passes', () => {
+    const artifactDigest = historyDigest('a')
+    const request: DeterministicFailureHistoryRequestV1 = {
+      schemaVersion: 1,
+      engineId: DETERMINISTIC_FAILURE_HISTORY_ENGINE_ID,
+      evaluatedAtEpochMs: 300,
+      candidateArtifactDigest: artifactDigest,
+      requiredProofKinds: ['RESOURCE'],
+      runs: [
+        {
+          kind: 'QUALIFICATION',
+          runId: 'qualification/resource/failed',
+          proofKind: 'RESOURCE',
+          candidateArtifactDigest: artifactDigest,
+          status: 'FAILED',
+          evidenceId: 'evidence/resource/failed',
+          evidenceDigest: historyDigest('b'),
+          completedAtEpochMs: 100,
+        },
+        {
+          kind: 'DIAGNOSTIC_RERUN',
+          runId: 'diagnostic/resource/passed',
+          proofKind: 'RESOURCE',
+          originalFailureRunId: 'qualification/resource/failed',
+          candidateArtifactDigest: artifactDigest,
+          status: 'PASSED',
+          evidenceId: 'evidence/resource/diagnostic-pass',
+          evidenceDigest: historyDigest('c'),
+          completedAtEpochMs: 200,
+        },
+      ],
+      resolutions: [],
+    }
+
+    const result = evaluateDeterministicFailureHistoryV1(request)
+
+    expect(result).toMatchObject({
+      decision: 'BLOCKED',
+      unresolvedFailureCount: 1,
+      proofHistories: [{
+        proofKind: 'RESOURCE',
+        candidateQualificationRunId: 'qualification/resource/failed',
+        candidateQualificationStatus: 'FAILED',
+        diagnosticRerunIds: ['diagnostic/resource/passed'],
+        resolvedFailureRunIds: [],
+        unresolvedFailureRunIds: ['qualification/resource/failed'],
+        verificationStatus: 'FAILED',
+      }],
+    })
+  })
+
+  it('resolves an original failure only through explained correction and new qualification', () => {
+    const failedArtifactDigest = historyDigest('a')
+    const correctedArtifactDigest = historyDigest('d')
+    const request = {
+      schemaVersion: 1,
+      engineId: DETERMINISTIC_FAILURE_HISTORY_ENGINE_ID,
+      evaluatedAtEpochMs: 500,
+      candidateArtifactDigest: correctedArtifactDigest,
+      requiredProofKinds: ['MUTATION'],
+      runs: [
+        {
+          kind: 'QUALIFICATION',
+          runId: 'qualification/mutation/failed',
+          proofKind: 'MUTATION',
+          candidateArtifactDigest: failedArtifactDigest,
+          status: 'FAILED',
+          evidenceId: 'evidence/mutation/failed',
+          evidenceDigest: historyDigest('b'),
+          completedAtEpochMs: 100,
+        },
+        {
+          kind: 'DIAGNOSTIC_RERUN',
+          runId: 'diagnostic/mutation/passed',
+          proofKind: 'MUTATION',
+          originalFailureRunId: 'qualification/mutation/failed',
+          candidateArtifactDigest: failedArtifactDigest,
+          status: 'PASSED',
+          evidenceId: 'evidence/mutation/diagnostic-pass',
+          evidenceDigest: historyDigest('c'),
+          completedAtEpochMs: 200,
+        },
+        {
+          kind: 'QUALIFICATION',
+          runId: 'qualification/mutation/corrected',
+          proofKind: 'MUTATION',
+          candidateArtifactDigest: correctedArtifactDigest,
+          status: 'PASSED',
+          evidenceId: 'evidence/mutation/corrected-pass',
+          evidenceDigest: historyDigest('e'),
+          completedAtEpochMs: 400,
+        },
+      ],
+      resolutions: [{
+        originalFailureRunId: 'qualification/mutation/failed',
+        replacementQualificationRunId: 'qualification/mutation/corrected',
+        investigationEvidenceId: 'evidence/mutation/investigation',
+        investigationEvidenceDigest: historyDigest('f'),
+        correctionEvidenceId: 'evidence/mutation/correction',
+        correctionEvidenceDigest: historyDigest('1'),
+        resolvedAtEpochMs: 450,
+      }],
+    }
+
+    const result = evaluateDeterministicFailureHistoryV1(request)
+
+    expect(result).toMatchObject({
+      decision: 'VERIFIED',
+      unresolvedFailureCount: 0,
+      proofHistories: [{
+        proofKind: 'MUTATION',
+        candidateQualificationRunId: 'qualification/mutation/corrected',
+        candidateQualificationStatus: 'PASSED',
+        diagnosticRerunIds: ['diagnostic/mutation/passed'],
+        resolvedFailureRunIds: ['qualification/mutation/failed'],
+        unresolvedFailureRunIds: [],
+        verificationStatus: 'PASSED',
+      }],
+    })
+  })
+
+  it('makes a missing required current qualification explicitly inconclusive', () => {
+    const artifactDigest = historyDigest('a')
+    const result = evaluateDeterministicFailureHistoryV1({
+      schemaVersion: 1,
+      engineId: DETERMINISTIC_FAILURE_HISTORY_ENGINE_ID,
+      evaluatedAtEpochMs: 300,
+      candidateArtifactDigest: artifactDigest,
+      requiredProofKinds: ['LIFECYCLE', 'RESOURCE'],
+      runs: [{
+        kind: 'QUALIFICATION',
+        runId: 'qualification/resource/passed',
+        proofKind: 'RESOURCE',
+        candidateArtifactDigest: artifactDigest,
+        status: 'PASSED',
+        evidenceId: 'evidence/resource/passed',
+        evidenceDigest: historyDigest('b'),
+        completedAtEpochMs: 100,
+      }],
+      resolutions: [],
+    })
+
+    expect(result.decision).toBe('INCONCLUSIVE')
+    expect(result.requiredProofKinds).toEqual(['LIFECYCLE', 'RESOURCE'])
+    expect(result.proofHistories).toEqual([
+      {
+        proofKind: 'LIFECYCLE',
+        candidateQualificationRunId: null,
+        candidateQualificationStatus: 'MISSING',
+        diagnosticRerunIds: [],
+        resolvedFailureRunIds: [],
+        unresolvedFailureRunIds: [],
+        verificationStatus: 'INCONCLUSIVE',
+      },
+      {
+        proofKind: 'RESOURCE',
+        candidateQualificationRunId: 'qualification/resource/passed',
+        candidateQualificationStatus: 'PASSED',
+        diagnosticRerunIds: [],
+        resolvedFailureRunIds: [],
+        unresolvedFailureRunIds: [],
+        verificationStatus: 'PASSED',
+      },
+    ])
   })
 })
 
@@ -1726,6 +1909,46 @@ describe('Paired Arm Comparison Engine v1', () => {
       })
     }
 
+    function releaseDeterministicHistoryRequest(
+      artifactDigest: ReleaseConstitutionEvaluationRequestV1['candidate']['candidateArtifactDigest'],
+      failedProofKind?: typeof DETERMINISTIC_RELEASE_PROOF_KINDS[number],
+    ): DeterministicFailureHistoryRequestV1 {
+      const runs = DETERMINISTIC_RELEASE_PROOF_KINDS.flatMap((proofKind, index) => {
+        const qualification = {
+          kind: 'QUALIFICATION' as const,
+          runId: `qualification/${proofKind.toLowerCase().replaceAll('_', '-')}`,
+          proofKind,
+          candidateArtifactDigest: artifactDigest,
+          status: proofKind === failedProofKind ? 'FAILED' as const : 'PASSED' as const,
+          evidenceId: `evidence/${proofKind.toLowerCase().replaceAll('_', '-')}`,
+          evidenceDigest: releaseDigest(String(index % 10)),
+          completedAtEpochMs: 240,
+        }
+        return proofKind === failedProofKind
+          ? [qualification, {
+              kind: 'DIAGNOSTIC_RERUN' as const,
+              runId: `diagnostic/${proofKind.toLowerCase().replaceAll('_', '-')}/passed`,
+              proofKind,
+              originalFailureRunId: qualification.runId,
+              candidateArtifactDigest: artifactDigest,
+              status: 'PASSED' as const,
+              evidenceId: `evidence/${proofKind.toLowerCase().replaceAll('_', '-')}/diagnostic`,
+              evidenceDigest: releaseDigest(String((index + 1) % 10)),
+              completedAtEpochMs: 250,
+            }]
+          : [qualification]
+      })
+      return {
+        schemaVersion: 1,
+        engineId: DETERMINISTIC_FAILURE_HISTORY_ENGINE_ID,
+        evaluatedAtEpochMs: 260,
+        candidateArtifactDigest: artifactDigest,
+        requiredProofKinds: [...DETERMINISTIC_RELEASE_PROOF_KINDS],
+        runs,
+        resolutions: [],
+      }
+    }
+
     function baseReleaseRequest(): ReleaseConstitutionEvaluationRequestV1 {
       const artifactDigest = releaseDigest('a')
       return {
@@ -1789,7 +2012,7 @@ describe('Paired Arm Comparison Engine v1', () => {
             selfSecurityCriticalCount: 0,
             selfSecurityHighCount: 0,
             selfSecurityBlockingMediumCount: 0,
-            unresolvedDeterministicFailureCount: 0,
+            deterministicFailureHistory: releaseDeterministicHistoryRequest(artifactDigest),
           },
           platformProofs: [
             {
@@ -1818,6 +2041,90 @@ describe('Paired Arm Comparison Engine v1', () => {
         },
       }
     }
+
+    it('derives deterministic hard safety from history instead of a caller count', () => {
+      const request = baseReleaseRequest() as unknown as {
+        candidate: {
+          candidateArtifactDigest: ReturnType<typeof releaseDigest>
+          hardSafetyEvidence: Record<string, unknown>
+        }
+      }
+      const historyRequest = releaseDeterministicHistoryRequest(
+        request.candidate.candidateArtifactDigest,
+        'RESOURCE',
+      )
+      const history = evaluateDeterministicFailureHistoryV1(historyRequest)
+      delete request.candidate.hardSafetyEvidence.unresolvedDeterministicFailureCount
+      request.candidate.hardSafetyEvidence.deterministicFailureHistory = historyRequest
+
+      const result = evaluateReleaseConstitutionV1(request)
+      const deterministicCheck = result.checks.find(
+        item => item.checkId === 'NO_UNRESOLVED_DETERMINISTIC_FAILURES',
+      )
+
+      expect(history.decision).toBe('BLOCKED')
+      expect(history.unresolvedFailureCount).toBe(1)
+      expect(deterministicCheck?.status).toBe('FAILED')
+      expect(result.decision).toBe('BLOCKED')
+    })
+
+    it('rejects a caller-authored deterministic verification result at the release seam', () => {
+      const request = baseReleaseRequest()
+      const computed = evaluateDeterministicFailureHistoryV1(releaseDeterministicHistoryRequest(
+        request.candidate.candidateArtifactDigest,
+        'RESOURCE',
+      ))
+      const forged = structuredClone(computed)
+      forged.unresolvedFailureCount = 0
+      forged.decision = 'VERIFIED'
+      const untrustedRequest = request as unknown as {
+        candidate: { hardSafetyEvidence: Record<string, unknown> }
+      }
+      untrustedRequest.candidate.hardSafetyEvidence.deterministicFailureHistory = forged
+
+      expect(() => evaluateReleaseConstitutionV1(request)).toThrow(
+        ReleaseConstitutionInputError,
+      )
+    })
+
+    it('keeps missing deterministic qualification evidence inconclusive at release', () => {
+      const request = baseReleaseRequest()
+      request.candidate.hardSafetyEvidence.deterministicFailureHistory.runs = request.candidate
+        .hardSafetyEvidence.deterministicFailureHistory.runs.filter(
+          run => run.proofKind !== 'RESOURCE',
+        )
+
+      const history = evaluateDeterministicFailureHistoryV1(
+        request.candidate.hardSafetyEvidence.deterministicFailureHistory,
+      )
+      const result = evaluateReleaseConstitutionV1(request)
+      const deterministicCheck = result.checks.find(
+        item => item.checkId === 'NO_UNRESOLVED_DETERMINISTIC_FAILURES',
+      )
+
+      expect(history.decision).toBe('INCONCLUSIVE')
+      expect(history.unresolvedFailureCount).toBe(0)
+      expect(deterministicCheck?.status).toBe('INCONCLUSIVE')
+      expect(result.decision).toBe('INCONCLUSIVE')
+    })
+
+    it('keeps a known deterministic failure blocking when aggregate evidence is incomplete', () => {
+      const request = baseReleaseRequest()
+      request.candidate.hardSafetyEvidence.evidenceStatus = 'INCOMPLETE'
+      request.candidate.hardSafetyEvidence.deterministicFailureHistory
+        = releaseDeterministicHistoryRequest(
+          request.candidate.candidateArtifactDigest,
+          'RESOURCE',
+        )
+
+      const result = evaluateReleaseConstitutionV1(request)
+      const deterministicCheck = result.checks.find(
+        item => item.checkId === 'NO_UNRESOLVED_DETERMINISTIC_FAILURES',
+      )
+
+      expect(deterministicCheck?.status).toBe('FAILED')
+      expect(result.decision).toBe('BLOCKED')
+    })
 
     it('promotes only when every fixed Release Constitution check passes', () => {
       const result = evaluateReleaseConstitutionV1(baseReleaseRequest())

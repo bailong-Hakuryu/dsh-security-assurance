@@ -502,6 +502,40 @@ packedLeakedAirGapRequest.airGapAudit.violations.push({
 const packedAirGapInvalidated = evaluation.assembleAirGappedEvaluationV1(
   packedLeakedAirGapRequest,
 )
+const packedDeterministicHistoryRequest = (artifactDigest, failedProofKind) => ({
+  schemaVersion: 1,
+  engineId: 'security/deterministic-failure-history/v1',
+  evaluatedAtEpochMs: 260,
+  candidateArtifactDigest: artifactDigest,
+  requiredProofKinds: [...evaluation.DETERMINISTIC_RELEASE_PROOF_KINDS],
+  runs: evaluation.DETERMINISTIC_RELEASE_PROOF_KINDS.flatMap((proofKind, index) => {
+    const qualification = {
+      kind: 'QUALIFICATION',
+      runId: 'packed-qualification/' + proofKind.toLowerCase().replaceAll('_', '-'),
+      proofKind,
+      candidateArtifactDigest: artifactDigest,
+      status: proofKind === failedProofKind ? 'FAILED' : 'PASSED',
+      evidenceId: 'packed-deterministic-evidence/'
+        + proofKind.toLowerCase().replaceAll('_', '-'),
+      evidenceDigest: packedEvaluationDigest(String(index % 10)),
+      completedAtEpochMs: 240,
+    }
+    return proofKind === failedProofKind
+      ? [qualification, {
+          kind: 'DIAGNOSTIC_RERUN',
+          runId: qualification.runId + '/diagnostic-pass',
+          proofKind,
+          originalFailureRunId: qualification.runId,
+          candidateArtifactDigest: artifactDigest,
+          status: 'PASSED',
+          evidenceId: qualification.evidenceId + '/diagnostic-pass',
+          evidenceDigest: packedEvaluationDigest(String((index + 1) % 10)),
+          completedAtEpochMs: 250,
+        }]
+      : [qualification]
+  }),
+  resolutions: [],
+})
 const packedReleaseRequest = () => {
   const artifactDigest = packedEvaluationDigest('a')
   return {
@@ -565,7 +599,7 @@ const packedReleaseRequest = () => {
         selfSecurityCriticalCount: 0,
         selfSecurityHighCount: 0,
         selfSecurityBlockingMediumCount: 0,
-        unresolvedDeterministicFailureCount: 0,
+        deterministicFailureHistory: packedDeterministicHistoryRequest(artifactDigest),
       },
       platformProofs: ['WINDOWS', 'LINUX', 'MACOS'].map((platform, index) => ({
         platform,
@@ -583,6 +617,18 @@ const packedBlockedReleaseRequest = packedReleaseRequest()
 packedBlockedReleaseRequest.candidate.hardSafetyEvidence.hiddenCriticalSatisfiedCount = 1
 const packedReleaseBlocked = evaluation.evaluateReleaseConstitutionV1(
   packedBlockedReleaseRequest,
+)
+const packedDeterministicBlockedRequest = packedReleaseRequest()
+packedDeterministicBlockedRequest.candidate.hardSafetyEvidence.deterministicFailureHistory
+  = packedDeterministicHistoryRequest(
+    packedDeterministicBlockedRequest.candidate.candidateArtifactDigest,
+    'RESOURCE',
+  )
+const packedDeterministicFailureHistory = evaluation.evaluateDeterministicFailureHistoryV1(
+  packedDeterministicBlockedRequest.candidate.hardSafetyEvidence.deterministicFailureHistory,
+)
+const packedDeterministicReleaseBlocked = evaluation.evaluateReleaseConstitutionV1(
+  packedDeterministicBlockedRequest,
 )
 const packedScorecardRequest = releaseEvaluation => ({
   schemaVersion: 1,

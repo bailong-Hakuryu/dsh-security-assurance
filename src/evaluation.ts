@@ -2786,7 +2786,7 @@ export const releaseHardSafetyEvidenceV1Schema = z.strictObject({
   selfSecurityCriticalCount: resourceQuantitySchema,
   selfSecurityHighCount: resourceQuantitySchema,
   selfSecurityBlockingMediumCount: resourceQuantitySchema,
-  unresolvedDeterministicFailureCount: resourceQuantitySchema,
+  deterministicFailureHistory: z.lazy(() => deterministicFailureHistoryRequestV1Schema),
 })
 
 export type ReleaseHardSafetyEvidenceV1 = z.infer<
@@ -2831,6 +2831,14 @@ export const releaseConstitutionEvaluationRequestV1Schema = z.strictObject({
     || candidate.pairedComparison.baseline.armId !== candidate.priorStableArmId
     || new Set(candidate.platformProofs.map(item => item.platform)).size
       !== candidate.platformProofs.length
+    || !sameDigest(
+      candidate.hardSafetyEvidence.deterministicFailureHistory.candidateArtifactDigest,
+      candidate.candidateArtifactDigest,
+    )
+    || JSON.stringify(candidate.hardSafetyEvidence.deterministicFailureHistory.requiredProofKinds)
+      !== JSON.stringify(DETERMINISTIC_RELEASE_PROOF_KINDS)
+    || candidate.hardSafetyEvidence.deterministicFailureHistory.evaluatedAtEpochMs
+      > candidate.holdoutCompletedAtEpochMs
   ) {
     context.addIssue({ code: 'custom', message: 'Inconsistent Release Candidate Evidence.' })
   }
@@ -3013,6 +3021,9 @@ export function evaluateReleaseConstitutionV1(
 
   const hardSafety = candidate.hardSafetyEvidence
   const hardEvidenceComplete = hardSafety.evidenceStatus === 'COMPLETE'
+  const deterministicFailureHistory = evaluateDeterministicFailureHistoryV1(
+    hardSafety.deterministicFailureHistory,
+  )
   set(
     'COMPLETE_CAPABILITY_CONFORMANCE',
     hardSafety.capabilityConformance === 'FAILED'
@@ -3061,10 +3072,14 @@ export function evaluateReleaseConstitutionV1(
     hardSafety.selfSecurityBlockingMediumCount,
     hardEvidenceComplete,
   ))
-  set('NO_UNRESOLVED_DETERMINISTIC_FAILURES', releaseCountCheckStatus(
-    hardSafety.unresolvedDeterministicFailureCount,
-    hardEvidenceComplete,
-  ))
+  set(
+    'NO_UNRESOLVED_DETERMINISTIC_FAILURES',
+    deterministicFailureHistory.decision === 'BLOCKED'
+      ? 'FAILED'
+      : !hardEvidenceComplete || deterministicFailureHistory.decision === 'INCONCLUSIVE'
+        ? 'INCONCLUSIVE'
+        : 'PASSED',
+  )
 
   const exactArtifact = sameDigest(
     candidate.candidateArtifactDigest,
@@ -4324,4 +4339,264 @@ export function assembleReleaseEvidenceManifestV1(
     verification,
   }
   return deepFreeze(releaseEvidenceManifestV1Schema.parse(result))
+}
+
+export const DETERMINISTIC_FAILURE_HISTORY_ENGINE_ID =
+  'security/deterministic-failure-history/v1' as const
+
+export const DETERMINISTIC_RELEASE_PROOF_KINDS = [
+  'ARTIFACT_IDENTITY',
+  'CAPABILITY_CONFORMANCE',
+  'WINDOWS_PLATFORM',
+  'LINUX_PLATFORM',
+  'MACOS_PLATFORM',
+  'WORKBENCH',
+  'LIFECYCLE',
+  'FAULT',
+  'RACE',
+  'MUTATION',
+  'RESOURCE',
+] as const
+
+export type DeterministicReleaseProofKind =
+  typeof DETERMINISTIC_RELEASE_PROOF_KINDS[number]
+
+const deterministicQualificationStatusV1Schema = z.enum([
+  'PASSED',
+  'FAILED',
+  'INCONCLUSIVE',
+])
+
+const deterministicRunEvidenceV1Schema = z.strictObject({
+  runId: boundedEvaluationIdSchema,
+  proofKind: z.enum(DETERMINISTIC_RELEASE_PROOF_KINDS),
+  candidateArtifactDigest: digestEnvelopeV1Schema,
+  status: deterministicQualificationStatusV1Schema,
+  evidenceId: boundedEvaluationIdSchema,
+  evidenceDigest: digestEnvelopeV1Schema,
+  completedAtEpochMs: evaluationEpochMsSchema,
+})
+
+export const deterministicQualificationRunV1Schema = deterministicRunEvidenceV1Schema
+  .extend({ kind: z.literal('QUALIFICATION') })
+
+export const deterministicDiagnosticRerunV1Schema = deterministicRunEvidenceV1Schema
+  .extend({
+    kind: z.literal('DIAGNOSTIC_RERUN'),
+    originalFailureRunId: boundedEvaluationIdSchema,
+  })
+
+export const deterministicFailureResolutionV1Schema = z.strictObject({
+  originalFailureRunId: boundedEvaluationIdSchema,
+  replacementQualificationRunId: boundedEvaluationIdSchema,
+  investigationEvidenceId: boundedEvaluationIdSchema,
+  investigationEvidenceDigest: digestEnvelopeV1Schema,
+  correctionEvidenceId: boundedEvaluationIdSchema,
+  correctionEvidenceDigest: digestEnvelopeV1Schema,
+  resolvedAtEpochMs: evaluationEpochMsSchema,
+})
+
+export const deterministicFailureHistoryRequestV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(DETERMINISTIC_FAILURE_HISTORY_ENGINE_ID),
+  evaluatedAtEpochMs: evaluationEpochMsSchema,
+  candidateArtifactDigest: digestEnvelopeV1Schema,
+  requiredProofKinds: z.array(z.enum(DETERMINISTIC_RELEASE_PROOF_KINDS))
+    .min(1)
+    .max(DETERMINISTIC_RELEASE_PROOF_KINDS.length),
+  runs: z.array(z.discriminatedUnion('kind', [
+    deterministicQualificationRunV1Schema,
+    deterministicDiagnosticRerunV1Schema,
+  ])).min(1).max(10_000),
+  resolutions: z.array(deterministicFailureResolutionV1Schema).max(10_000),
+}).superRefine((value, context) => {
+  const runIds = value.runs.map(run => run.runId)
+  const resolvedRunIds = value.resolutions.map(resolution => resolution.originalFailureRunId)
+  if (
+    new Set(runIds).size !== runIds.length
+    || new Set(resolvedRunIds).size !== resolvedRunIds.length
+    || new Set(value.requiredProofKinds).size !== value.requiredProofKinds.length
+    || value.runs.some(run => !value.requiredProofKinds.includes(run.proofKind))
+    || value.runs.some(run => run.completedAtEpochMs > value.evaluatedAtEpochMs)
+    || value.resolutions.some(resolution => (
+      resolution.resolvedAtEpochMs > value.evaluatedAtEpochMs
+      || resolution.investigationEvidenceId === resolution.correctionEvidenceId
+    ))
+  ) {
+    context.addIssue({ code: 'custom', message: 'Inconsistent deterministic run history.' })
+  }
+})
+
+export type DeterministicFailureHistoryRequestV1 = z.infer<
+  typeof deterministicFailureHistoryRequestV1Schema
+>
+
+export const deterministicFailureProofHistoryV1Schema = z.strictObject({
+  proofKind: z.enum(DETERMINISTIC_RELEASE_PROOF_KINDS),
+  candidateQualificationRunId: boundedEvaluationIdSchema.nullable(),
+  candidateQualificationStatus: z.enum([
+    'PASSED',
+    'FAILED',
+    'INCONCLUSIVE',
+    'MISSING',
+  ]),
+  diagnosticRerunIds: z.array(boundedEvaluationIdSchema).max(10_000),
+  resolvedFailureRunIds: z.array(boundedEvaluationIdSchema).max(10_000),
+  unresolvedFailureRunIds: z.array(boundedEvaluationIdSchema).max(10_000),
+  verificationStatus: z.enum(['PASSED', 'FAILED', 'INCONCLUSIVE']),
+})
+
+export const deterministicFailureHistoryV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  engineId: z.literal(DETERMINISTIC_FAILURE_HISTORY_ENGINE_ID),
+  evaluatedAtEpochMs: evaluationEpochMsSchema,
+  candidateArtifactDigest: digestEnvelopeV1Schema,
+  requiredProofKinds: z.array(z.enum(DETERMINISTIC_RELEASE_PROOF_KINDS))
+    .min(1)
+    .max(DETERMINISTIC_RELEASE_PROOF_KINDS.length),
+  proofHistories: z.array(deterministicFailureProofHistoryV1Schema)
+    .max(DETERMINISTIC_RELEASE_PROOF_KINDS.length),
+  unresolvedFailureCount: z.number().int().nonnegative().max(10_000),
+  decision: z.enum(['VERIFIED', 'BLOCKED', 'INCONCLUSIVE']),
+})
+
+export type DeterministicFailureHistoryV1 = z.infer<
+  typeof deterministicFailureHistoryV1Schema
+>
+
+/** Stable, detail-free rejection for malformed deterministic qualification history. */
+export class DeterministicFailureHistoryInputError extends Error {
+  readonly code = 'INVALID_DETERMINISTIC_FAILURE_HISTORY_INPUT' as const
+
+  constructor() {
+    super('Evidence does not match deterministic failure history v1.')
+    this.name = 'DeterministicFailureHistoryInputError'
+  }
+}
+
+function compareDeterministicRuns(
+  left: z.infer<typeof deterministicRunEvidenceV1Schema>,
+  right: z.infer<typeof deterministicRunEvidenceV1Schema>,
+): number {
+  return left.completedAtEpochMs - right.completedAtEpochMs
+    || left.runId.localeCompare(right.runId)
+}
+
+export function evaluateDeterministicFailureHistoryV1(
+  input: unknown,
+): DeterministicFailureHistoryV1 {
+  const parsed = deterministicFailureHistoryRequestV1Schema.safeParse(input)
+  if (!parsed.success) throw new DeterministicFailureHistoryInputError()
+  const request = parsed.data
+  const runsById = new Map(request.runs.map(run => [run.runId, run]))
+  const qualifications = request.runs.filter(
+    (run): run is z.infer<typeof deterministicQualificationRunV1Schema> => (
+      run.kind === 'QUALIFICATION'
+    ),
+  )
+  const diagnostics = request.runs.filter(
+    (run): run is z.infer<typeof deterministicDiagnosticRerunV1Schema> => (
+      run.kind === 'DIAGNOSTIC_RERUN'
+    ),
+  )
+
+  for (const diagnostic of diagnostics) {
+    const original = runsById.get(diagnostic.originalFailureRunId)
+    if (
+      original?.kind !== 'QUALIFICATION'
+      || original.status !== 'FAILED'
+      || original.proofKind !== diagnostic.proofKind
+      || !sameDigest(original.candidateArtifactDigest, diagnostic.candidateArtifactDigest)
+      || diagnostic.completedAtEpochMs < original.completedAtEpochMs
+    ) {
+      throw new DeterministicFailureHistoryInputError()
+    }
+  }
+
+  for (const resolution of request.resolutions) {
+    const original = runsById.get(resolution.originalFailureRunId)
+    const replacement = runsById.get(resolution.replacementQualificationRunId)
+    if (
+      original?.kind !== 'QUALIFICATION'
+      || original.status !== 'FAILED'
+      || replacement?.kind !== 'QUALIFICATION'
+      || replacement.status !== 'PASSED'
+      || replacement.proofKind !== original.proofKind
+      || sameDigest(replacement.candidateArtifactDigest, original.candidateArtifactDigest)
+      || !sameDigest(replacement.candidateArtifactDigest, request.candidateArtifactDigest)
+      || replacement.completedAtEpochMs < original.completedAtEpochMs
+      || resolution.resolvedAtEpochMs < replacement.completedAtEpochMs
+    ) {
+      throw new DeterministicFailureHistoryInputError()
+    }
+  }
+
+  const resolvedFailureRunIds = new Set(
+    request.resolutions.map(resolution => resolution.originalFailureRunId),
+  )
+
+  const proofKinds = DETERMINISTIC_RELEASE_PROOF_KINDS.filter(proofKind => (
+    request.requiredProofKinds.includes(proofKind)
+  ))
+  const proofHistories: Array<z.infer<typeof deterministicFailureProofHistoryV1Schema>>
+    = proofKinds.map(proofKind => {
+    const proofQualifications = qualifications
+      .filter(run => run.proofKind === proofKind)
+      .sort(compareDeterministicRuns)
+    const candidateQualifications = proofQualifications.filter(run => (
+      sameDigest(run.candidateArtifactDigest, request.candidateArtifactDigest)
+    ))
+    if (candidateQualifications.length > 1) {
+      throw new DeterministicFailureHistoryInputError()
+    }
+    const candidateQualification = candidateQualifications[0]
+    const failedQualificationRunIds = proofQualifications
+      .filter(run => run.status === 'FAILED')
+      .map(run => run.runId)
+    const resolvedProofFailureRunIds = failedQualificationRunIds.filter(runId => (
+      resolvedFailureRunIds.has(runId)
+    ))
+    const unresolvedFailureRunIds = failedQualificationRunIds.filter(runId => (
+      !resolvedFailureRunIds.has(runId)
+    ))
+    const diagnosticRerunIds = diagnostics
+      .filter(run => run.proofKind === proofKind)
+      .sort(compareDeterministicRuns)
+      .map(run => run.runId)
+    const candidateQualificationStatus = candidateQualification?.status ?? 'MISSING'
+    const verificationStatus = unresolvedFailureRunIds.length > 0
+      ? 'FAILED'
+      : candidateQualificationStatus === 'PASSED'
+        ? 'PASSED'
+        : 'INCONCLUSIVE'
+    return {
+      proofKind,
+      candidateQualificationRunId: candidateQualification?.runId ?? null,
+      candidateQualificationStatus,
+      diagnosticRerunIds,
+      resolvedFailureRunIds: resolvedProofFailureRunIds,
+      unresolvedFailureRunIds,
+      verificationStatus,
+    }
+  })
+  const unresolvedFailureCount = proofHistories.reduce(
+    (count, history) => count + history.unresolvedFailureRunIds.length,
+    0,
+  )
+  const decision = proofHistories.some(history => history.verificationStatus === 'FAILED')
+    ? 'BLOCKED'
+    : proofHistories.some(history => history.verificationStatus === 'INCONCLUSIVE')
+      ? 'INCONCLUSIVE'
+      : 'VERIFIED'
+  const result: DeterministicFailureHistoryV1 = {
+    schemaVersion: 1,
+    engineId: DETERMINISTIC_FAILURE_HISTORY_ENGINE_ID,
+    evaluatedAtEpochMs: request.evaluatedAtEpochMs,
+    candidateArtifactDigest: request.candidateArtifactDigest,
+    requiredProofKinds: proofKinds,
+    proofHistories,
+    unresolvedFailureCount,
+    decision,
+  }
+  return deepFreeze(deterministicFailureHistoryV1Schema.parse(result))
 }
