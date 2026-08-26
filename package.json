@@ -41,6 +41,10 @@
       "types": "./lib/types/workbench-remote.d.ts",
       "default": "./lib/workbench-remote.js"
     },
+    "./invariant": {
+      "types": "./lib/types/invariant.d.ts",
+      "default": "./lib/invariant.js"
+    },
     "./typert": {
       "types": "./lib/typert.host.d.ts",
       "default": "./lib/typert.host.js"
@@ -65,6 +69,7 @@
     "lib/control-plane-provider.js",
     "lib/host-repository-provider.js",
     "lib/workbench-remote.js",
+    "lib/invariant.js",
     "lib/typert.host.js",
     "lib/typert.host.d.ts",
     "lib/typert.remote-client.js",
@@ -91,6 +96,8 @@
     "lib/types/host-repository-provider.d.ts.map",
     "lib/types/workbench-remote.d.ts",
     "lib/types/workbench-remote.d.ts.map",
+    "lib/types/invariant.d.ts",
+    "lib/types/invariant.d.ts.map",
     "cordis.patch.yml",
     "README.md"
   ],

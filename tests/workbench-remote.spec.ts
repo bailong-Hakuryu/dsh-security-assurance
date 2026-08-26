@@ -349,7 +349,6 @@ describe('Security Assurance Workbench Remote', () => {
         checks: expect.arrayContaining([
           expect.objectContaining({ id: 'persistence.sqlite', status: 'PASS', required: true }),
           expect.objectContaining({ id: 'runtime.node', status: 'PASS', required: true }),
-          expect.objectContaining({ id: 'compatibility.harness', status: 'NOT_EVALUATED', required: false }),
         ]),
       },
     })

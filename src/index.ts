@@ -231,12 +231,22 @@ function interruption<T>(options: InvocationOptions): SecurityResult<T> | undefi
 }
 
 type ServiceLifecycleState = 'ACTIVE' | 'QUIESCING' | 'STOPPED'
+type HarnessVerificationResult = 'PASS' | 'FAIL' | 'PENDING_INVARIANT'
+
+interface HarnessVerificationCheck {
+  readonly id: string
+  readonly status: 'PASS' | 'FAIL'
+  readonly required: boolean
+  readonly message: string
+}
 
 function buildRuntimeHealth(
   persistenceReady: boolean,
   lifecycleState: ServiceLifecycleState,
   actualNodeVersion: string,
   nodeSupported: boolean,
+  harnessVerification: HarnessVerificationResult,
+  harnessVerificationChecks: readonly HarnessVerificationCheck[],
 ): RuntimeHealthSnapshot {
   const mutationsAdmitted = nodeSupported && persistenceReady
   const state = lifecycleState === 'ACTIVE'
@@ -252,7 +262,7 @@ function buildRuntimeHealth(
       targetHarnessVersion: TARGET_HARNESS_VERSION,
       requiredNodeRange: REQUIRED_NODE_RANGE,
       actualNodeVersion,
-      harnessVerification: 'PENDING_INVARIANT',
+      harnessVerification,
     },
     state,
     admission: {
@@ -277,12 +287,7 @@ function buildRuntimeHealth(
           ? `Node ${actualNodeVersion} satisfies ${REQUIRED_NODE_RANGE}.`
           : `Node ${actualNodeVersion} does not satisfy ${REQUIRED_NODE_RANGE}.`,
       },
-      {
-        id: 'compatibility.harness',
-        status: 'NOT_EVALUATED',
-        required: false,
-        message: 'The dormant invariant entry will verify the exact Harness composition.',
-      },
+      ...harnessVerificationChecks,
     ],
   })
 }
@@ -404,6 +409,8 @@ export class SecurityAssuranceService extends Service {
   private exportDeliveryWake: (() => void) | undefined
   private lifecycleState: ServiceLifecycleState = 'ACTIVE'
   private disposed = false
+  private harnessVerification: HarnessVerificationResult = 'PENDING_INVARIANT'
+  private harnessVerificationChecks: readonly HarnessVerificationCheck[] = []
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'securityAssurance')
@@ -483,6 +490,19 @@ export class SecurityAssuranceService extends Service {
         options: InvocationOptions,
       ) => this.executeControlPlaneProviderOperation(invocation, operation, options),
     })
+
+    // Package-private symbol for receiving Harness verification results from the invariant entry
+    const RECEIVE_HARNESS_VERIFICATION = Symbol.for('dsh-security-assurance:receive-harness-verification')
+    Object.defineProperty(this, RECEIVE_HARNESS_VERIFICATION, {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: (result: HarnessVerificationResult, checks: readonly HarnessVerificationCheck[]) => {
+        this.harnessVerification = result
+        this.harnessVerificationChecks = checks
+      },
+    })
+
     void this.ready.catch(() => {})
     void this.ready.then(persistence => {
       if (!this.admitsMutations(persistence)) return
@@ -560,6 +580,8 @@ export class SecurityAssuranceService extends Service {
           this.lifecycleState,
           this.actualNodeVersion,
           this.runtimeCompatible,
+          this.harnessVerification,
+          this.harnessVerificationChecks,
         ),
       })
     } catch {
