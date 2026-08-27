@@ -11,7 +11,6 @@ import { referenceHostInvocation } from './support/reference-host.ts'
 const PUBLIC_METHODS = [
   'whenReady',
   'registerAnalyzer',
-  'registerAnalyzerQualification',
   'getHealth',
   'getCatalog',
   'registerRepository',

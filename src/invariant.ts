@@ -24,7 +24,6 @@ const INVARIANT_ENTRY_NAME = 'dsh-security-assurance/invariant'
 const REQUIRED_PUBLIC_METHODS = Object.freeze([
   'whenReady',
   'registerAnalyzer',
-  'registerAnalyzerQualification',
   'getHealth',
   'getCatalog',
   'registerRepository',

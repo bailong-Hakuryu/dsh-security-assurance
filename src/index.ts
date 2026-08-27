@@ -92,10 +92,9 @@ import type {
 import type {
   AnalyzerDescriptorV1,
   AnalyzerFactoryV1,
-  AnalyzerQualificationRecordV1,
-  AnalyzerQualificationRegistrationDisposer,
   AnalyzerRegistrationDisposer,
 } from './analyzer.ts'
+import { REGISTER_ANALYZER_QUALIFICATION } from './internal/analyzer-qualification-registration.ts'
 import {
   RESOLVE_TRUSTED_INVOCATION,
   SecurityAuthorityResolver,
@@ -426,6 +425,15 @@ export class SecurityAssuranceService extends Service {
       writable: false,
       value: (channel: TrustedCallerChannel) => this.authorityResolver.resolve(channel),
     })
+    Object.defineProperty(this, REGISTER_ANALYZER_QUALIFICATION, {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: (record: unknown) => {
+        if (this.disposed) throw new TypeError('Security Assurance is disposed')
+        return this.analyzerRegistry.registerQualification(record)
+      },
+    })
     this.ready = this.initialize(parsedConfig.data)
     Object.defineProperty(this, LOOKUP_CONTROL_PLANE_ASSESSMENT, {
       configurable: false,
@@ -558,14 +566,6 @@ export class SecurityAssuranceService extends Service {
   ): AnalyzerRegistrationDisposer {
     if (this.disposed) throw new TypeError('Security Assurance is disposed')
     return this.analyzerRegistry.register(descriptor, factory)
-  }
-
-  /** Register one Host-trusted Qualification candidate during startup composition. */
-  registerAnalyzerQualification(
-    record: AnalyzerQualificationRecordV1,
-  ): AnalyzerQualificationRegistrationDisposer {
-    if (this.disposed) throw new TypeError('Security Assurance is disposed')
-    return this.analyzerRegistry.registerQualification(record)
   }
 
   /** Return a bounded authorized Runtime Health Snapshot. */

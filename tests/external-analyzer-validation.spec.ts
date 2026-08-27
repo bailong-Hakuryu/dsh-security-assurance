@@ -18,6 +18,7 @@ import type {
   AssessmentId,
   SecurityInvocation,
 } from '../src/index.ts'
+import { registerAnalyzerQualification } from '../src/internal/analyzer-qualification-registration.ts'
 import {
   referenceHostInvocation,
   referenceHostInvocationWithPermissions,
@@ -251,7 +252,7 @@ async function runReferenceValidationScenario<Observation = undefined>(
       async dispose() {},
     }),
   )
-  const disposeQualification = ctx.securityAssurance.registerAnalyzerQualification(qualification)
+  const disposeQualification = registerAnalyzerQualification(ctx.securityAssurance, qualification)
   let registrationsDisposed = false
 
   const disposeRegistrations = () => {

@@ -1035,7 +1035,7 @@ if (ctx.reflect.get('securityAssurance') === undefined) {
 }
 if (
   typeof ctx.securityAssurance.registerAnalyzer !== 'function'
-  || typeof ctx.securityAssurance.registerAnalyzerQualification !== 'function'
+  || typeof ctx.securityAssurance.registerAnalyzerQualification !== 'undefined'
   || typeof ctx.securityAssurance.listAssessments !== 'function'
   || typeof ctx.securityAssurance.getFinding !== 'function'
   || typeof ctx.securityAssurance.getEvidenceView !== 'function'
@@ -1043,7 +1043,13 @@ if (
   || typeof ctx.securityAssurance.requestExport !== 'function'
   || typeof ctx.securityAssurance.getExport !== 'function'
 ) {
-  throw new Error('Cordis activation did not expose Finding/Evidence/Risk Decision or local Analyzer composition')
+  throw new Error('Cordis activation exposed an invalid Security Service operation surface')
+}
+if (
+  'registerAnalyzerQualification' in root
+  || 'REGISTER_ANALYZER_QUALIFICATION' in root
+) {
+  throw new Error('packed root entry leaked the package-private Qualification protocol')
 }
 const modelToolsFiber = ctx.plugin(modelTools.default)
 await modelToolsFiber

@@ -11,6 +11,7 @@ import type {
   AssessmentId,
   SecurityInvocation,
 } from '../src/index.ts'
+import { registerAnalyzerQualification } from '../src/internal/analyzer-qualification-registration.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
 const run = promisify(execFile)
@@ -372,15 +373,15 @@ describe('external Analyzer composition', () => {
         },
         async dispose() {},
       }))
-      expect(() => ctx.securityAssurance.registerAnalyzerQualification({
+      expect(() => registerAnalyzerQualification(ctx.securityAssurance, {
         ...qualification,
         analyzerIdentity: {
           ...qualification.analyzerIdentity,
           analyzerVersion: '2.0.0',
         },
       })).toThrow('Analyzer Qualification digest does not bind its canonical record')
-      disposeQualification = ctx.securityAssurance.registerAnalyzerQualification(qualification)
-      expect(() => ctx.securityAssurance.registerAnalyzerQualification(qualification)).toThrow(
+      disposeQualification = registerAnalyzerQualification(ctx.securityAssurance, qualification)
+      expect(() => registerAnalyzerQualification(ctx.securityAssurance, qualification)).toThrow(
         `Analyzer Qualification '${qualification.qualificationId}' conflicts with an existing registration`,
       )
       expect(Object.isFrozen(qualification)).toBe(false)
@@ -571,7 +572,7 @@ describe('external Analyzer composition', () => {
         async dispose() {},
       }),
     )
-    const disposeQualification = ctx.securityAssurance.registerAnalyzerQualification(qualification)
+    const disposeQualification = registerAnalyzerQualification(ctx.securityAssurance, qualification)
 
     try {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
