@@ -37,6 +37,10 @@ import type {
   StartPreflightV1,
 } from '../../contracts.ts'
 import type { WORKBENCH_LOCALE_NAMESPACE } from './locales.ts'
+import {
+  projectAssessmentActionAvailabilityV1,
+  selectAssessmentAvailableActionV1,
+} from './actions.ts'
 import { projectWorkbenchRouteStateV1 } from './navigation.ts'
 import { projectAssessmentProgressViewV1 } from './progress.ts'
 import type { WorkbenchPresentationSnapshotV1 } from './presentation.ts'
@@ -1144,6 +1148,7 @@ function AssessmentDetail({
   const bundleAvailable = snapshot.state === 'SEALED'
     && snapshot.seal !== null
     && snapshot.verdict !== null
+  const actionAvailability = projectAssessmentActionAvailabilityV1(snapshot)
   return (
     <div className="dsh-security-assessment">
       <div className="dsh-security-assessment__heading">
@@ -1216,11 +1221,11 @@ function AssessmentDetail({
           <h2 id="dsh-security-actions-title">{t('label.availableActions')}</h2>
         </div>
         <p className="dsh-security-readonly-note">{t('actions.readOnly')}</p>
-        {snapshot.availableActions.length === 0
-          ? <p className="dsh-security-muted">{t('value.noActions')}</p>
+        {actionAvailability.actions.length === 0
+          ? <p className="dsh-security-muted">{t('actions.noneProjected')}</p>
           : (
               <ul className="dsh-security-actions">
-                {snapshot.availableActions.map(action => (
+                {actionAvailability.actions.map(action => (
                   <li key={actionKey(action)}>
                     <code>{action.kind}</code>
                     <span>{actionDescription(action, t)}</span>
@@ -1404,11 +1409,170 @@ function AssessmentRoleCardsPanel({
                           </ul>
                         )}
                   </div>
+                  <AssessmentRoleDetailPanel card={card} t={t} />
                 </article>
               ))}
             </div>
           )}
     </section>
+  )
+}
+
+function AssessmentRoleDetailPanel({
+  card,
+  t,
+}: {
+  readonly card: NonNullable<AssessmentSnapshotV1['roleCards']>[number]
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  const detail = card.detail
+  const lane = card.analysisLane
+  if (detail === undefined && lane === undefined) return null
+
+  return (
+    <div className="dsh-security-role-detail">
+      <div className="dsh-security-role-detail__heading">
+        <strong>{t('roles.detailTitle')}</strong>
+        {detail !== undefined && <MachineBadge value={detail.status} />}
+      </div>
+      <p className="dsh-security-readonly-note">{t('roles.detailBoundary')}</p>
+      {lane?.kind === 'DEEP_INDEPENDENT' && (
+        <section className="dsh-security-deep-pass" aria-label={t('roles.deepPass')}>
+          <div className="dsh-security-role-detail__heading">
+            <strong>{t('roles.deepPass')}</strong>
+            <MachineBadge value={lane.currentPhase} />
+          </div>
+          <dl className="dsh-security-facts">
+            <Fact label={t('roles.passId')} value={lane.passId} machine />
+            <Fact label={t('roles.initialContributionState')} value={lane.initialContributionState} machine />
+            <Fact label={t('roles.peerVisibility')} value={lane.executionPeerVisibility} machine />
+          </dl>
+          <ol className="dsh-security-deep-pass__phases">
+            {(['INDEPENDENT_ANALYSIS', 'CHALLENGE', 'EVIDENCE_CONVERGENCE'] as const).map(phase => (
+              <li key={phase}>
+                <span>{t(`roles.phase.${phase}`)}</span>
+                <MachineBadge value={phase === lane.currentPhase ? 'CURRENT' : 'SEPARATE'} />
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+      {detail?.status === 'NOT_PUBLISHED' && (
+        <p className="dsh-security-muted">{t('roles.detailNotPublished')}</p>
+      )}
+      {detail?.status === 'PUBLISHED' && (
+        <div className="dsh-security-role-detail__published">
+          <dl className="dsh-security-facts">
+            <Fact label={t('roles.contribution')} value={detail.contribution.contributionId} machine />
+            <Fact label={t('roles.contributionVersion')} value={String(detail.contribution.contributionVersion)} />
+            <Fact label={t('roles.disposition')} value={detail.contribution.completionDisposition} machine />
+            <Fact
+              label={t('roles.resourceUse')}
+              value={detail.contribution.resourceUse.status === 'REPORTED'
+                ? `${detail.contribution.resourceUse.requests} requests · ${detail.contribution.resourceUse.tokens} tokens`
+                : detail.contribution.resourceUse.status}
+              machine
+            />
+          </dl>
+          <RoleDetailList title={t('roles.hypotheses')} values={detail.contribution.hypotheses} empty={t('roles.nonePublished')} />
+          <RoleDetailList title={t('roles.candidates')} values={detail.contribution.candidateIds} empty={t('roles.nonePublished')} machine />
+          <RoleDetailList title={t('roles.evidenceArtifacts')} values={detail.contribution.evidenceArtifactIds} empty={t('roles.nonePublished')} machine />
+          <RoleDetailList title={t('roles.evidenceRequests')} values={detail.contribution.evidenceRequestIds} empty={t('roles.nonePublished')} machine />
+          <RoleDetailList title={t('roles.uncertainty')} values={detail.contribution.uncertainty} empty={t('roles.nonePublished')} />
+          <RoleDetailList title={t('roles.limitations')} values={detail.contribution.limitations} empty={t('roles.nonePublished')} />
+          <div>
+            <strong className="dsh-security-progress__label">{t('roles.coverageObservations')}</strong>
+            {detail.contribution.coverageObservations.length === 0
+              ? <p className="dsh-security-muted">{t('roles.nonePublished')}</p>
+              : (
+                  <ul className="dsh-security-metadata-list">
+                    {detail.contribution.coverageObservations.map(observation => (
+                      <li key={observation.obligationId}>
+                        <code>{observation.obligationId}</code>
+                        <MachineBadge value={observation.state} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+          </div>
+          <div>
+            <strong className="dsh-security-progress__label">{t('roles.followUpRequests')}</strong>
+            {detail.followUpRequests.length === 0
+              ? <p className="dsh-security-muted">{t('roles.nonePublished')}</p>
+              : (
+                  <ul className="dsh-security-metadata-list">
+                    {detail.followUpRequests.map(request => (
+                      <li key={request.requestId}>
+                        <code>{request.requestId}</code>
+                        <MachineBadge value={request.disposition} />
+                        <span>{request.requestedRoleId} · {request.requiredCapabilityId}</span>
+                        <span>{request.reason}</span>
+                        {request.childAttemptId !== null && <code>{request.childAttemptId}</code>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+          </div>
+          <div>
+            <strong className="dsh-security-progress__label">{t('roles.challengePackages')}</strong>
+            {detail.challengePackages.length === 0
+              ? <p className="dsh-security-muted">{t('roles.nonePublished')}</p>
+              : (
+                  <ul className="dsh-security-metadata-list">
+                    {detail.challengePackages.map(challenge => (
+                      <li key={challenge.packageId}>
+                        <code>{challenge.packageId}</code>
+                        <MachineBadge value={challenge.state} />
+                        <span>{challenge.questionCount} · {challenge.targetAttemptId}</span>
+                        {challenge.response.status === 'ADMITTED' && (
+                          <span>{challenge.response.attemptId} · {challenge.response.disposition}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+          </div>
+          <dl className="dsh-security-facts">
+            <Fact label={t('roles.evidenceConvergence')} value={detail.evidenceConvergence.status} machine />
+            <Fact
+              label={t('roles.resolvedCandidates')}
+              value={`${detail.evidenceConvergence.resolvedCandidateCount} / ${detail.evidenceConvergence.unresolvedCandidateCount}`}
+            />
+            <Fact label={t('roles.transcript')} value={detail.transcript.status} machine />
+            {detail.transcript.status === 'PROTECTED_EVIDENCE' && (
+              <Fact label={t('roles.transcriptArtifact')} value={detail.transcript.artifactId} machine />
+            )}
+          </dl>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RoleDetailList({
+  title,
+  values,
+  empty,
+  machine = false,
+}: {
+  readonly title: string
+  readonly values: readonly string[]
+  readonly empty: string
+  readonly machine?: boolean
+}) {
+  return (
+    <div>
+      <strong className="dsh-security-progress__label">{title}</strong>
+      {values.length === 0
+        ? <p className="dsh-security-muted">{empty}</p>
+        : (
+            <ul className="dsh-security-metadata-list">
+              {values.map((value, index) => (
+                <li key={`${value}:${index}`}>{machine ? <code>{value}</code> : <span>{value}</span>}</li>
+              ))}
+            </ul>
+          )}
+    </div>
   )
 }
 
@@ -1435,8 +1599,8 @@ function BlockedRecoveryPanel({
 }) {
   const [reasonCode, setReasonCode] = useState('')
   const [reasonSummary, setReasonSummary] = useState('')
-  const resumeAction = snapshot.availableActions.find(action => action.kind === 'RESUME_ASSESSMENT')
-  const cancelAction = snapshot.availableActions.find(action => action.kind === 'CANCEL_ASSESSMENT')
+  const resumeAction = selectAssessmentAvailableActionV1(snapshot, 'RESUME_ASSESSMENT')
+  const cancelAction = selectAssessmentAvailableActionV1(snapshot, 'CANCEL_ASSESSMENT')
   const normalizedReason = {
     code: reasonCode.trim(),
     summary: reasonSummary.trim(),
@@ -1455,6 +1619,20 @@ function BlockedRecoveryPanel({
       <dl className="dsh-security-facts">
         <Fact label={t('recovery.blocker')} value={recovery.blocker.code} machine />
         <Fact label={t('recovery.phase')} value={recovery.blocker.phase} machine />
+        <Fact
+          label={t('recovery.attempt')}
+          value={recovery.attempt?.status === 'IDENTIFIED'
+            ? recovery.attempt.attemptId
+            : t('recovery.noAttempt')}
+          machine={recovery.attempt?.status === 'IDENTIFIED'}
+        />
+        <Fact
+          label={t('recovery.attemptLifecycle')}
+          value={recovery.attempt?.status === 'IDENTIFIED'
+            ? recovery.attempt.lifecycleState
+            : t('value.notAvailable')}
+          machine={recovery.attempt?.status === 'IDENTIFIED'}
+        />
         <Fact label={t('recovery.condition')} value={recovery.recovery.requiredCondition} machine />
         <Fact label={t('recovery.evidence')} value={recovery.evidence.status} machine />
         <Fact
@@ -1479,6 +1657,11 @@ function BlockedRecoveryPanel({
           value={recovery.recovery.coverageReconciliation.possibleVerdict ?? t('value.notAvailable')}
           machine={recovery.recovery.coverageReconciliation.possibleVerdict !== null}
         />
+        <Fact
+          label={t('recovery.eligibility')}
+          value={recovery.recovery.remainingEligibility?.status ?? t('value.notAvailable')}
+          machine={recovery.recovery.remainingEligibility !== undefined}
+        />
       </dl>
       <div>
         <strong className="dsh-security-recovery__label">{t('recovery.obligations')}</strong>
@@ -1495,6 +1678,25 @@ function BlockedRecoveryPanel({
               </ul>
             )}
       </div>
+      {recovery.recovery.remainingEligibility?.status === 'ELIGIBLE_FOR_CALLER' && (
+        <div>
+          <strong className="dsh-security-recovery__label">{t('recovery.eligibleActions')}</strong>
+          <ul className="dsh-security-metadata-list">
+            {recovery.recovery.remainingEligibility.actionKinds.map(kind => (
+              <li key={kind}><code>{kind}</code></li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {recovery.recovery.remainingEligibility?.status === 'NO_ACTION_FOR_CALLER' && (
+        <p className="dsh-security-recovery__no-action">
+          <strong>{t('recovery.noAction')}</strong>
+          <span>{recovery.recovery.remainingEligibility.reason}</span>
+          {recovery.recovery.coverageReconciliation.required && (
+            <span>{t('recovery.noBypass')}</span>
+          )}
+        </p>
+      )}
       {(resumeAction !== undefined || cancelAction !== undefined) && (
         <div className="dsh-security-recovery__form">
           <label className="dsh-security-risk-decision__field">

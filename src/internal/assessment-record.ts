@@ -90,6 +90,11 @@ export const internalAssessmentRecordV1Schema = z.strictObject({
   submission: securityAssuranceSubmissionV1Schema.nullable(),
   publicationDigest: digestEnvelopeV1Schema.nullable(),
   failureCode: z.string().nullable(),
+  blockingAttempt: z.strictObject({
+    attemptId: z.string().min(1).max(384).regex(/^[a-zA-Z0-9._:/-]+$/),
+    attemptKind: z.literal('ASSESSMENT_EXECUTION'),
+    lifecycleState: z.enum(['FAILED', 'INTERRUPTED']),
+  }).nullable().default(null),
   riskDecisionWindow: riskDecisionWindowV1Schema.nullable().default(null),
   riskDecisions: z.array(riskDecisionRecordV1Schema).max(1024).default([]),
   operatorActions: z.array(z.strictObject({
@@ -140,7 +145,7 @@ export function publicAssessmentSnapshot(
       digest: record.contract.policy.digest,
     },
     coverage: record.coverage,
-    blockedRecovery: projectBlockedRecovery(record),
+    blockedRecovery: projectBlockedRecovery(record, availableActions),
     availableActions,
     roleCards: record.roleCards,
     verdict: record.verdict,
@@ -152,6 +157,7 @@ export function publicAssessmentSnapshot(
 
 function projectBlockedRecovery(
   record: InternalAssessmentRecordV1,
+  availableActions: readonly AssessmentAvailableActionV1[],
 ): AssessmentSnapshotV1['blockedRecovery'] {
   if (record.state !== 'BLOCKED') return null
   if (record.failureCode === null) {
@@ -160,6 +166,7 @@ function projectBlockedRecovery(
   const riskDecision = record.failureCode === 'RISK_DECISION_WINDOW'
   const hostRestart = record.failureCode === 'HOST_RESTART_DURING_EVALUATION'
   const coverageReconciliationRequired = record.coverage.status === 'GAP'
+  const actionKinds = [...new Set(availableActions.map(action => action.kind))]
   return {
     schemaVersion: 1,
     blocker: {
@@ -175,6 +182,9 @@ function projectBlockedRecovery(
           reason: resolution.reason,
         })),
     },
+    attempt: record.blockingAttempt === null
+      ? { status: 'NOT_APPLICABLE' }
+      : { status: 'IDENTIFIED', ...record.blockingAttempt },
     evidence: {
       status: 'RETAINED',
       publishedArtifactCount: record.riskDecisionWindow?.evidenceReceipts.length ?? null,
@@ -186,6 +196,16 @@ function projectBlockedRecovery(
           ? 'EXPLICIT_RESUME_REQUIRED'
           : 'EXTERNAL_INTERVENTION_REQUIRED',
       remainingExecutionBudget: { status: 'NOT_REPORTED' },
+      remainingEligibility: actionKinds.length > 0
+        ? { status: 'ELIGIBLE_FOR_CALLER', actionKinds }
+        : {
+            status: 'NO_ACTION_FOR_CALLER',
+            reason: riskDecision
+              ? 'AUTHORITY_REQUIRED'
+              : coverageReconciliationRequired
+                ? 'COVERAGE_RECONCILIATION_REQUIRED'
+                : 'EXTERNAL_INTERVENTION_REQUIRED',
+          },
       coverageReconciliation: {
         required: coverageReconciliationRequired,
         possibleVerdict: coverageReconciliationRequired ? 'INDETERMINATE' : null,

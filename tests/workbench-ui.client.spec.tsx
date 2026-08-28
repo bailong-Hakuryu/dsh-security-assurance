@@ -128,10 +128,20 @@ function readySnapshot(id: AssessmentId): AssessmentSnapshotV1 {
           { obligationId: 'security/secrets', reason: 'EVIDENCE_INELIGIBLE' },
         ],
       },
+      attempt: {
+        status: 'IDENTIFIED',
+        attemptId: `${id}:assessment-execution:6`,
+        attemptKind: 'ASSESSMENT_EXECUTION',
+        lifecycleState: 'FAILED',
+      },
       evidence: { status: 'RETAINED', publishedArtifactCount: null },
       recovery: {
         requiredCondition: 'EXPLICIT_RESUME_REQUIRED',
         remainingExecutionBudget: { status: 'NOT_REPORTED' },
+        remainingEligibility: {
+          status: 'ELIGIBLE_FOR_CALLER',
+          actionKinds: ['RESUME_ASSESSMENT', 'CANCEL_ASSESSMENT'],
+        },
         coverageReconciliation: { required: true, possibleVerdict: 'INDETERMINATE' },
       },
     },
@@ -178,6 +188,97 @@ function readySnapshot(id: AssessmentId): AssessmentSnapshotV1 {
         relatedAttemptId: 'role-attempt-00000000-0000-0000-0000-000000000008',
         relation: 'CHALLENGED_BY',
       }],
+    }, {
+      schemaVersion: 1,
+      roleDefinition: {
+        roleId: 'attack-path-analyst',
+        roleVersion: '1.0.0',
+        definitionDigest: digest,
+        independenceClass: 'DISTINCT_PROVIDER_OR_MODEL_FAMILY',
+      },
+      attempt: {
+        attemptId: 'role-attempt-00000000-0000-0000-0000-000000000009',
+        parentAttemptId: null,
+        lifecycleState: 'COMPLETED',
+        startedAt: '2026-08-24T00:01:00.000Z',
+        completedAt: '2026-08-24T00:06:00.000Z',
+      },
+      provider: {
+        providerId: 'provider/deep-reference',
+        modelId: 'model/deep-reference-v1',
+        movingProvider: false,
+      },
+      budget: {
+        status: 'REPORTED',
+        requestLimit: 6,
+        requestsUsed: 5,
+        tokenLimit: 12_000,
+        tokensUsed: 9_500,
+      },
+      milestones: [{
+        milestoneId: 'INITIAL_CONTRIBUTION_FROZEN',
+        state: 'REACHED',
+        recordedAt: '2026-08-24T00:03:00.000Z',
+      }],
+      evidenceCount: 2,
+      candidateCount: 1,
+      completionDisposition: 'COMPLETE',
+      challengeRelations: [{
+        relatedAttemptId: 'role-attempt-00000000-0000-0000-0000-000000000007',
+        relation: 'CHALLENGES',
+      }],
+      analysisLane: {
+        kind: 'DEEP_INDEPENDENT',
+        passId: 'deep-pass-reference-v1',
+        initialContributionState: 'FROZEN',
+        executionPeerVisibility: 'FROZEN_CONTRIBUTIONS_ONLY',
+        currentPhase: 'EVIDENCE_CONVERGENCE',
+      },
+      detail: {
+        schemaVersion: 1,
+        status: 'PUBLISHED',
+        contribution: {
+          contributionId: 'role-contribution-00000000-0000-0000-0000-000000000009',
+          contributionVersion: 1,
+          hypotheses: ['Untrusted template output reaches an executable browser context.'],
+          candidateIds: [`candidate-${'9'.repeat(64)}`],
+          coverageObservations: [{ obligationId: 'security/sast', state: 'GAP' }],
+          evidenceArtifactIds: ['evidence-deep-reference'],
+          evidenceRequestIds: ['request-template-context'],
+          challenges: [{ challengeId: 'challenge-template-context', disposition: 'PROOF_GAP' }],
+          uncertainty: ['The final rendering context remains unproven.'],
+          limitations: ['No production request corpus was available.'],
+          resourceUse: { status: 'REPORTED', requests: 5, tokens: 9_500 },
+          completionDisposition: 'COMPLETE',
+        },
+        followUpRequests: [{
+          requestId: 'follow-up-00000000-0000-0000-0000-000000000009',
+          unresolvedObligationId: 'security/template-context',
+          requestedRoleId: 'validation-analyst',
+          requiredCapabilityId: 'capability/render-context-proof',
+          evidenceArtifactIds: ['evidence-deep-reference'],
+          reason: 'Validate the final browser rendering context.',
+          disposition: 'ADMITTED',
+          childAttemptId: 'role-attempt-00000000-0000-0000-0000-000000000010',
+        }],
+        challengePackages: [{
+          packageId: 'challenge-package-00000000-0000-0000-0000-000000000009',
+          targetAttemptId: 'role-attempt-00000000-0000-0000-0000-000000000007',
+          state: 'RESPONDED',
+          questionCount: 2,
+          response: {
+            status: 'ADMITTED',
+            attemptId: 'role-attempt-00000000-0000-0000-0000-000000000007',
+            disposition: 'PROOF_GAP',
+          },
+        }],
+        evidenceConvergence: {
+          status: 'IN_PROGRESS',
+          resolvedCandidateCount: 0,
+          unresolvedCandidateCount: 1,
+        },
+        transcript: { status: 'PROTECTED_EVIDENCE', artifactId: 'transcript-deep-reference' },
+      },
     }],
     verdict: null,
     seal: null,
@@ -1420,14 +1521,23 @@ describe('Security Assurance Workbench UI', () => {
       })
     })
 
+    expect(b.controller.getState()).toMatchObject({
+      kind: 'READY',
+      snapshot: {
+        roleCards: [{}, {
+          detail: { status: 'PUBLISHED' },
+          analysisLane: { kind: 'DEEP_INDEPENDENT' },
+        }],
+      },
+    })
     expect(overlay.view.getByText(id)).toBeTruthy()
     expect(overlay.view.getAllByText('BLOCKED').length).toBeGreaterThanOrEqual(2)
     expect(overlay.view.getAllByText('GAP').length).toBeGreaterThanOrEqual(1)
     expect(overlay.view.getByText('0 / 2')).toBeTruthy()
     expect(overlay.view.getByText('security/standard')).toBeTruthy()
     expect(overlay.view.getAllByText('尚未生成')).toHaveLength(2)
-    expect(overlay.view.getByText('RESUME_ASSESSMENT')).toBeTruthy()
-    expect(overlay.view.getByText('CANCEL_ASSESSMENT')).toBeTruthy()
+    expect(overlay.view.getAllByText('RESUME_ASSESSMENT').length).toBeGreaterThanOrEqual(1)
+    expect(overlay.view.getAllByText('CANCEL_ASSESSMENT').length).toBeGreaterThanOrEqual(1)
     expect(overlay.view.getByRole('heading', { name: '阻塞恢复' })).toBeTruthy()
     expect(overlay.view.getAllByText('ASSESSMENT_EXECUTION_FAILED').length).toBeGreaterThanOrEqual(1)
     expect(overlay.view.getByText('EXPLICIT_RESUME_REQUIRED')).toBeTruthy()
@@ -1437,8 +1547,21 @@ describe('Security Assurance Workbench UI', () => {
     expect(overlay.view.getByRole('heading', { name: '修订绑定的评估进度' })).toBeTruthy()
     expect(overlay.view.getByText('SUBJECT_FREEZE')).toBeTruthy()
     expect(overlay.view.getByRole('heading', { name: '角色卡' })).toBeTruthy()
-    expect(overlay.view.getByText(/validation-analyst/u)).toBeTruthy()
+    expect(overlay.view.getByText('validation-analyst@1.0.0')).toBeTruthy()
     expect(overlay.view.getByText('CHALLENGED_BY')).toBeTruthy()
+    const roleDetail = overlay.view.getByText('不可变 Role Detail').closest('.dsh-security-role-detail')
+    expect(roleDetail).toBeTruthy()
+    expect(roleDetail?.textContent).toContain('Deep 独立分析通道')
+    expect(roleDetail?.textContent).toContain('初始 Contributions')
+    expect(roleDetail?.textContent).toContain('Challenge Packages')
+    expect(roleDetail?.textContent).toContain('Evidence Convergence')
+    expect(roleDetail?.textContent).toContain('role-contribution-00000000-0000-0000-0000-000000000009')
+    expect(roleDetail?.textContent).toContain('follow-up-00000000-0000-0000-0000-000000000009')
+    expect(roleDetail?.textContent).toContain('challenge-package-00000000-0000-0000-0000-000000000009')
+    expect(roleDetail?.textContent).toContain('transcript-deep-reference')
+    expect(roleDetail?.querySelector('button,input,textarea,select')).toBeNull()
+    expect(overlay.view.getByText(`${id}:assessment-execution:6`)).toBeTruthy()
+    expect(overlay.view.getByText('ELIGIBLE_FOR_CALLER')).toBeTruthy()
     expect(overlay.view.getAllByText('EVIDENCE_INELIGIBLE').length).toBeGreaterThanOrEqual(1)
     expect(overlay.view.getByText('操作入口严格来自 Security Service 快照；仅已实现的治理表单可提交。')).toBeTruthy()
     expect(overlay.view.getByRole('button', { name: '查看 Findings' })).toBeTruthy()

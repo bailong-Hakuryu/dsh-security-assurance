@@ -730,6 +730,7 @@ export class SecurityPersistence {
         submission: null,
         publicationDigest: null,
         failureCode: null,
+        blockingAttempt: null,
         riskDecisionWindow: null,
         riskDecisions: [],
         operatorActions: [],
@@ -932,6 +933,7 @@ export class SecurityPersistence {
         submission: null,
         publicationDigest: null,
         failureCode: null,
+        blockingAttempt: null,
         pendingCancellation: null,
         operatorActions: [
           ...current.operatorActions,
@@ -1105,6 +1107,7 @@ export class SecurityPersistence {
         submission: null,
         publicationDigest: null,
         failureCode: null,
+        blockingAttempt: null,
         updatedAt: committedAt,
       })
       this.commitAssessmentRevision(canceled, 'assessment_canceled', committedAt)
@@ -1148,6 +1151,7 @@ export class SecurityPersistence {
         submission: input.submission,
         publicationDigest: input.publicationDigest,
         failureCode: null,
+        blockingAttempt: null,
         updatedAt: committedAt,
       })
       this.commitAssessmentRevision(sealed, 'assessment_sealed', committedAt)
@@ -1187,6 +1191,7 @@ export class SecurityPersistence {
         evaluationTrace: input.outcome.evaluationTrace,
         verdict: null,
         failureCode: 'RISK_DECISION_WINDOW',
+        blockingAttempt: null,
         riskDecisionWindow: {
           schemaVersion: 1,
           state: 'OPEN',
@@ -1450,6 +1455,13 @@ export class SecurityPersistence {
         assessmentRevision: current.assessmentRevision + 1,
         state: 'BLOCKED',
         failureCode,
+        blockingAttempt: {
+          attemptId: `${assessmentId}:assessment-execution:${expectedAssessmentRevision}`,
+          attemptKind: 'ASSESSMENT_EXECUTION',
+          lifecycleState: failureCode === 'HOST_RESTART_DURING_EVALUATION'
+            ? 'INTERRUPTED'
+            : 'FAILED',
+        },
         updatedAt: committedAt,
       })
       this.commitAssessmentRevision(blocked, 'assessment_blocked', committedAt)

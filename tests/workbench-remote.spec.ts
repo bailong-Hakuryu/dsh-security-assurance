@@ -876,10 +876,15 @@ describe('Security Assurance Workbench Remote', () => {
             phase: 'RISK_DECISION',
             interruption: 'GOVERNANCE_HOLD',
           },
+          attempt: { status: 'NOT_APPLICABLE' },
           evidence: { status: 'RETAINED', publishedArtifactCount: expect.any(Number) },
           recovery: {
             requiredCondition: 'RISK_DECISION_REQUIRED',
             remainingExecutionBudget: { status: 'NOT_REPORTED' },
+            remainingEligibility: {
+              status: 'ELIGIBLE_FOR_CALLER',
+              actionKinds: ['RECORD_RISK_DECISION'],
+            },
           },
         },
         availableActions: [{

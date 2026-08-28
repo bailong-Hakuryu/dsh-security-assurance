@@ -1804,6 +1804,86 @@ describe('Security Assurance Workbench Client', () => {
     expect(JSON.stringify(cancelPayloads[0])).not.toContain('principalId')
   })
 
+  it('refetches the Service Snapshot after a stale projected action conflicts', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000085')
+    const displayed: AssessmentSnapshotV1 = {
+      ...snapshotAt(id, 4, 'BLOCKED'),
+      availableActions: [{ kind: 'CANCEL_ASSESSMENT', expectedAssessmentRevision: 4 }],
+    }
+    const refreshed: AssessmentSnapshotV1 = {
+      ...snapshotAt(id, 5, 'BLOCKED'),
+      availableActions: [],
+      updatedAt: '2026-08-24T00:05:00.000Z',
+    }
+    let assessmentReads = 0
+    const cancelPayloads: unknown[] = []
+    ctx.provide('connection', { rpc: { call(
+      _path: string,
+      endpoint: string,
+      payload: unknown,
+      signal: AbortSignal,
+    ): Promise<unknown> {
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        assessmentReads += 1
+        return Promise.resolve({
+          ok: true,
+          value: { ok: true, value: assessmentReads === 1 ? displayed : refreshed },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/waitForAssessmentRevision') {
+        return new Promise(resolve => {
+          signal.addEventListener('abort', () => {
+            resolve({ ok: false, error: { code: 'aborted' } })
+          }, { once: true })
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/cancelAssessment') {
+        cancelPayloads.push(payload)
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: false,
+            error: {
+              schemaVersion: 1,
+              code: 'CONFLICT',
+              message: 'The Assessment revision changed before the command was admitted.',
+              retryable: false,
+              correlationId: 'sec-00000000-0000-0000-0000-000000000085',
+            },
+          },
+        })
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } } } as never)
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-stale-action'),
+      assessmentId: id,
+    })
+    await expect(controller.cancelAssessment({
+      code: 'OPERATOR_CANCEL',
+      summary: 'Cancel only if the displayed Service revision is still current.',
+    })).resolves.toMatchObject({
+      kind: 'READY',
+      snapshot: { assessmentRevision: 5, availableActions: [] },
+      assessmentCommand: { kind: 'IDLE' },
+    })
+    expect(assessmentReads).toBe(2)
+    expect(cancelPayloads).toHaveLength(1)
+    expect(cancelPayloads[0]).toMatchObject({
+      args: { request: { assessmentId: id, expectedAssessmentRevision: 4 } },
+    })
+    expect(controller.getState()).not.toHaveProperty('failure')
+  })
+
   it('opens and reauthorizes the exact Runtime Health projection without browser derivation', async () => {
     const ctx = new Context()
     contexts.push(ctx)

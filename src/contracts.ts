@@ -1590,6 +1590,15 @@ export interface AssessmentBlockedRecoveryV1 {
       readonly reason: AssessmentCoverageResolutionV1['reason']
     }[]
   }
+  readonly attempt?:
+    | {
+        readonly status: 'IDENTIFIED'
+        readonly attemptId: string
+        readonly attemptKind: 'ASSESSMENT_EXECUTION'
+        readonly lifecycleState: 'FAILED' | 'INTERRUPTED'
+      }
+    | { readonly status: 'NOT_APPLICABLE' }
+    | undefined
   readonly evidence: {
     readonly status: 'RETAINED'
     /** Null means the current public model cannot prove a complete artifact count. */
@@ -1601,6 +1610,19 @@ export interface AssessmentBlockedRecoveryV1 {
       | 'RISK_DECISION_REQUIRED'
       | 'EXTERNAL_INTERVENTION_REQUIRED'
     readonly remainingExecutionBudget: { readonly status: 'NOT_REPORTED' }
+    readonly remainingEligibility?:
+      | {
+          readonly status: 'ELIGIBLE_FOR_CALLER'
+          readonly actionKinds: readonly AssessmentAvailableActionV1['kind'][]
+        }
+      | {
+          readonly status: 'NO_ACTION_FOR_CALLER'
+          readonly reason:
+            | 'AUTHORITY_REQUIRED'
+            | 'COVERAGE_RECONCILIATION_REQUIRED'
+            | 'EXTERNAL_INTERVENTION_REQUIRED'
+        }
+      | undefined
     readonly coverageReconciliation: {
       readonly required: boolean
       readonly possibleVerdict: 'INDETERMINATE' | null
@@ -1626,6 +1648,15 @@ export const assessmentBlockedRecoveryV1Schema: z.ZodType<AssessmentBlockedRecov
         ]),
       })).max(256),
     }),
+    attempt: z.discriminatedUnion('status', [
+      z.strictObject({
+        status: z.literal('IDENTIFIED'),
+        attemptId: z.string().min(1).max(384).regex(/^[a-zA-Z0-9._:/-]+$/),
+        attemptKind: z.literal('ASSESSMENT_EXECUTION'),
+        lifecycleState: z.enum(['FAILED', 'INTERRUPTED']),
+      }),
+      z.strictObject({ status: z.literal('NOT_APPLICABLE') }),
+    ]).optional(),
     evidence: z.strictObject({
       status: z.literal('RETAINED'),
       publishedArtifactCount: z.number().int().nonnegative().max(128).nullable(),
@@ -1637,6 +1668,24 @@ export const assessmentBlockedRecoveryV1Schema: z.ZodType<AssessmentBlockedRecov
         'EXTERNAL_INTERVENTION_REQUIRED',
       ]),
       remainingExecutionBudget: z.strictObject({ status: z.literal('NOT_REPORTED') }),
+      remainingEligibility: z.discriminatedUnion('status', [
+        z.strictObject({
+          status: z.literal('ELIGIBLE_FOR_CALLER'),
+          actionKinds: z.array(z.enum([
+            'RESUME_ASSESSMENT',
+            'CANCEL_ASSESSMENT',
+            'RECORD_RISK_DECISION',
+          ])).min(1).max(3),
+        }),
+        z.strictObject({
+          status: z.literal('NO_ACTION_FOR_CALLER'),
+          reason: z.enum([
+            'AUTHORITY_REQUIRED',
+            'COVERAGE_RECONCILIATION_REQUIRED',
+            'EXTERNAL_INTERVENTION_REQUIRED',
+          ]),
+        }),
+      ]).optional(),
       coverageReconciliation: z.strictObject({
         required: z.boolean(),
         possibleVerdict: z.literal('INDETERMINATE').nullable(),
@@ -1671,6 +1720,194 @@ export const securityRoleIdV1Schema = z.enum([
 ])
 
 export type SecurityRoleIdV1 = z.infer<typeof securityRoleIdV1Schema>
+
+export type AssessmentRoleAnalysisLaneV1 =
+  | { readonly kind: 'STANDARD' }
+  | {
+      readonly kind: 'DEEP_INDEPENDENT'
+      readonly passId: string
+      readonly initialContributionState: 'PENDING' | 'FROZEN'
+      readonly executionPeerVisibility: 'HIDDEN' | 'FROZEN_CONTRIBUTIONS_ONLY'
+      readonly currentPhase: 'INDEPENDENT_ANALYSIS' | 'CHALLENGE' | 'EVIDENCE_CONVERGENCE'
+    }
+
+export const assessmentRoleAnalysisLaneV1Schema: z.ZodType<AssessmentRoleAnalysisLaneV1> =
+  z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('STANDARD') }),
+    z.strictObject({
+      kind: z.literal('DEEP_INDEPENDENT'),
+      passId: boundedBindingId,
+      initialContributionState: z.enum(['PENDING', 'FROZEN']),
+      executionPeerVisibility: z.enum(['HIDDEN', 'FROZEN_CONTRIBUTIONS_ONLY']),
+      currentPhase: z.enum(['INDEPENDENT_ANALYSIS', 'CHALLENGE', 'EVIDENCE_CONVERGENCE']),
+    }),
+  ])
+
+export type AssessmentRoleDetailV1 =
+  | {
+      readonly schemaVersion: 1
+      readonly status: 'NOT_PUBLISHED'
+      readonly transcript: { readonly status: 'NOT_AVAILABLE' }
+    }
+  | {
+      readonly schemaVersion: 1
+      readonly status: 'PUBLISHED'
+      readonly contribution: {
+        readonly contributionId: string
+        readonly contributionVersion: number
+        readonly hypotheses: readonly string[]
+        readonly candidateIds: readonly string[]
+        readonly coverageObservations: readonly {
+          readonly obligationId: string
+          readonly state: 'SUPPORTED' | 'GAP' | 'UNRESOLVED'
+        }[]
+        readonly evidenceArtifactIds: readonly string[]
+        readonly evidenceRequestIds: readonly string[]
+        readonly challenges: readonly {
+          readonly challengeId: string
+          readonly disposition: 'CORROBORATES' | 'DISPUTES' | 'PROOF_GAP' | 'FOLLOW_UP_REQUESTED'
+        }[]
+        readonly uncertainty: readonly string[]
+        readonly limitations: readonly string[]
+        readonly resourceUse:
+          | { readonly status: 'NOT_REPORTED' }
+          | { readonly status: 'REPORTED'; readonly requests: number; readonly tokens: number }
+        readonly completionDisposition: 'COMPLETE' | 'PARTIAL' | 'FAILED' | 'CANCELED'
+      }
+      readonly followUpRequests: readonly {
+        readonly requestId: string
+        readonly unresolvedObligationId: string
+        readonly requestedRoleId: SecurityRoleIdV1
+        readonly requiredCapabilityId: string
+        readonly evidenceArtifactIds: readonly string[]
+        readonly reason: string
+        readonly disposition: 'PENDING' | 'ADMITTED' | 'REJECTED'
+        readonly childAttemptId: string | null
+      }[]
+      readonly challengePackages: readonly {
+        readonly packageId: string
+        readonly targetAttemptId: string
+        readonly state: 'ADMITTED' | 'RESPONDED'
+        readonly questionCount: number
+        readonly response:
+          | { readonly status: 'NOT_AVAILABLE' }
+          | {
+              readonly status: 'ADMITTED'
+              readonly attemptId: string
+              readonly disposition: 'CORROBORATES' | 'DISPUTES' | 'PROOF_GAP' | 'FOLLOW_UP_REQUESTED'
+            }
+      }[]
+      readonly evidenceConvergence: {
+        readonly status: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE'
+        readonly resolvedCandidateCount: number
+        readonly unresolvedCandidateCount: number
+      }
+      readonly transcript:
+        | { readonly status: 'NOT_AVAILABLE' }
+        | { readonly status: 'PROTECTED_EVIDENCE'; readonly artifactId: string }
+    }
+
+const roleAttemptIdV1Schema = z.string().regex(/^role-attempt-[0-9a-f-]{36}$/)
+const roleContributionIdV1Schema = z.string().regex(/^role-contribution-[0-9a-f-]{36}$/)
+const followUpRequestIdV1Schema = z.string().regex(/^follow-up-[0-9a-f-]{36}$/)
+const challengePackageIdV1Schema = z.string().regex(/^challenge-package-[0-9a-f-]{36}$/)
+const publicArtifactIdV1Schema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/)
+const boundedRoleTextV1Schema = z.string().min(1).max(2_048)
+
+export const assessmentRoleDetailV1Schema: z.ZodType<AssessmentRoleDetailV1> =
+  z.discriminatedUnion('status', [
+    z.strictObject({
+      schemaVersion: z.literal(1),
+      status: z.literal('NOT_PUBLISHED'),
+      transcript: z.strictObject({ status: z.literal('NOT_AVAILABLE') }),
+    }),
+    z.strictObject({
+      schemaVersion: z.literal(1),
+      status: z.literal('PUBLISHED'),
+      contribution: z.strictObject({
+        contributionId: roleContributionIdV1Schema,
+        contributionVersion: z.number().int().positive(),
+        hypotheses: z.array(boundedRoleTextV1Schema).max(128),
+        candidateIds: z.array(candidateIdSchema).max(256),
+        coverageObservations: z.array(z.strictObject({
+          obligationId: boundedBindingId,
+          state: z.enum(['SUPPORTED', 'GAP', 'UNRESOLVED']),
+        })).max(256),
+        evidenceArtifactIds: z.array(publicArtifactIdV1Schema).max(256),
+        evidenceRequestIds: z.array(publicArtifactIdV1Schema).max(128),
+        challenges: z.array(z.strictObject({
+          challengeId: boundedBindingId,
+          disposition: z.enum(['CORROBORATES', 'DISPUTES', 'PROOF_GAP', 'FOLLOW_UP_REQUESTED']),
+        })).max(128),
+        uncertainty: z.array(boundedRoleTextV1Schema).max(128),
+        limitations: z.array(boundedRoleTextV1Schema).max(128),
+        resourceUse: z.discriminatedUnion('status', [
+          z.strictObject({ status: z.literal('NOT_REPORTED') }),
+          z.strictObject({
+            status: z.literal('REPORTED'),
+            requests: z.number().int().nonnegative(),
+            tokens: z.number().int().nonnegative(),
+          }),
+        ]),
+        completionDisposition: z.enum(['COMPLETE', 'PARTIAL', 'FAILED', 'CANCELED']),
+      }),
+      followUpRequests: z.array(z.strictObject({
+        requestId: followUpRequestIdV1Schema,
+        unresolvedObligationId: boundedBindingId,
+        requestedRoleId: securityRoleIdV1Schema,
+        requiredCapabilityId: boundedBindingId,
+        evidenceArtifactIds: z.array(publicArtifactIdV1Schema).max(64),
+        reason: boundedRoleTextV1Schema,
+        disposition: z.enum(['PENDING', 'ADMITTED', 'REJECTED']),
+        childAttemptId: roleAttemptIdV1Schema.nullable(),
+      })).max(64),
+      challengePackages: z.array(z.strictObject({
+        packageId: challengePackageIdV1Schema,
+        targetAttemptId: roleAttemptIdV1Schema,
+        state: z.enum(['ADMITTED', 'RESPONDED']),
+        questionCount: z.number().int().positive().max(128),
+        response: z.discriminatedUnion('status', [
+          z.strictObject({ status: z.literal('NOT_AVAILABLE') }),
+          z.strictObject({
+            status: z.literal('ADMITTED'),
+            attemptId: roleAttemptIdV1Schema,
+            disposition: z.enum(['CORROBORATES', 'DISPUTES', 'PROOF_GAP', 'FOLLOW_UP_REQUESTED']),
+          }),
+        ]),
+      })).max(128),
+      evidenceConvergence: z.strictObject({
+        status: z.enum(['NOT_STARTED', 'IN_PROGRESS', 'COMPLETE']),
+        resolvedCandidateCount: z.number().int().nonnegative().max(1_000_000),
+        unresolvedCandidateCount: z.number().int().nonnegative().max(1_000_000),
+      }),
+      transcript: z.discriminatedUnion('status', [
+        z.strictObject({ status: z.literal('NOT_AVAILABLE') }),
+        z.strictObject({
+          status: z.literal('PROTECTED_EVIDENCE'),
+          artifactId: publicArtifactIdV1Schema,
+        }),
+      ]),
+    }).superRefine((detail, context) => {
+      for (const [index, request] of detail.followUpRequests.entries()) {
+        if ((request.disposition === 'ADMITTED') !== (request.childAttemptId !== null)) {
+          context.addIssue({
+            code: 'custom',
+            path: ['followUpRequests', index, 'childAttemptId'],
+            message: 'Only admitted Follow-up Requests identify a durable child Attempt',
+          })
+        }
+      }
+      for (const [index, challenge] of detail.challengePackages.entries()) {
+        if ((challenge.state === 'RESPONDED') !== (challenge.response.status === 'ADMITTED')) {
+          context.addIssue({
+            code: 'custom',
+            path: ['challengePackages', index, 'response'],
+            message: 'Only responded Challenge Packages contain an admitted response',
+          })
+        }
+      }
+    }),
+  ])
 
 export interface AssessmentRoleCardV1 {
   readonly schemaVersion: 1
@@ -1713,9 +1950,11 @@ export interface AssessmentRoleCardV1 {
     readonly relatedAttemptId: string
     readonly relation: 'CHALLENGES' | 'CHALLENGED_BY'
   }[]
+  /** Additive immutable Role Detail projection for authorized Assessment readers. */
+  readonly detail?: AssessmentRoleDetailV1 | undefined
+  /** Additive execution-lane disclosure; it never contains peer semantic output. */
+  readonly analysisLane?: AssessmentRoleAnalysisLaneV1 | undefined
 }
-
-const roleAttemptIdV1Schema = z.string().regex(/^role-attempt-[0-9a-f-]{36}$/)
 
 export const assessmentRoleCardV1Schema: z.ZodType<AssessmentRoleCardV1> = z.strictObject({
   schemaVersion: z.literal(1),
@@ -1759,6 +1998,8 @@ export const assessmentRoleCardV1Schema: z.ZodType<AssessmentRoleCardV1> = z.str
     relatedAttemptId: roleAttemptIdV1Schema,
     relation: z.enum(['CHALLENGES', 'CHALLENGED_BY']),
   })).max(64),
+  detail: assessmentRoleDetailV1Schema.optional(),
+  analysisLane: assessmentRoleAnalysisLaneV1Schema.optional(),
 }).superRefine((card, context) => {
   const terminal = ['COMPLETED', 'FAILED', 'CANCELED'].includes(card.attempt.lifecycleState)
   if (terminal !== (card.attempt.completedAt !== null)) {
@@ -1854,6 +2095,49 @@ export const assessmentRoleCardV1Schema: z.ZodType<AssessmentRoleCardV1> = z.str
       })
     }
   }
+  const detail = card.detail
+  if (
+    detail?.status === 'PUBLISHED'
+    && detail.contribution.completionDisposition !== card.completionDisposition
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['detail', 'contribution', 'completionDisposition'],
+      message: 'Role Detail completion must match the Role Card disposition',
+    })
+  }
+  const lane = card.analysisLane
+  if (lane?.kind === 'DEEP_INDEPENDENT') {
+    const pending = lane.initialContributionState === 'PENDING'
+    if (pending && lane.executionPeerVisibility !== 'HIDDEN') {
+      context.addIssue({
+        code: 'custom',
+        path: ['analysisLane', 'executionPeerVisibility'],
+        message: 'Deep peer output remains hidden until the initial Contribution freezes',
+      })
+    }
+    if (pending && lane.currentPhase !== 'INDEPENDENT_ANALYSIS') {
+      context.addIssue({
+        code: 'custom',
+        path: ['analysisLane', 'currentPhase'],
+        message: 'Challenge and convergence cannot begin before the initial Contribution freezes',
+      })
+    }
+    if (pending && detail?.status === 'PUBLISHED') {
+      context.addIssue({
+        code: 'custom',
+        path: ['detail', 'status'],
+        message: 'A pending Deep initial Contribution cannot be published',
+      })
+    }
+    if (!pending && lane.executionPeerVisibility !== 'FROZEN_CONTRIBUTIONS_ONLY') {
+      context.addIssue({
+        code: 'custom',
+        path: ['analysisLane', 'executionPeerVisibility'],
+        message: 'After freeze, only frozen Contributions may enter governed peer packages',
+      })
+    }
+  }
 })
 
 export interface AssessmentSnapshotV1 {
@@ -1912,6 +2196,27 @@ export const assessmentSnapshotV1Schema: z.ZodType<AssessmentSnapshotV1> = z.str
       path: ['blockedRecovery'],
       message: 'Blocked recovery metadata must exist exactly while the Assessment is BLOCKED',
     })
+  }
+  const actionKeys = new Set<string>()
+  for (const [index, action] of snapshot.availableActions.entries()) {
+    if (action.expectedAssessmentRevision !== snapshot.assessmentRevision) {
+      context.addIssue({
+        code: 'custom',
+        path: ['availableActions', index, 'expectedAssessmentRevision'],
+        message: 'Every available action must bind the enclosing Snapshot revision',
+      })
+    }
+    const key = action.kind === 'RECORD_RISK_DECISION'
+      ? `${action.kind}:${action.finding.recordId}:${action.finding.recordRevision}`
+      : action.kind
+    if (actionKeys.has(key)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['availableActions', index],
+        message: 'Available action identities must be unique within one Snapshot',
+      })
+    }
+    actionKeys.add(key)
   }
 })
 

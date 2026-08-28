@@ -65,6 +65,12 @@ import {
   WorkbenchOverlay,
   type WorkbenchOverlayInjected,
 } from './workbench/WorkbenchOverlay.tsx'
+import { selectAssessmentAvailableActionV1 } from './workbench/actions.ts'
+export {
+  projectAssessmentActionAvailabilityV1,
+  selectAssessmentAvailableActionV1,
+  type AssessmentActionAvailabilityV1,
+} from './workbench/actions.ts'
 export {
   decodeWorkbenchRouteStateV1,
   projectWorkbenchRouteStateV1,
@@ -1355,6 +1361,18 @@ export class SecurityAssuranceWorkbenchController extends Service {
       current.snapshot.assessmentRevision,
       detail.recordId,
     )) return this.state
+    if (result.ok && !result.value.ok && result.value.error.code === 'CONFLICT') {
+      return this.refreshAfterStaleAction(
+        session,
+        current.assessmentId,
+        current.snapshot.assessmentRevision,
+        () => this.isActiveRiskDecisionRequest(
+          session,
+          current.snapshot.assessmentRevision,
+          detail.recordId,
+        ),
+      )
+    }
     const receipt = this.readRemoteResult(session, result)
     if (receipt === undefined) return this.state
     if (!matchesRiskDecisionReceipt(
@@ -1823,7 +1841,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
       || current.assessmentCommand.kind !== 'IDLE'
     ) return current
     const actionKind = command === 'RESUME' ? 'RESUME_ASSESSMENT' : 'CANCEL_ASSESSMENT'
-    const action = current.snapshot.availableActions.find(candidate => candidate.kind === actionKind)
+    const action = selectAssessmentAvailableActionV1(current.snapshot, actionKind)
     const normalizedReason = normalizeAssessmentCommandReason(reason)
     if (
       action === undefined
@@ -1860,22 +1878,20 @@ export class SecurityAssuranceWorkbenchController extends Service {
       idempotencyKey,
       reason: normalizedReason,
     }
-    let receipt: AssessmentResumeReceiptV1 | AssessmentCancellationReceiptV1 | undefined
+    let result: RemoteResult<SecurityResult<AssessmentResumeReceiptV1 | AssessmentCancellationReceiptV1>>
     try {
       if (command === 'RESUME') {
-        const result = await this.ownerCtx.remote.securityAssuranceWorkbench.resumeAssessment(
+        result = await this.ownerCtx.remote.securityAssuranceWorkbench.resumeAssessment(
           session.contextId,
           request,
           session.abort.signal,
         )
-        receipt = this.readRemoteResult(session, result)
       } else {
-        const result = await this.ownerCtx.remote.securityAssuranceWorkbench.cancelAssessment(
+        result = await this.ownerCtx.remote.securityAssuranceWorkbench.cancelAssessment(
           session.contextId,
           request,
           session.abort.signal,
         )
-        receipt = this.readRemoteResult(session, result)
       }
     } catch (error) {
       if (!this.isActiveAssessmentCommand(session, current.snapshot.assessmentRevision, command)) {
@@ -1886,6 +1902,19 @@ export class SecurityAssuranceWorkbenchController extends Service {
     if (!this.isActiveAssessmentCommand(session, current.snapshot.assessmentRevision, command)) {
       return this.state
     }
+    if (result.ok && !result.value.ok && result.value.error.code === 'CONFLICT') {
+      return this.refreshAfterStaleAction(
+        session,
+        current.assessmentId,
+        current.snapshot.assessmentRevision,
+        () => this.isActiveAssessmentCommand(
+          session,
+          current.snapshot.assessmentRevision,
+          command,
+        ),
+      )
+    }
+    const receipt = this.readRemoteResult(session, result)
     if (
       receipt === undefined
       || !matchesAssessmentCommandReceipt(
@@ -1935,6 +1964,42 @@ export class SecurityAssuranceWorkbenchController extends Service {
     }
     const ready = this.publishReady(current.assessmentId, snapshot)
     if (!isTerminal(snapshot)) this.startMonitor(session, current.assessmentId, snapshot.assessmentRevision)
+    return ready
+  }
+
+  private async refreshAfterStaleAction(
+    session: LiveAssessmentSession,
+    assessmentId: AssessmentId,
+    displayedRevision: number,
+    isCurrent: () => boolean,
+  ): Promise<SecurityAssuranceWorkbenchStateV1> {
+    let refreshed: RemoteResult<SecurityResult<AssessmentSnapshotV1>>
+    try {
+      refreshed = await this.ownerCtx.remote.securityAssuranceWorkbench.getAssessment(
+        session.contextId,
+        { schemaVersion: 1, assessmentId },
+        session.abort.signal,
+      )
+    } catch (error) {
+      if (!isCurrent()) return this.state
+      return this.failClient(session, error)
+    }
+    if (!isCurrent()) return this.state
+    const snapshot = this.readRemoteResult(session, refreshed)
+    if (snapshot === undefined) return this.state
+    if (
+      snapshot.assessmentId !== assessmentId
+      || snapshot.assessmentRevision < displayedRevision
+    ) {
+      return this.fail(session, {
+        source: 'CLIENT',
+        code: 'STALE_ACTION_REFRESH_PROTOCOL_VIOLATION',
+        message: 'The stale action refresh returned an older or different Assessment.',
+        retryable: false,
+      })
+    }
+    const ready = this.publishReady(assessmentId, snapshot)
+    if (!isTerminal(snapshot)) this.startMonitor(session, assessmentId, snapshot.assessmentRevision)
     return ready
   }
 
