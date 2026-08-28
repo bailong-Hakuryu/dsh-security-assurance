@@ -164,6 +164,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
               reason: 'NO_ELIGIBLE_ANALYZER',
             }],
           },
+          roleCards: [],
           seal: {
             schemaVersion: 1,
             sealId: expect.stringMatching(/^seal-[0-9a-f-]{36}$/u),

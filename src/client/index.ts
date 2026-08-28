@@ -72,6 +72,14 @@ export {
   type WorkbenchRouteStateV1,
   type WorkbenchViewIdV1,
 } from './workbench/navigation.ts'
+export {
+  projectAssessmentProgressViewV1,
+  type AssessmentProgressAttemptStateV1,
+  type AssessmentProgressMilestoneV1,
+  type AssessmentProgressPhaseIdV1,
+  type AssessmentProgressPhaseNodeV1,
+  type AssessmentProgressViewV1,
+} from './workbench/progress.ts'
 
 export type { WorkbenchAuthorityContextId } from 'dsh-security-assurance/workbench-remote'
 

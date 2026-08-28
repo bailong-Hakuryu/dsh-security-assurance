@@ -38,6 +38,7 @@ import type {
 } from '../../contracts.ts'
 import type { WORKBENCH_LOCALE_NAMESPACE } from './locales.ts'
 import { projectWorkbenchRouteStateV1 } from './navigation.ts'
+import { projectAssessmentProgressViewV1 } from './progress.ts'
 import type { WorkbenchPresentationSnapshotV1 } from './presentation.ts'
 
 export type WorkbenchOverlaySources = {
@@ -1181,6 +1182,10 @@ function AssessmentDetail({
         )}
       </section>
 
+      <AssessmentProgressPanel snapshot={snapshot} t={t} />
+
+      <AssessmentRoleCardsPanel snapshot={snapshot} t={t} />
+
       <section className="dsh-security-section" aria-labelledby="dsh-security-coverage-title">
         <div className="dsh-security-section__header">
           <h2 id="dsh-security-coverage-title">{t('label.coverage')}</h2>
@@ -1242,6 +1247,175 @@ function AssessmentDetail({
       />
     </div>
   )
+}
+
+function AssessmentProgressPanel({
+  snapshot,
+  t,
+}: {
+  readonly snapshot: AssessmentSnapshotV1
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  const progress = projectAssessmentProgressViewV1(snapshot)
+  return (
+    <section
+      className="dsh-security-section dsh-security-progress"
+      aria-labelledby="dsh-security-progress-title"
+      data-assessment-revision={progress.assessmentRevision}
+    >
+      <div className="dsh-security-section__header">
+        <h2 id="dsh-security-progress-title">{t('progress.title')}</h2>
+        <MachineBadge value={progress.terminalStatus} />
+      </div>
+      <p className="dsh-security-readonly-note">
+        {t('progress.revisionBoundary')} <code>{progress.assessmentRevision}</code>
+      </p>
+      <ol className="dsh-security-progress__phases">
+        {progress.phaseNodes.map(node => (
+          <li key={node.phaseId}>
+            <div>
+              <code>{node.phaseId}</code>
+              <MachineBadge value={node.attemptState} />
+            </div>
+            <small>
+              {t('progress.dependencies')}: {node.dependsOn.length === 0
+                ? t('progress.noDependencies')
+                : node.dependsOn.join(', ')}
+            </small>
+          </li>
+        ))}
+      </ol>
+      <dl className="dsh-security-facts">
+        <Fact label={t('progress.coverageStatus')} value={progress.coverage.status} machine />
+        <Fact
+          label={t('progress.pendingObligations')}
+          value={String(progress.coverage.pendingObligationCount)}
+        />
+        <Fact label={t('progress.budget')} value={progress.budget.status} machine />
+        <Fact
+          label={t('progress.blocker')}
+          value={progress.blocker?.code ?? t('value.notAvailable')}
+          machine={progress.blocker !== null}
+        />
+      </dl>
+      <div>
+        <strong className="dsh-security-progress__label">{t('progress.coverageResolutions')}</strong>
+        {progress.coverage.resolutions.length === 0
+          ? <p className="dsh-security-muted">{t('progress.noCoverageResolutions')}</p>
+          : (
+              <ul className="dsh-security-metadata-list">
+                {progress.coverage.resolutions.map(resolution => (
+                  <li key={resolution.obligationId}>
+                    <code>{resolution.obligationId}</code>
+                    <MachineBadge value={resolution.state} />
+                    <span>{resolution.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+      </div>
+      <div>
+        <strong className="dsh-security-progress__label">{t('progress.milestones')}</strong>
+        <ul className="dsh-security-metadata-list">
+          {progress.milestones.map(milestone => (
+            <li key={milestone.milestoneId}>
+              <code>{milestone.milestoneId}</code>
+              <MachineBadge value={milestone.state} />
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  )
+}
+
+function AssessmentRoleCardsPanel({
+  snapshot,
+  t,
+}: {
+  readonly snapshot: AssessmentSnapshotV1
+  readonly t: WorkbenchOverlayProps['t']
+}) {
+  const roleCards = snapshot.roleCards ?? []
+  return (
+    <section className="dsh-security-section dsh-security-roles" aria-labelledby="dsh-security-roles-title">
+      <div className="dsh-security-section__header">
+        <h2 id="dsh-security-roles-title">{t('roles.title')}</h2>
+        <MachineBadge value={String(roleCards.length)} />
+      </div>
+      <p className="dsh-security-readonly-note">{t('roles.boundary')}</p>
+      {roleCards.length === 0
+        ? <p className="dsh-security-muted">{t('roles.empty')}</p>
+        : (
+            <div className="dsh-security-role-cards">
+              {roleCards.map(card => (
+                <article className="dsh-security-role-card" key={card.attempt.attemptId}>
+                  <div className="dsh-security-role-card__heading">
+                    <div>
+                      <code>{`${card.roleDefinition.roleId}@${card.roleDefinition.roleVersion}`}</code>
+                      <small>{t('roles.definitionDigest')}: {card.roleDefinition.definitionDigest.value}</small>
+                    </div>
+                    <MachineBadge value={card.attempt.lifecycleState} />
+                  </div>
+                  <dl className="dsh-security-facts">
+                    <Fact label={t('roles.attempt')} value={card.attempt.attemptId} machine />
+                    <Fact
+                      label={t('roles.parentAttempt')}
+                      value={card.attempt.parentAttemptId ?? t('roles.noParent')}
+                      machine={card.attempt.parentAttemptId !== null}
+                    />
+                    <Fact label={t('roles.independence')} value={card.roleDefinition.independenceClass} machine />
+                    <Fact label={t('roles.provider')} value={card.provider.providerId} machine />
+                    <Fact label={t('roles.model')} value={card.provider.modelId} machine />
+                    <Fact label={t('roles.movingProvider')} value={String(card.provider.movingProvider)} machine />
+                    <Fact label={t('roles.evidenceCount')} value={String(card.evidenceCount)} />
+                    <Fact label={t('roles.candidateCount')} value={String(card.candidateCount)} />
+                    <Fact label={t('roles.disposition')} value={card.completionDisposition} machine />
+                    <Fact label={t('roles.budget')} value={roleBudgetLabel(card.budget)} machine />
+                  </dl>
+                  <div>
+                    <strong className="dsh-security-progress__label">{t('roles.milestones')}</strong>
+                    {card.milestones.length === 0
+                      ? <p className="dsh-security-muted">{t('roles.noMilestones')}</p>
+                      : (
+                          <ul className="dsh-security-metadata-list">
+                            {card.milestones.map(milestone => (
+                              <li key={milestone.milestoneId}>
+                                <code>{milestone.milestoneId}</code>
+                                <MachineBadge value={milestone.state} />
+                                {milestone.recordedAt !== null && <span>{milestone.recordedAt}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                  </div>
+                  <div>
+                    <strong className="dsh-security-progress__label">{t('roles.challengeRelations')}</strong>
+                    {card.challengeRelations.length === 0
+                      ? <p className="dsh-security-muted">{t('roles.noChallenges')}</p>
+                      : (
+                          <ul className="dsh-security-metadata-list">
+                            {card.challengeRelations.map(relation => (
+                              <li key={`${relation.relation}:${relation.relatedAttemptId}`}>
+                                <MachineBadge value={relation.relation} />
+                                <code>{relation.relatedAttemptId}</code>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+    </section>
+  )
+}
+
+function roleBudgetLabel(card: NonNullable<AssessmentSnapshotV1['roleCards']>[number]['budget']): string {
+  return card.status === 'NOT_REPORTED'
+    ? card.status
+    : `${card.requestsUsed}/${card.requestLimit} requests · ${card.tokensUsed}/${card.tokenLimit} tokens`
 }
 
 function BlockedRecoveryPanel({

@@ -15,6 +15,7 @@ import {
   assessmentProfileIdSchema,
   assessmentTargetSelectorV1Schema,
   assessmentSealV1Schema,
+  assessmentRoleCardV1Schema,
   assessmentOperatorReasonV1Schema,
   riskDecisionRecordV1Schema,
 } from '../contracts.ts'
@@ -102,6 +103,7 @@ export const internalAssessmentRecordV1Schema = z.strictObject({
     requestRevision: z.number().int().positive(),
     requestedAt: z.iso.datetime({ offset: true }),
   }).nullable().default(null),
+  roleCards: z.array(assessmentRoleCardV1Schema).max(128).default([]),
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
 })
@@ -140,6 +142,7 @@ export function publicAssessmentSnapshot(
     coverage: record.coverage,
     blockedRecovery: projectBlockedRecovery(record),
     availableActions,
+    roleCards: record.roleCards,
     verdict: record.verdict,
     seal: record.seal,
     createdAt: record.createdAt,

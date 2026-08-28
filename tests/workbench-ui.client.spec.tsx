@@ -139,6 +139,46 @@ function readySnapshot(id: AssessmentId): AssessmentSnapshotV1 {
       { kind: 'RESUME_ASSESSMENT', expectedAssessmentRevision: 7 },
       { kind: 'CANCEL_ASSESSMENT', expectedAssessmentRevision: 7 },
     ],
+    roleCards: [{
+      schemaVersion: 1,
+      roleDefinition: {
+        roleId: 'validation-analyst',
+        roleVersion: '1.0.0',
+        definitionDigest: digest,
+        independenceClass: 'DISTINCT_ATTEMPT',
+      },
+      attempt: {
+        attemptId: 'role-attempt-00000000-0000-0000-0000-000000000007',
+        parentAttemptId: null,
+        lifecycleState: 'BLOCKED',
+        startedAt: '2026-08-24T00:01:00.000Z',
+        completedAt: null,
+      },
+      provider: {
+        providerId: 'provider/reference',
+        modelId: 'model/reference-v1',
+        movingProvider: false,
+      },
+      budget: {
+        status: 'REPORTED',
+        requestLimit: 4,
+        requestsUsed: 2,
+        tokenLimit: 8_000,
+        tokensUsed: 3_200,
+      },
+      milestones: [{
+        milestoneId: 'INITIAL_CONTRIBUTION_FROZEN',
+        state: 'REACHED',
+        recordedAt: '2026-08-24T00:02:00.000Z',
+      }],
+      evidenceCount: 3,
+      candidateCount: 1,
+      completionDisposition: 'NOT_AVAILABLE',
+      challengeRelations: [{
+        relatedAttemptId: 'role-attempt-00000000-0000-0000-0000-000000000008',
+        relation: 'CHALLENGED_BY',
+      }],
+    }],
     verdict: null,
     seal: null,
     createdAt: '2026-08-24T00:00:00.000Z',
@@ -1381,20 +1421,25 @@ describe('Security Assurance Workbench UI', () => {
     })
 
     expect(overlay.view.getByText(id)).toBeTruthy()
-    expect(overlay.view.getAllByText('BLOCKED')).toHaveLength(2)
-    expect(overlay.view.getByText('GAP')).toBeTruthy()
+    expect(overlay.view.getAllByText('BLOCKED').length).toBeGreaterThanOrEqual(2)
+    expect(overlay.view.getAllByText('GAP').length).toBeGreaterThanOrEqual(1)
     expect(overlay.view.getByText('0 / 2')).toBeTruthy()
     expect(overlay.view.getByText('security/standard')).toBeTruthy()
     expect(overlay.view.getAllByText('尚未生成')).toHaveLength(2)
     expect(overlay.view.getByText('RESUME_ASSESSMENT')).toBeTruthy()
     expect(overlay.view.getByText('CANCEL_ASSESSMENT')).toBeTruthy()
     expect(overlay.view.getByRole('heading', { name: '阻塞恢复' })).toBeTruthy()
-    expect(overlay.view.getByText('ASSESSMENT_EXECUTION_FAILED')).toBeTruthy()
+    expect(overlay.view.getAllByText('ASSESSMENT_EXECUTION_FAILED').length).toBeGreaterThanOrEqual(1)
     expect(overlay.view.getByText('EXPLICIT_RESUME_REQUIRED')).toBeTruthy()
-    expect(overlay.view.getByText('NOT_REPORTED')).toBeTruthy()
+    expect(overlay.view.getAllByText('NOT_REPORTED').length).toBeGreaterThanOrEqual(1)
     expect(overlay.view.getByText('INDETERMINATE')).toBeTruthy()
-    expect(overlay.view.getByText('ANALYZER_INCOMPLETE')).toBeTruthy()
-    expect(overlay.view.getByText('EVIDENCE_INELIGIBLE')).toBeTruthy()
+    expect(overlay.view.getAllByText('ANALYZER_INCOMPLETE').length).toBeGreaterThanOrEqual(1)
+    expect(overlay.view.getByRole('heading', { name: '修订绑定的评估进度' })).toBeTruthy()
+    expect(overlay.view.getByText('SUBJECT_FREEZE')).toBeTruthy()
+    expect(overlay.view.getByRole('heading', { name: '角色卡' })).toBeTruthy()
+    expect(overlay.view.getByText(/validation-analyst/u)).toBeTruthy()
+    expect(overlay.view.getByText('CHALLENGED_BY')).toBeTruthy()
+    expect(overlay.view.getAllByText('EVIDENCE_INELIGIBLE').length).toBeGreaterThanOrEqual(1)
     expect(overlay.view.getByText('操作入口严格来自 Security Service 快照；仅已实现的治理表单可提交。')).toBeTruthy()
     expect(overlay.view.getByRole('button', { name: '查看 Findings' })).toBeTruthy()
     const resume = overlay.view.getByRole('button', { name: '恢复 Assessment' })

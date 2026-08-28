@@ -1662,6 +1662,200 @@ export const assessmentContractSnapshotV1Schema: z.ZodType<AssessmentContractSna
   requestedStrongerControlIds: z.array(boundedBindingId).max(16),
 })
 
+export const securityRoleIdV1Schema = z.enum([
+  'threat-modeler',
+  'discovery-analyst',
+  'validation-analyst',
+  'attack-path-analyst',
+  'challenge-analyst',
+])
+
+export type SecurityRoleIdV1 = z.infer<typeof securityRoleIdV1Schema>
+
+export interface AssessmentRoleCardV1 {
+  readonly schemaVersion: 1
+  readonly roleDefinition: {
+    readonly roleId: SecurityRoleIdV1
+    readonly roleVersion: string
+    readonly definitionDigest: DigestEnvelopeV1
+    readonly independenceClass: 'NONE' | 'DISTINCT_ATTEMPT' | 'DISTINCT_PROVIDER_OR_MODEL_FAMILY'
+  }
+  readonly attempt: {
+    readonly attemptId: string
+    readonly parentAttemptId: string | null
+    readonly lifecycleState: 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'CANCELED'
+    readonly startedAt: string | null
+    readonly completedAt: string | null
+  }
+  readonly provider: {
+    readonly providerId: string
+    readonly modelId: string
+    readonly movingProvider: boolean
+  }
+  readonly budget:
+    | { readonly status: 'NOT_REPORTED' }
+    | {
+        readonly status: 'REPORTED'
+        readonly requestLimit: number
+        readonly requestsUsed: number
+        readonly tokenLimit: number
+        readonly tokensUsed: number
+      }
+  readonly milestones: readonly {
+    readonly milestoneId: string
+    readonly state: 'PENDING' | 'REACHED'
+    readonly recordedAt: string | null
+  }[]
+  readonly evidenceCount: number
+  readonly candidateCount: number
+  readonly completionDisposition: 'NOT_AVAILABLE' | 'COMPLETE' | 'PARTIAL' | 'FAILED' | 'CANCELED'
+  readonly challengeRelations: readonly {
+    readonly relatedAttemptId: string
+    readonly relation: 'CHALLENGES' | 'CHALLENGED_BY'
+  }[]
+}
+
+const roleAttemptIdV1Schema = z.string().regex(/^role-attempt-[0-9a-f-]{36}$/)
+
+export const assessmentRoleCardV1Schema: z.ZodType<AssessmentRoleCardV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  roleDefinition: z.strictObject({
+    roleId: securityRoleIdV1Schema,
+    roleVersion: z.string().min(1).max(128),
+    definitionDigest: digestEnvelopeV1Schema,
+    independenceClass: z.enum(['NONE', 'DISTINCT_ATTEMPT', 'DISTINCT_PROVIDER_OR_MODEL_FAMILY']),
+  }),
+  attempt: z.strictObject({
+    attemptId: roleAttemptIdV1Schema,
+    parentAttemptId: roleAttemptIdV1Schema.nullable(),
+    lifecycleState: z.enum(['QUEUED', 'RUNNING', 'BLOCKED', 'COMPLETED', 'FAILED', 'CANCELED']),
+    startedAt: z.iso.datetime({ offset: true }).nullable(),
+    completedAt: z.iso.datetime({ offset: true }).nullable(),
+  }),
+  provider: z.strictObject({
+    providerId: boundedBindingId,
+    modelId: boundedBindingId,
+    movingProvider: z.boolean(),
+  }),
+  budget: z.discriminatedUnion('status', [
+    z.strictObject({ status: z.literal('NOT_REPORTED') }),
+    z.strictObject({
+      status: z.literal('REPORTED'),
+      requestLimit: z.number().int().nonnegative(),
+      requestsUsed: z.number().int().nonnegative(),
+      tokenLimit: z.number().int().nonnegative(),
+      tokensUsed: z.number().int().nonnegative(),
+    }),
+  ]),
+  milestones: z.array(z.strictObject({
+    milestoneId: boundedBindingId,
+    state: z.enum(['PENDING', 'REACHED']),
+    recordedAt: z.iso.datetime({ offset: true }).nullable(),
+  })).max(64),
+  evidenceCount: z.number().int().nonnegative().max(1_000_000),
+  candidateCount: z.number().int().nonnegative().max(1_000_000),
+  completionDisposition: z.enum(['NOT_AVAILABLE', 'COMPLETE', 'PARTIAL', 'FAILED', 'CANCELED']),
+  challengeRelations: z.array(z.strictObject({
+    relatedAttemptId: roleAttemptIdV1Schema,
+    relation: z.enum(['CHALLENGES', 'CHALLENGED_BY']),
+  })).max(64),
+}).superRefine((card, context) => {
+  const terminal = ['COMPLETED', 'FAILED', 'CANCELED'].includes(card.attempt.lifecycleState)
+  if (terminal !== (card.attempt.completedAt !== null)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['attempt', 'completedAt'],
+      message: 'Only terminal Role Attempts have a completion time',
+    })
+  }
+  if ((card.attempt.lifecycleState === 'QUEUED') !== (card.attempt.startedAt === null)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['attempt', 'startedAt'],
+      message: 'Queued Role Attempts have not started; all other states have a start time',
+    })
+  }
+  if (card.attempt.parentAttemptId === card.attempt.attemptId) {
+    context.addIssue({
+      code: 'custom',
+      path: ['attempt', 'parentAttemptId'],
+      message: 'A Role Attempt cannot be its own parent',
+    })
+  }
+  if (
+    card.attempt.startedAt !== null
+    && card.attempt.completedAt !== null
+    && Date.parse(card.attempt.completedAt) < Date.parse(card.attempt.startedAt)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['attempt', 'completedAt'],
+      message: 'Role Attempt completion cannot precede its start',
+    })
+  }
+  const dispositionMatches = card.attempt.lifecycleState === 'COMPLETED'
+    ? card.completionDisposition === 'COMPLETE' || card.completionDisposition === 'PARTIAL'
+    : card.attempt.lifecycleState === 'FAILED'
+      ? card.completionDisposition === 'FAILED'
+      : card.attempt.lifecycleState === 'CANCELED'
+        ? card.completionDisposition === 'CANCELED'
+        : card.completionDisposition === 'NOT_AVAILABLE'
+  if (!dispositionMatches) {
+    context.addIssue({
+      code: 'custom',
+      path: ['completionDisposition'],
+      message: 'Completion disposition must match Role Attempt lifecycle state',
+    })
+  }
+  if (
+    card.budget.status === 'REPORTED'
+    && (card.budget.requestsUsed > card.budget.requestLimit || card.budget.tokensUsed > card.budget.tokenLimit)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['budget'],
+      message: 'Reported Role usage cannot exceed its frozen budget ceiling',
+    })
+  }
+  const milestoneIds = new Set<string>()
+  for (const [index, milestone] of card.milestones.entries()) {
+    if (milestoneIds.has(milestone.milestoneId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['milestones', index, 'milestoneId'],
+        message: 'Role milestone identities must be unique',
+      })
+    }
+    milestoneIds.add(milestone.milestoneId)
+    if ((milestone.state === 'REACHED') !== (milestone.recordedAt !== null)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['milestones', index, 'recordedAt'],
+        message: 'Only reached Role milestones have a recorded time',
+      })
+    }
+  }
+  const relations = new Set<string>()
+  for (const [index, relation] of card.challengeRelations.entries()) {
+    const key = `${relation.relation}:${relation.relatedAttemptId}`
+    if (relations.has(key)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['challengeRelations', index],
+        message: 'Challenge relations must be unique',
+      })
+    }
+    relations.add(key)
+    if (relation.relatedAttemptId === card.attempt.attemptId) {
+      context.addIssue({
+        code: 'custom',
+        path: ['challengeRelations', index, 'relatedAttemptId'],
+        message: 'A Role Attempt cannot challenge itself',
+      })
+    }
+  }
+})
+
 export interface AssessmentSnapshotV1 {
   readonly schemaVersion: 1
   readonly assessmentId: AssessmentId
@@ -1680,6 +1874,8 @@ export interface AssessmentSnapshotV1 {
   readonly coverage: AssessmentCoverageSnapshotV1
   readonly blockedRecovery: AssessmentBlockedRecoveryV1 | null
   readonly availableActions: readonly AssessmentAvailableActionV1[]
+  /** Additive v1 projection; older persisted or remote v1 readers may omit it. */
+  readonly roleCards?: readonly AssessmentRoleCardV1[] | undefined
   readonly verdict: SecurityVerdict | null
   readonly seal: AssessmentSealV1 | null
   readonly createdAt: string
@@ -1704,6 +1900,7 @@ export const assessmentSnapshotV1Schema: z.ZodType<AssessmentSnapshotV1> = z.str
   coverage: assessmentCoverageSnapshotV1Schema,
   blockedRecovery: assessmentBlockedRecoveryV1Schema.nullable(),
   availableActions: z.array(assessmentAvailableActionV1Schema).max(1_026),
+  roleCards: z.array(assessmentRoleCardV1Schema).max(128).default([]),
   verdict: securityVerdictSchema.nullable(),
   seal: assessmentSealV1Schema.nullable(),
   createdAt: z.iso.datetime({ offset: true }),
