@@ -46,10 +46,11 @@ const QUALIFICATION_CORE = {
   },
   issuer: 'dsh-security-assurance-development',
   level: 'DEVELOPMENT_BUILTIN',
+  supportedEcosystemIds: ['node-package-manifest'] as const,
   supportedAssessmentModes: ['REPOSITORY'],
   supportedPolicyIds: ['security/node-package-lifecycle'],
   coverageObligationIds: ['node-package-install-lifecycle-policy'],
-  platforms: ['win32', 'linux', 'darwin'],
+  platforms: ['win32', 'linux', 'darwin'] as const,
   limitations: [
     'Only package.json install lifecycle key presence is evaluated.',
     'This qualification does not claim general Node or application security coverage.',

@@ -68,10 +68,15 @@ function providerSummary(
       executionClass: 'PURE',
       eligibility: 'ELIGIBLE',
       reason: null,
+      supportedEcosystemIds: BUILTIN_NODE_PACKAGE_LIFECYCLE_QUALIFICATION.supportedEcosystemIds,
+      supportedPlatforms: BUILTIN_NODE_PACKAGE_LIFECYCLE_QUALIFICATION.platforms,
       coverageObligationIds: BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR.coverageObligationIds,
     })
   }
   for (const entry of portfolio) {
+    const qualifiedScope = entry.eligibility.decision === 'ELIGIBLE'
+      ? entry.qualification
+      : null
     providers.push({
       providerId: SECURITY_ASSURANCE_PRODUCT_NAME,
       analyzerId: entry.descriptor.analyzerId,
@@ -79,6 +84,8 @@ function providerSummary(
       executionClass: entry.descriptor.executionClass,
       eligibility: entry.eligibility.decision,
       reason: entry.eligibility.reason,
+      supportedEcosystemIds: qualifiedScope?.supportedEcosystemIds ?? [],
+      supportedPlatforms: qualifiedScope?.platforms ?? [],
       coverageObligationIds: entry.descriptor.coverageObligationIds,
     })
   }
@@ -180,6 +187,14 @@ export function buildSecurityCatalog(
   input: SecurityCatalogCompositionInputV1,
 ): SecurityCatalogSnapshotV1 {
   const repository = input.repository
+  const portfolios = new Map<AssessmentMode, readonly AnalyzerPortfolioEntryV1[]>(
+    repository === null
+      ? []
+      : MODE_DEFINITIONS.map(definition => [
+          definition.assessmentMode,
+          input.portfolioForMode(definition.assessmentMode),
+        ]),
+  )
   const modes = repository === null
     ? MODE_DEFINITIONS.map(definition => ({
         ...definition,
@@ -190,8 +205,15 @@ export function buildSecurityCatalog(
     : MODE_DEFINITIONS.map(definition => modeCapability(
         repository,
         definition,
-        input.portfolioForMode(definition.assessmentMode),
+        portfolios.get(definition.assessmentMode) ?? [],
       ))
+  const qualifiedProviders = repository === null
+    ? []
+    : MODE_DEFINITIONS.flatMap(definition => providerSummary(
+        repository,
+        definition.assessmentMode,
+        portfolios.get(definition.assessmentMode) ?? [],
+      )).filter(provider => provider.eligibility === 'ELIGIBLE')
   const proposedStart = input.proposedStart
   return deepFreeze({
     schemaVersion: 1,
@@ -207,15 +229,18 @@ export function buildSecurityCatalog(
       label: { en: 'Critical dual authority', zhCN: 'Critical 双重授权' },
       requiresControlIds: [RISK_DECISION_WINDOW_CONTROL_ID],
     }],
-    supportedEcosystemIds: repository?.bindings.policyId === 'security/node-package-lifecycle'
-      ? ['node-package-manifest']
-      : [],
+    supportedEcosystemIds: [...new Set(
+      qualifiedProviders.flatMap(provider => provider.supportedEcosystemIds),
+    )],
+    supportedPlatforms: [...new Set(
+      qualifiedProviders.flatMap(provider => provider.supportedPlatforms),
+    )],
     supportMatrixReferences: ['dsh-security-assurance/support-matrix/v0.1-development'],
     startPreflight: repository !== null && proposedStart !== undefined
       ? preflight(
           repository,
           proposedStart,
-          input.portfolioForMode(proposedStart.assessmentMode),
+          portfolios.get(proposedStart.assessmentMode) ?? [],
         )
       : null,
   })

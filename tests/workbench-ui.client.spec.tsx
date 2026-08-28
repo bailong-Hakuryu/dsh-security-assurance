@@ -1154,6 +1154,7 @@ describe('Security Assurance Workbench UI', () => {
         requiresControlIds: [],
       }],
       supportedEcosystemIds: ['node-package-manifest'],
+      supportedPlatforms: ['win32', 'linux', 'darwin'] as const,
       supportMatrixReferences: ['dsh-security-assurance/support-matrix/v0.1-development'],
       startPreflight: null,
     }
@@ -1203,6 +1204,8 @@ describe('Security Assurance Workbench UI', () => {
                 executionClass: 'PURE',
                 eligibility: 'ELIGIBLE',
                 reason: null,
+                supportedEcosystemIds: ['node-package-manifest'],
+                supportedPlatforms: ['win32', 'linux', 'darwin'],
                 coverageObligationIds: ['node-package-install-lifecycle-policy'],
               }],
               dataEgress: {

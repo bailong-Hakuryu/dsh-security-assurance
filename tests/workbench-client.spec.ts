@@ -2069,6 +2069,7 @@ describe('Security Assurance Workbench Client', () => {
       }],
       strongerControls: [],
       supportedEcosystemIds: ['node-package-manifest'],
+      supportedPlatforms: ['win32', 'linux', 'darwin'] as const,
       supportMatrixReferences: ['dsh-security-assurance/support-matrix/v0.1-development'],
       startPreflight: null,
     }
@@ -2089,6 +2090,8 @@ describe('Security Assurance Workbench Client', () => {
         executionClass: 'PURE' as const,
         eligibility: 'ELIGIBLE' as const,
         reason: null,
+        supportedEcosystemIds: ['node-package-manifest'],
+        supportedPlatforms: ['win32', 'linux', 'darwin'] as const,
         coverageObligationIds: ['node-package-install-lifecycle-policy'],
       }],
       dataEgress: {

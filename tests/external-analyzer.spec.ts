@@ -406,15 +406,37 @@ describe('external Analyzer composition', () => {
         },
       })
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
-      const started = await ctx.securityAssurance.startAssessment(invocation, {
-        schemaVersion: 1,
-        idempotencyKey: 'qualified-analyzer-assessment-1',
+      const selection = {
+        schemaVersion: 1 as const,
         repositoryId: registered.value.repositoryId,
-        subject: { kind: 'workspace_snapshot' },
-        assessmentMode: 'REPOSITORY',
+        subject: { kind: 'workspace_snapshot' as const },
+        assessmentMode: 'REPOSITORY' as const,
         assessmentProfileId: 'security/standard',
-        target: { kind: 'repository' },
-        requestedStrongerControlIds: [],
+        target: { kind: 'repository' as const },
+        requestedStrongerControlIds: [] as readonly string[],
+      }
+      await expect(ctx.securityAssurance.getCatalog(invocation, {
+        schemaVersion: 1,
+        repositoryId: registered.value.repositoryId,
+        proposedStart: selection,
+      })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          supportedEcosystemIds: qualification.supportedEcosystemIds,
+          supportedPlatforms: qualification.platforms,
+          startPreflight: {
+            providerComposition: [{
+              analyzerId: descriptor.analyzerId,
+              eligibility: 'ELIGIBLE',
+              supportedEcosystemIds: qualification.supportedEcosystemIds,
+              supportedPlatforms: qualification.platforms,
+            }],
+          },
+        },
+      })
+      const started = await ctx.securityAssurance.startAssessment(invocation, {
+        ...selection,
+        idempotencyKey: 'qualified-analyzer-assessment-1',
       })
       if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
       await waitUntilState(ctx.securityAssurance, invocation, started.value.assessmentId, 'SEALED')

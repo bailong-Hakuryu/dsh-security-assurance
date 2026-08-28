@@ -191,7 +191,12 @@ export const repositoryBindingsV1Schema: z.ZodType<RepositoryBindingsV1> = z.str
   dataEgressPolicyId: boundedBindingId,
   platform: repositoryPlatformSchema,
   deliveryDestinationIds: z.array(boundedBindingId).max(32),
-})
+}).refine(
+  bindings => bindings.deliveryDestinationIds.every((destinationId, index, values) => (
+    index === 0 || values[index - 1]! < destinationId
+  )),
+  { message: 'Delivery Destination identities must be unique and canonically ordered' },
+)
 
 export interface RegisterRepositoryRequest {
   readonly schemaVersion: 1
@@ -512,6 +517,8 @@ export interface StartPreflightProviderV1 {
   readonly executionClass: 'PURE'
   readonly eligibility: 'ELIGIBLE' | 'INELIGIBLE'
   readonly reason: string | null
+  readonly supportedEcosystemIds: readonly string[]
+  readonly supportedPlatforms: readonly RepositoryPlatform[]
   readonly coverageObligationIds: readonly string[]
 }
 
@@ -522,6 +529,8 @@ const startPreflightProviderV1Schema: z.ZodType<StartPreflightProviderV1> = z.st
   executionClass: z.literal('PURE'),
   eligibility: z.enum(['ELIGIBLE', 'INELIGIBLE']),
   reason: z.string().min(1).max(128).nullable(),
+  supportedEcosystemIds: z.array(boundedBindingId).max(64),
+  supportedPlatforms: z.array(repositoryPlatformSchema).max(3),
   coverageObligationIds: z.array(boundedBindingId).max(128),
 })
 
@@ -582,6 +591,7 @@ export interface SecurityCatalogSnapshotV1 {
   readonly assessmentProfiles: readonly SecurityCatalogProfileV1[]
   readonly strongerControls: readonly SecurityCatalogStrongerControlV1[]
   readonly supportedEcosystemIds: readonly string[]
+  readonly supportedPlatforms: readonly RepositoryPlatform[]
   readonly supportMatrixReferences: readonly string[]
   readonly startPreflight: StartPreflightV1 | null
 }
@@ -593,6 +603,7 @@ export const securityCatalogSnapshotV1Schema: z.ZodType<SecurityCatalogSnapshotV
   assessmentProfiles: z.array(securityCatalogProfileV1Schema).max(32),
   strongerControls: z.array(securityCatalogStrongerControlV1Schema).max(16),
   supportedEcosystemIds: z.array(boundedBindingId).max(64),
+  supportedPlatforms: z.array(repositoryPlatformSchema).max(3),
   supportMatrixReferences: z.array(boundedBindingId).max(32),
   startPreflight: startPreflightV1Schema.nullable(),
 })
