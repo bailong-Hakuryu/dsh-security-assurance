@@ -615,6 +615,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
         session.contextId,
         {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey,
           assessmentId: current.assessmentId,
           expectedAssessmentRevision: current.manifest.assessmentRevision,
@@ -1006,6 +1007,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
         session.contextId,
         {
           ...current.startPreflight.selection,
+          contractVersion: 1,
           idempotencyKey,
           startPreflightDigest: current.startPreflight.proposalDigest,
         },
@@ -1837,6 +1839,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
 
     const request = {
       schemaVersion: 1 as const,
+      contractVersion: 1 as const,
       assessmentId: current.assessmentId,
       expectedAssessmentRevision: action.expectedAssessmentRevision,
       idempotencyKey,

@@ -98,6 +98,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'deterministic-repository-register-1',
         root: repository,
         displayName: 'Deterministic fixture',
@@ -114,6 +115,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
 
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'deterministic-assessment-start-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -275,6 +277,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
 
       const exportRequest = {
         schemaVersion: 1 as const,
+        contractVersion: 1 as const,
         idempotencyKey: 'deterministic-export-request-1',
         assessmentId: started.value.assessmentId,
         expectedAssessmentRevision: 3,
@@ -675,6 +678,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
     const firstInvocation = referenceHostInvocation(firstContext.securityAssurance)
     const registered = await firstContext.securityAssurance.registerRepository(firstInvocation, {
       schemaVersion: 1,
+      contractVersion: 1 as const,
       idempotencyKey: 'resume-repository-register-1',
       root: repository,
       displayName: 'Resume fixture',
@@ -690,6 +694,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
     if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
     const startRequest = {
       schemaVersion: 1 as const,
+      contractVersion: 1 as const,
       idempotencyKey: 'resume-assessment-start-1',
       repositoryId: registered.value.repositoryId,
       subject: { kind: 'workspace_snapshot' as const },
@@ -735,6 +740,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
 
       const resumeRequest = {
         schemaVersion: 1 as const,
+        contractVersion: 1 as const,
         assessmentId: started.value.assessmentId,
         expectedAssessmentRevision: interrupted.value.assessmentRevision,
         idempotencyKey: 'resume-assessment-command-1',
@@ -800,6 +806,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'cancel-repository-register-1',
         root: repository,
         displayName: 'Cancellation fixture',
@@ -815,6 +822,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'cancel-assessment-start-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -833,6 +841,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
 
       const cancelRequest = {
         schemaVersion: 1 as const,
+        contractVersion: 1 as const,
         assessmentId: started.value.assessmentId,
         expectedAssessmentRevision: running.value.assessmentRevision,
         idempotencyKey: 'cancel-assessment-command-1',
@@ -885,6 +894,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
     }
     const startRequest = {
       schemaVersion: 1 as const,
+      contractVersion: 1 as const,
       idempotencyKey: 'restart-assessment-start-1',
       subject: { kind: 'workspace_snapshot' as const },
       assessmentMode: 'REPOSITORY' as const,
@@ -902,6 +912,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       const invocation = referenceHostInvocation(firstContext.securityAssurance)
       const registered = await firstContext.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'restart-repository-register-1',
         root: repository,
         displayName: 'Restart fixture',

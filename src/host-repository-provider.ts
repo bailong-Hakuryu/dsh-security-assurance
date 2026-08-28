@@ -108,6 +108,7 @@ export class SecurityAssuranceHostRepositoryProvider extends Service {
     for (const registration of parsed.data.repositories) {
       const result = await service.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1,
         idempotencyKey: registration.idempotencyKey,
         root: registration.root,
         displayName: registration.displayName,

@@ -1790,6 +1790,7 @@ describe('Security Assurance Workbench Client', () => {
         securityAssuranceWorkbenchContextId: authorityId,
         request: {
           schemaVersion: 1,
+          contractVersion: 1,
           assessmentId: id,
           expectedAssessmentRevision: 4,
           idempotencyKey: expect.stringMatching(/^workbench-cancel:[0-9a-f-]{36}$/),

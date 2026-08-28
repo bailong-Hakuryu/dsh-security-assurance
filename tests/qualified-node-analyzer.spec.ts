@@ -79,6 +79,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1,
         idempotencyKey: 'qualified-node-safe-register-1',
         root: repository,
         displayName: 'Safe Node fixture',
@@ -94,6 +95,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1,
         idempotencyKey: 'qualified-node-safe-assessment-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -195,6 +197,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1,
         idempotencyKey: 'qualified-node-failed-register-1',
         root: repository,
         displayName: 'Unsafe Node fixture',
@@ -210,6 +213,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1,
         idempotencyKey: 'qualified-node-failed-assessment-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -431,6 +435,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1,
         idempotencyKey: 'qualified-node-malformed-register-1',
         root: repository,
         displayName: 'Malformed Node fixture',
@@ -446,6 +451,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1,
         idempotencyKey: 'qualified-node-malformed-assessment-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -516,6 +522,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1,
         idempotencyKey: 'qualified-node-duplicate-register-1',
         root: repository,
         displayName: 'Duplicate key Node fixture',
@@ -531,6 +538,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1,
         idempotencyKey: 'qualified-node-duplicate-assessment-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },

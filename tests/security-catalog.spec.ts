@@ -41,6 +41,7 @@ describe('Security Catalog and Start Preflight', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'catalog-repository-v1',
         root: repositoryRoot,
         displayName: 'Catalog fixture',
@@ -129,6 +130,7 @@ describe('Security Catalog and Start Preflight', () => {
 
       await expect(ctx.securityAssurance.startAssessment(invocation, {
         ...selection,
+        contractVersion: 1,
         idempotencyKey: 'catalog-stale-preflight-v1',
         requestedStrongerControlIds: ['security/risk-decision-window-v1'],
         startPreflightDigest: proposed.value.startPreflight.proposalDigest,
@@ -136,6 +138,7 @@ describe('Security Catalog and Start Preflight', () => {
 
       await expect(ctx.securityAssurance.startAssessment(invocation, {
         ...selection,
+        contractVersion: 1,
         idempotencyKey: 'catalog-confirmed-preflight-v1',
         startPreflightDigest: proposed.value.startPreflight.proposalDigest,
       })).resolves.toMatchObject({

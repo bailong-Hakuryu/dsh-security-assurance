@@ -175,6 +175,24 @@ export type RepositoryPlatform = z.infer<typeof repositoryPlatformSchema>
 
 const boundedBindingId = z.string().regex(/^[a-z0-9][a-z0-9._/-]{0,127}$/i)
 
+/** Current semantic major for every public Security Assurance operation contract. */
+export const SECURITY_ASSURANCE_CONTRACT_MAJOR_VERSION = 1 as const
+
+export const securityAssuranceContractMajorVersionSchema = z.literal(
+  SECURITY_ASSURANCE_CONTRACT_MAJOR_VERSION,
+)
+
+/** Shared caller-controlled fields admitted by every public mutation. */
+export interface MutationEnvelopeV1 {
+  readonly contractVersion: typeof SECURITY_ASSURANCE_CONTRACT_MAJOR_VERSION
+  readonly idempotencyKey: string
+}
+
+export const mutationEnvelopeV1Schema = z.strictObject({
+  contractVersion: securityAssuranceContractMajorVersionSchema,
+  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+}) satisfies z.ZodType<MutationEnvelopeV1>
+
 export interface RepositoryBindingsV1 {
   readonly policyId: string
   readonly assessmentProfileId: string
@@ -198,9 +216,8 @@ export const repositoryBindingsV1Schema: z.ZodType<RepositoryBindingsV1> = z.str
   { message: 'Delivery Destination identities must be unique and canonically ordered' },
 )
 
-export interface RegisterRepositoryRequest {
+export interface RegisterRepositoryRequest extends MutationEnvelopeV1 {
   readonly schemaVersion: 1
-  readonly idempotencyKey: string
   readonly root: string
   readonly displayName: string
   readonly bindings: RepositoryBindingsV1
@@ -208,7 +225,7 @@ export interface RegisterRepositoryRequest {
 
 export const registerRepositoryRequestSchema: z.ZodType<RegisterRepositoryRequest> = z.strictObject({
   schemaVersion: z.literal(1),
-  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+  ...mutationEnvelopeV1Schema.shape,
   root: z.string().min(1).max(4096),
   displayName: z.string().trim().min(1).max(128),
   bindings: repositoryBindingsV1Schema,
@@ -224,9 +241,8 @@ export const getRepositoryRequestSchema: z.ZodType<GetRepositoryRequest> = z.str
   repositoryId: repositoryIdSchema,
 })
 
-export interface UpdateRepositoryRequest {
+export interface UpdateRepositoryRequest extends MutationEnvelopeV1 {
   readonly schemaVersion: 1
-  readonly idempotencyKey: string
   readonly repositoryId: RepositoryId
   readonly expectedRepositoryRevision: number
   readonly displayName?: string | undefined
@@ -235,7 +251,7 @@ export interface UpdateRepositoryRequest {
 
 export const updateRepositoryRequestSchema: z.ZodType<UpdateRepositoryRequest> = z.strictObject({
   schemaVersion: z.literal(1),
-  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+  ...mutationEnvelopeV1Schema.shape,
   repositoryId: repositoryIdSchema,
   expectedRepositoryRevision: z.number().int().positive(),
   displayName: z.string().trim().min(1).max(128).optional(),
@@ -245,16 +261,15 @@ export const updateRepositoryRequestSchema: z.ZodType<UpdateRepositoryRequest> =
   { message: 'an update must change displayName or bindings' },
 )
 
-export interface DisableRepositoryRequest {
+export interface DisableRepositoryRequest extends MutationEnvelopeV1 {
   readonly schemaVersion: 1
-  readonly idempotencyKey: string
   readonly repositoryId: RepositoryId
   readonly expectedRepositoryRevision: number
 }
 
 export const disableRepositoryRequestSchema: z.ZodType<DisableRepositoryRequest> = z.strictObject({
   schemaVersion: z.literal(1),
-  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+  ...mutationEnvelopeV1Schema.shape,
   repositoryId: repositoryIdSchema,
   expectedRepositoryRevision: z.number().int().positive(),
 })
@@ -425,14 +440,13 @@ export const startAssessmentSelectionV1Schema: z.ZodType<StartAssessmentSelectio
   requestedStrongerControlIds: z.array(boundedBindingId).max(16),
 })
 
-export interface StartAssessmentRequest extends StartAssessmentSelectionV1 {
-  readonly idempotencyKey: string
+export interface StartAssessmentRequest extends StartAssessmentSelectionV1, MutationEnvelopeV1 {
   readonly startPreflightDigest?: DigestEnvelopeV1 | undefined
 }
 
 export const startAssessmentRequestSchema: z.ZodType<StartAssessmentRequest> = z.strictObject({
   schemaVersion: z.literal(1),
-  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+  ...mutationEnvelopeV1Schema.shape,
   repositoryId: repositoryIdSchema,
   subject: assessmentSubjectSourceV1Schema,
   assessmentMode: assessmentModeSchema,
@@ -680,19 +694,18 @@ export const assessmentOperatorReasonV1Schema: z.ZodType<AssessmentOperatorReaso
   summary: z.string().trim().min(1).max(512),
 })
 
-export interface ResumeAssessmentRequest {
+export interface ResumeAssessmentRequest extends MutationEnvelopeV1 {
   readonly schemaVersion: 1
   readonly assessmentId: AssessmentId
   readonly expectedAssessmentRevision: number
-  readonly idempotencyKey: string
   readonly reason: AssessmentOperatorReasonV1
 }
 
 export const resumeAssessmentRequestSchema: z.ZodType<ResumeAssessmentRequest> = z.strictObject({
   schemaVersion: z.literal(1),
+  ...mutationEnvelopeV1Schema.shape,
   assessmentId: assessmentIdSchema,
   expectedAssessmentRevision: z.number().int().positive(),
-  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
   reason: assessmentOperatorReasonV1Schema,
 })
 
@@ -724,19 +737,18 @@ export const assessmentResumeResultSchema: z.ZodType<SecurityResult<AssessmentRe
     z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
   ])
 
-export interface CancelAssessmentRequest {
+export interface CancelAssessmentRequest extends MutationEnvelopeV1 {
   readonly schemaVersion: 1
   readonly assessmentId: AssessmentId
   readonly expectedAssessmentRevision: number
-  readonly idempotencyKey: string
   readonly reason: AssessmentOperatorReasonV1
 }
 
 export const cancelAssessmentRequestSchema: z.ZodType<CancelAssessmentRequest> = z.strictObject({
   schemaVersion: z.literal(1),
+  ...mutationEnvelopeV1Schema.shape,
   assessmentId: assessmentIdSchema,
   expectedAssessmentRevision: z.number().int().positive(),
-  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
   reason: assessmentOperatorReasonV1Schema,
 })
 
@@ -983,10 +995,8 @@ export const riskDecisionAttestationV1Schema: z.ZodType<RiskDecisionAttestationV
   attestedAt: z.iso.datetime({ offset: true }),
 })
 
-export interface RecordRiskDecisionRequest {
+export interface RecordRiskDecisionRequest extends MutationEnvelopeV1 {
   readonly schemaVersion: 1
-  readonly contractVersion: 1
-  readonly idempotencyKey: string
   readonly assessmentId: AssessmentId
   readonly expectedAssessmentRevision: number
   readonly finding: {
@@ -1001,8 +1011,7 @@ export interface RecordRiskDecisionRequest {
 
 export const recordRiskDecisionRequestSchema: z.ZodType<RecordRiskDecisionRequest> = z.strictObject({
   schemaVersion: z.literal(1),
-  contractVersion: z.literal(1),
-  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+  ...mutationEnvelopeV1Schema.shape,
   assessmentId: assessmentIdSchema,
   expectedAssessmentRevision: z.number().int().positive(),
   finding: z.strictObject({
@@ -1954,9 +1963,8 @@ export const getExportRequestSchema: z.ZodType<GetExportRequest> = z.discriminat
   }),
 ])
 
-export interface RequestExportRequest {
+export interface RequestExportRequest extends MutationEnvelopeV1 {
   readonly schemaVersion: 1
-  readonly idempotencyKey: string
   readonly assessmentId: AssessmentId
   readonly expectedAssessmentRevision: number
   readonly exportProfileId: ExportProfileIdV1
@@ -1965,7 +1973,7 @@ export interface RequestExportRequest {
 
 export const requestExportRequestSchema: z.ZodType<RequestExportRequest> = z.strictObject({
   schemaVersion: z.literal(1),
-  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+  ...mutationEnvelopeV1Schema.shape,
   assessmentId: assessmentIdSchema,
   expectedAssessmentRevision: z.number().int().positive(),
   exportProfileId: exportProfileIdV1Schema,

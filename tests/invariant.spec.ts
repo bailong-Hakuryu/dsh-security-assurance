@@ -248,6 +248,7 @@ describe('Invariant Entry', () => {
     const invocation = referenceHostInvocation(ctx.securityAssurance)
     const mutation = await ctx.securityAssurance.registerRepository(invocation, {
       schemaVersion: 1,
+      contractVersion: 1 as const,
       idempotencyKey: 'invariant-read-only-register-1',
       root: 'D:/must-not-be-resolved-in-invariant-safe-mode',
       displayName: 'Must not register',

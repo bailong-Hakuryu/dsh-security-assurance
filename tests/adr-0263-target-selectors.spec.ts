@@ -62,6 +62,7 @@ describe('ADR 0263 mode-specific Target Selectors', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'target-selector-repository',
         root: repository,
         displayName: 'Target selector fixture',
@@ -79,6 +80,7 @@ describe('ADR 0263 mode-specific Target Selectors', () => {
       const start = async (idempotencyKey: string, relativePaths: readonly string[]) => {
         const result = await ctx.securityAssurance.startAssessment(invocation, {
           schemaVersion: 1,
+          contractVersion: 1 as const,
           idempotencyKey,
           repositoryId: registered.value.repositoryId,
           subject: { kind: 'workspace_snapshot' },

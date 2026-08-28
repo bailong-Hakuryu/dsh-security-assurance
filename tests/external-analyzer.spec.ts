@@ -186,6 +186,7 @@ describe('external Analyzer composition', () => {
       }
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'external-analyzer-register-1',
         root: repository,
         displayName: 'External Analyzer fixture',
@@ -201,6 +202,7 @@ describe('external Analyzer composition', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'external-analyzer-assessment-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -393,6 +395,7 @@ describe('external Analyzer composition', () => {
       }
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'qualified-analyzer-register-1',
         root: repository,
         displayName: 'Qualified Analyzer fixture',
@@ -436,6 +439,7 @@ describe('external Analyzer composition', () => {
       })
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         ...selection,
+        contractVersion: 1,
         idempotencyKey: 'qualified-analyzer-assessment-1',
       })
       if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
@@ -604,6 +608,7 @@ describe('external Analyzer composition', () => {
       }
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'expired-qualification-register-1',
         root: repository,
         displayName: 'Expired Qualification fixture',
@@ -619,6 +624,7 @@ describe('external Analyzer composition', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'expired-qualification-assessment-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -748,6 +754,7 @@ describe('external Analyzer composition', () => {
       }
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'tampered-external-register-1',
         root: repository,
         displayName: 'Tampered external Analyzer fixture',
@@ -763,6 +770,7 @@ describe('external Analyzer composition', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'tampered-external-assessment-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },

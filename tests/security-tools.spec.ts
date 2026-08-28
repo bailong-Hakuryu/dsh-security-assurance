@@ -598,6 +598,7 @@ describe('security_assessment_export integration', () => {
       const invocation = referenceHostInvocation(fixture.ctx.securityAssurance)
       const registered = await fixture.ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'security-tool-export-repository-v1',
         root: repository,
         displayName: 'Model export tool fixture',
@@ -613,6 +614,7 @@ describe('security_assessment_export integration', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await fixture.ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'security-tool-export-assessment-v1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -797,6 +799,7 @@ describe('security_assessment_cancel integration', () => {
       const firstInvocation = referenceHostInvocation(fixture.ctx.securityAssurance)
       const registered = await fixture.ctx.securityAssurance.registerRepository(firstInvocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'security-tool-cancel-repository-v1',
         root: repository,
         displayName: 'Model cancel tool fixture',
@@ -812,6 +815,7 @@ describe('security_assessment_cancel integration', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await fixture.ctx.securityAssurance.startAssessment(firstInvocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'security-tool-cancel-assessment-v1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -990,6 +994,7 @@ describe('security_assessment_resume integration', () => {
       const firstInvocation = referenceHostInvocation(fixture.ctx.securityAssurance)
       const registered = await fixture.ctx.securityAssurance.registerRepository(firstInvocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'security-tool-resume-repository-v1',
         root: repository,
         displayName: 'Model resume tool fixture',
@@ -1005,6 +1010,7 @@ describe('security_assessment_resume integration', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await fixture.ctx.securityAssurance.startAssessment(firstInvocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'security-tool-resume-assessment-v1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -1193,6 +1199,7 @@ describe('security_assessment_findings disclosure', () => {
       const invocation = referenceHostInvocation(fixture.ctx.securityAssurance)
       const registered = await fixture.ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'security-tool-findings-repository-v1',
         root: repository,
         displayName: 'Model findings tool fixture',
@@ -1208,6 +1215,7 @@ describe('security_assessment_findings disclosure', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await fixture.ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'security-tool-findings-assessment-v1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -1428,6 +1436,7 @@ describe('security_assessment_start integration', () => {
       const hostInvocation = referenceHostInvocation(fixture.ctx.securityAssurance)
       const registered = await fixture.ctx.securityAssurance.registerRepository(hostInvocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'security-tool-start-repository-v1',
         root: repository,
         displayName: 'Model start tool fixture',
@@ -1600,6 +1609,7 @@ describe('security_assessment_status disclosure', () => {
       const invocation = referenceHostInvocation(fixture.ctx.securityAssurance)
       const registered = await fixture.ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'security-tool-status-repository-v1',
         root: repository,
         displayName: 'Model tool disclosure fixture',
@@ -1615,6 +1625,7 @@ describe('security_assessment_status disclosure', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await fixture.ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'security-tool-status-assessment-v1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },

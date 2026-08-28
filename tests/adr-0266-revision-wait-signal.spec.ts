@@ -33,6 +33,7 @@ describe('ADR 0266 bounded Assessment revision wait', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'revision-signal-repository',
         root: repository,
         displayName: 'Revision signal fixture',
@@ -48,6 +49,7 @@ describe('ADR 0266 bounded Assessment revision wait', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'revision-signal-assessment',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },

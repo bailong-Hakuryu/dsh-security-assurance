@@ -663,6 +663,7 @@ const SecurityAssuranceTools = {
             : { kind: args.target.kind, relativePaths: args.target.relative_paths }
         const parsed = startAssessmentRequestSchema.safeParse({
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: args.idempotency_key,
           repositoryId: args.repository_id,
           subject,
@@ -839,6 +840,7 @@ const SecurityAssuranceTools = {
       async execute(args, exec) {
         const parsed = resumeAssessmentRequestSchema.safeParse({
           schemaVersion: 1,
+          contractVersion: 1,
           assessmentId: args.assessment_id,
           expectedAssessmentRevision: args.expected_assessment_revision,
           idempotencyKey: args.idempotency_key,
@@ -906,6 +908,7 @@ const SecurityAssuranceTools = {
       async execute(args, exec) {
         const parsed = cancelAssessmentRequestSchema.safeParse({
           schemaVersion: 1,
+          contractVersion: 1,
           assessmentId: args.assessment_id,
           expectedAssessmentRevision: args.expected_assessment_revision,
           idempotencyKey: args.idempotency_key,
@@ -967,6 +970,7 @@ const SecurityAssuranceTools = {
       async execute(args, exec) {
         const parsed = requestExportRequestSchema.safeParse({
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: args.idempotency_key,
           assessmentId: args.assessment_id,
           expectedAssessmentRevision: args.expected_assessment_revision,

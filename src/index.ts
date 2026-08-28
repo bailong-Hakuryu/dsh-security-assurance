@@ -703,6 +703,7 @@ export class SecurityAssuranceService extends Service {
         principalId: authority.principalId,
         authorityKind: authority.kind,
         idempotencyKey: parsed.data.idempotencyKey,
+        canonicalRequest: { ...parsed.data, root: canonicalRoot },
         canonicalRoot,
         displayName: parsed.data.displayName,
         bindings: parsed.data.bindings,
@@ -750,6 +751,7 @@ export class SecurityAssuranceService extends Service {
         principalId: authority.principalId,
         authorityKind: authority.kind,
         idempotencyKey: parsed.data.idempotencyKey,
+        canonicalRequest: parsed.data,
         repositoryId: parsed.data.repositoryId,
         expectedRepositoryRevision: parsed.data.expectedRepositoryRevision,
         ...parsed.data.displayName === undefined ? {} : { displayName: parsed.data.displayName },
@@ -786,6 +788,7 @@ export class SecurityAssuranceService extends Service {
         principalId: authority.principalId,
         authorityKind: authority.kind,
         idempotencyKey: parsed.data.idempotencyKey,
+        canonicalRequest: parsed.data,
         repositoryId: parsed.data.repositoryId,
         expectedRepositoryRevision: parsed.data.expectedRepositoryRevision,
       })
@@ -1746,6 +1749,7 @@ export class SecurityAssuranceService extends Service {
 
     const started = await this.startAssessment(invocation, {
       schemaVersion: 1,
+      contractVersion: 1,
       idempotencyKey: controlPlaneOperationIdempotencyKey('start', operation.context),
       repositoryId: operation.repositoryId,
       subject: { kind: 'workspace_snapshot' },
@@ -1783,6 +1787,7 @@ export class SecurityAssuranceService extends Service {
         }
         const resumed = await this.resumeAssessment(invocation, {
           schemaVersion: 1,
+          contractVersion: 1,
           assessmentId: assessment.value.assessmentId,
           expectedAssessmentRevision: assessment.value.assessmentRevision,
           idempotencyKey: controlPlaneOperationIdempotencyKey('resume', operation.context),
@@ -1843,6 +1848,7 @@ export class SecurityAssuranceService extends Service {
       }
       const canceled = await this.cancelAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1,
         assessmentId: assessment.value.assessmentId,
         expectedAssessmentRevision: assessment.value.assessmentRevision,
         idempotencyKey: controlPlaneOperationIdempotencyKey('cancel', operation.context),

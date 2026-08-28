@@ -42,6 +42,7 @@ describe('SecurityAssuranceService Assessment list', () => {
     const invocation = referenceHostInvocation(ctx.securityAssurance, 'assessment-list-reviewer')
     const registered = await ctx.securityAssurance.registerRepository(invocation, {
       schemaVersion: 1,
+      contractVersion: 1 as const,
       idempotencyKey: 'assessment-list-repository-v1',
       root: repository,
       displayName: 'Assessment list fixture',
@@ -59,6 +60,7 @@ describe('SecurityAssuranceService Assessment list', () => {
     const start = async (ordinal: number) => {
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: `assessment-list-start-${ordinal}`,
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' as const },

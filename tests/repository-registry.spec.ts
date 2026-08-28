@@ -52,6 +52,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-disable-replay-register-1',
         root: repository,
         displayName: 'Disable replay fixture',
@@ -68,6 +69,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
 
       const startRequest = {
         schemaVersion: 1 as const,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-disable-replay-start-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' as const },
@@ -81,6 +83,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
 
       const disabled = await ctx.securityAssurance.disableRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-disable-replay-disable-1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 1,
@@ -136,6 +139,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
       }
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-future-update-register-1',
         root: repository,
         displayName: 'Future update fixture',
@@ -145,6 +149,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
 
       const originalStart = {
         schemaVersion: 1 as const,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-future-update-start-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' as const },
@@ -166,6 +171,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
       }
       const updated = await ctx.securityAssurance.updateRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-future-update-command-1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 1,
@@ -233,6 +239,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
     try {
       const registration = {
         schemaVersion: 1 as const,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-separate-auth-register-1',
         root: repository,
         displayName: 'Separate authorization fixture',
@@ -277,6 +284,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
       })).resolves.toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } })
       await expect(ctx.securityAssurance.updateRepository(reader, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-separate-auth-update-1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 1,
@@ -284,6 +292,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
       })).resolves.toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } })
       await expect(ctx.securityAssurance.disableRepository(reader, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-separate-auth-disable-1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 1,
@@ -309,6 +318,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
       for (const [index, repository] of repositories.entries()) {
         const registered = await ctx.securityAssurance.registerRepository(invocation, {
           schemaVersion: 1,
+          contractVersion: 1 as const,
           idempotencyKey: `repository-bounded-list-register-${index + 1}`,
           root: repository,
           displayName: `Bounded list fixture ${index + 1}`,
@@ -351,6 +361,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const unregisteredStart = {
         schemaVersion: 1 as const,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-implicit-start-1',
         repositoryId: 'repo-00000000-0000-0000-0000-000000000000',
         subject: { kind: 'workspace_snapshot' as const },
@@ -395,6 +406,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const request: RegisterRepositoryRequest = {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-register-fixture-1',
         root: repository,
         displayName: 'Registry fixture',
@@ -463,6 +475,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registration = {
         schemaVersion: 1 as const,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-register-cas-1',
         root: repository,
         displayName: 'CAS fixture',
@@ -487,6 +500,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
 
       const updated = await ctx.securityAssurance.updateRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-update-cas-1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 1,
@@ -498,6 +512,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
       })
       await expect(ctx.securityAssurance.updateRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-update-cas-1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 1,
@@ -506,6 +521,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
 
       await expect(ctx.securityAssurance.updateRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-update-stale-1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 1,
@@ -514,6 +530,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
 
       const disabled = await ctx.securityAssurance.disableRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-disable-cas-1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 2,
@@ -524,6 +541,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
       })
       await expect(ctx.securityAssurance.disableRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'repository-disable-cas-1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 2,
@@ -565,6 +583,7 @@ describe('SecurityAssuranceService Repository Administration', () => {
     const firstInvocation = referenceHostInvocation(firstContext.securityAssurance)
     const registered = await firstContext.securityAssurance.registerRepository(firstInvocation, {
       schemaVersion: 1,
+      contractVersion: 1 as const,
       idempotencyKey: 'repository-restart-1',
       root: repository,
       displayName: 'Restart fixture',

@@ -12,6 +12,7 @@ describe('ADR 0267 resume and cancel mutation contracts', () => {
   it('requires exact revision, idempotency key, and bounded structured reason', () => {
     const resume = {
       schemaVersion: 1,
+      contractVersion: 1 as const,
       assessmentId,
       expectedAssessmentRevision: 7,
       idempotencyKey: 'adr-0267-resume',

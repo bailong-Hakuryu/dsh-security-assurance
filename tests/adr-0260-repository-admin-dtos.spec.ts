@@ -16,6 +16,7 @@ const bindings = {
 
 const registration = {
   schemaVersion: 1 as const,
+  contractVersion: 1 as const,
   idempotencyKey: 'adr-0260-register-v1',
   root: '/host/resolvable/repository',
   displayName: 'Repository DTO fixture',
@@ -55,6 +56,7 @@ describe('ADR 0260 Repository Administration DTO boundary', () => {
     }).success).toBe(false)
     expect(updateRepositoryRequestSchema.safeParse({
       schemaVersion: 1,
+      contractVersion: 1 as const,
       idempotencyKey: `adr-0260-update-${field}`,
       repositoryId: 'repo-00000000-0000-0000-0000-000000000260',
       expectedRepositoryRevision: 1,

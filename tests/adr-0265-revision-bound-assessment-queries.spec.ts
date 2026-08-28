@@ -33,6 +33,7 @@ describe('ADR 0265 revision-bound Assessment queries', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'query-contract-repository',
         root: repository,
         displayName: 'Query contract fixture',
@@ -49,6 +50,7 @@ describe('ADR 0265 revision-bound Assessment queries', () => {
 
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'query-contract-assessment',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },

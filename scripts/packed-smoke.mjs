@@ -1245,6 +1245,7 @@ const missingExportRequest = await ctx.typertGateway.invoke({
     securityAssuranceWorkbenchContextId: 'packed-workbench-context-v1',
     request: {
       schemaVersion: 1,
+      contractVersion: 1,
       idempotencyKey: 'packed-missing-export-request-v1',
       assessmentId: 'asm-00000000-0000-0000-0000-000000000000',
       expectedAssessmentRevision: 1,

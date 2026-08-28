@@ -270,6 +270,7 @@ async function runReferenceValidationScenario<Observation = undefined>(
     }
     const registered = await activeService.registerRepository(invocation, {
       schemaVersion: 1,
+      contractVersion: 1,
       idempotencyKey: `external-validation-register-${scenario.id}`,
       root: repository,
       displayName: 'External validation fixture',
@@ -285,6 +286,7 @@ async function runReferenceValidationScenario<Observation = undefined>(
     if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
     const started = await activeService.startAssessment(invocation, {
       schemaVersion: 1,
+      contractVersion: 1,
       idempotencyKey: `external-validation-assessment-${scenario.id}`,
       repositoryId: registered.value.repositoryId,
       subject: { kind: 'workspace_snapshot' },
@@ -1644,6 +1646,7 @@ describe('external Analyzer Candidate validation', () => {
         })
         const resume = await service.resumeAssessment(invocation, {
           schemaVersion: 1,
+          contractVersion: 1,
           assessmentId,
           expectedAssessmentRevision: listed.value.assessmentRevision,
           idempotencyKey: 'resume-risk-decision-window-v1',

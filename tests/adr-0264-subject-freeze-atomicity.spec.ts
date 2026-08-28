@@ -33,6 +33,7 @@ describe('ADR 0264 atomic Subject Freeze', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'freeze-atomicity-repository',
         root: repository,
         displayName: 'Freeze atomicity fixture',
@@ -50,6 +51,7 @@ describe('ADR 0264 atomic Subject Freeze', () => {
       const idempotencyKey = 'freeze-before-assessment-identity'
       const failed = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey,
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'git_revision', commit: '0000000000000000000000000000000000000000' },
@@ -69,6 +71,7 @@ describe('ADR 0264 atomic Subject Freeze', () => {
 
       const retried = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey,
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },

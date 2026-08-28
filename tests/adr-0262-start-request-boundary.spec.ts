@@ -17,6 +17,7 @@ afterEach(async () => {
 
 const request: StartAssessmentRequest = {
   schemaVersion: 1,
+  contractVersion: 1 as const,
   idempotencyKey: 'adr-0262-start-v1',
   repositoryId: 'repo-00000000-0000-0000-0000-000000000262',
   subject: { kind: 'workspace_snapshot' },

@@ -28,6 +28,7 @@ describe('ADR 0261 Repository mutation CAS and idempotency', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registration = {
         schemaVersion: 1 as const,
+        contractVersion: 1 as const,
         idempotencyKey: 'adr-0261-register-v1',
         root: repositoryRoot,
         displayName: 'ADR 0261 fixture',
@@ -52,6 +53,7 @@ describe('ADR 0261 Repository mutation CAS and idempotency', () => {
 
       const update = {
         schemaVersion: 1 as const,
+        contractVersion: 1 as const,
         idempotencyKey: 'adr-0261-update-v1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 1,
@@ -72,6 +74,7 @@ describe('ADR 0261 Repository mutation CAS and idempotency', () => {
       })).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } })
       await expect(ctx.securityAssurance.disableRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'adr-0261-stale-disable-v1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 1,

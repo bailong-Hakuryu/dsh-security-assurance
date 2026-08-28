@@ -68,6 +68,7 @@ export interface RegisterRepositoryPersistenceInput {
   readonly principalId: string
   readonly authorityKind: string
   readonly idempotencyKey: string
+  readonly canonicalRequest: unknown
   readonly canonicalRoot: string
   readonly displayName: string
   readonly bindings: RepositoryBindingsV1
@@ -77,6 +78,7 @@ export interface UpdateRepositoryPersistenceInput {
   readonly principalId: string
   readonly authorityKind: string
   readonly idempotencyKey: string
+  readonly canonicalRequest: unknown
   readonly repositoryId: RepositoryId
   readonly expectedRepositoryRevision: number
   readonly displayName?: string
@@ -87,6 +89,7 @@ export interface DisableRepositoryPersistenceInput {
   readonly principalId: string
   readonly authorityKind: string
   readonly idempotencyKey: string
+  readonly canonicalRequest: unknown
   readonly repositoryId: RepositoryId
   readonly expectedRepositoryRevision: number
 }
@@ -370,11 +373,7 @@ export class SecurityPersistence {
   registerRepository(input: RegisterRepositoryPersistenceInput): RepositoryCommandReceiptV1 {
     this.requireOpen()
     const targetKey = digest({ canonicalRoot: input.canonicalRoot })
-    const requestDigest = digest({
-      canonicalRoot: input.canonicalRoot,
-      displayName: input.displayName,
-      bindings: input.bindings,
-    })
+    const requestDigest = digest(input.canonicalRequest)
     this.db.exec('BEGIN IMMEDIATE')
     try {
       const replay = this.db.prepare(`
@@ -467,11 +466,7 @@ export class SecurityPersistence {
 
   updateRepository(input: UpdateRepositoryPersistenceInput): RepositoryCommandReceiptV1 {
     this.requireOpen()
-    const requestDigest = digest({
-      expectedRepositoryRevision: input.expectedRepositoryRevision,
-      ...input.displayName === undefined ? {} : { displayName: input.displayName },
-      ...input.bindings === undefined ? {} : { bindings: input.bindings },
-    })
+    const requestDigest = digest(input.canonicalRequest)
     this.db.exec('BEGIN IMMEDIATE')
     try {
       const replay = this.findReplay(
@@ -536,7 +531,7 @@ export class SecurityPersistence {
 
   disableRepository(input: DisableRepositoryPersistenceInput): RepositoryCommandReceiptV1 {
     this.requireOpen()
-    const requestDigest = digest({ expectedRepositoryRevision: input.expectedRepositoryRevision })
+    const requestDigest = digest(input.canonicalRequest)
     this.db.exec('BEGIN IMMEDIATE')
     try {
       const replay = this.findReplay(

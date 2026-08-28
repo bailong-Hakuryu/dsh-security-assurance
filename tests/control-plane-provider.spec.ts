@@ -435,6 +435,7 @@ describe('Security Assurance Control Plane Provider', () => {
     }
     const registered = await ctx.securityAssurance.registerRepository(invocation, {
       schemaVersion: 1,
+      contractVersion: 1 as const,
       idempotencyKey: 'control-plane-provider-register-1',
       root: repository,
       displayName: 'Control Plane Provider fixture',
@@ -592,6 +593,7 @@ describe('Security Assurance Control Plane Provider', () => {
     const invocation = referenceHostInvocation(ctx.securityAssurance)
     const registered = await ctx.securityAssurance.registerRepository(invocation, {
       schemaVersion: 1,
+      contractVersion: 1 as const,
       idempotencyKey: 'control-plane-repository-binding-register-1',
       root: securityRepository,
       displayName: 'Wrong Security Repository binding fixture',
@@ -676,6 +678,7 @@ describe('Security Assurance Control Plane Provider', () => {
     const invocation = referenceHostInvocation(ctx.securityAssurance)
     const registered = await ctx.securityAssurance.registerRepository(invocation, {
       schemaVersion: 1,
+      contractVersion: 1 as const,
       idempotencyKey: 'control-plane-assurance-retry-register-1',
       root: repository,
       displayName: 'Control Plane Assurance Retry fixture',
@@ -744,6 +747,7 @@ describe('Security Assurance Control Plane Provider', () => {
       }
       const canceled = await ctx.securityAssurance.cancelAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         assessmentId: firstAssessment.value.assessmentId,
         expectedAssessmentRevision: firstAssessment.value.assessmentRevision,
         idempotencyKey: 'control-plane-assurance-retry-cancel-1',
@@ -840,6 +844,7 @@ describe('Security Assurance Control Plane Provider', () => {
     const firstInvocation = referenceHostInvocation(firstContext.securityAssurance)
     const registered = await firstContext.securityAssurance.registerRepository(firstInvocation, {
       schemaVersion: 1,
+      contractVersion: 1 as const,
       idempotencyKey: 'control-plane-recovery-register-1',
       root: repository,
       displayName: 'Control Plane recovery fixture',
@@ -958,6 +963,7 @@ describe('Security Assurance Control Plane Provider', () => {
     const invocation = referenceHostInvocation(ctx.securityAssurance)
     const registered = await ctx.securityAssurance.registerRepository(invocation, {
       schemaVersion: 1,
+      contractVersion: 1 as const,
       idempotencyKey: 'control-plane-cancel-register-1',
       root: repository,
       displayName: 'Control Plane cancellation fixture',
@@ -1007,6 +1013,7 @@ describe('Security Assurance Control Plane Provider', () => {
 
       const rebound = await ctx.securityAssurance.updateRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'control-plane-cancel-rebind-1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 1,
@@ -1105,6 +1112,7 @@ describe('Security Assurance Control Plane Provider', () => {
     const firstInvocation = referenceHostInvocation(firstContext.securityAssurance)
     const registered = await firstContext.securityAssurance.registerRepository(firstInvocation, {
       schemaVersion: 1,
+      contractVersion: 1 as const,
       idempotencyKey: 'control-plane-cancel-recovery-register-1',
       root: repository,
       displayName: 'Control Plane cancellation recovery fixture',

@@ -1421,6 +1421,7 @@ describe('Security Assurance Workbench UI', () => {
         securityAssuranceWorkbenchContextId: 'workbench-session-reviewer',
         request: {
           schemaVersion: 1,
+          contractVersion: 1,
           assessmentId: id,
           expectedAssessmentRevision: 7,
           idempotencyKey: expect.stringMatching(/^workbench-resume:[0-9a-f-]{36}$/),

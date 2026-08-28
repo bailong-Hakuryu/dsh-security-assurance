@@ -146,6 +146,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
     try {
       const registered = await service.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'quiescing-health-register-1',
         root: repository,
         displayName: 'Quiescing health fixture',
@@ -161,6 +162,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await service.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'quiescing-health-start-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -201,6 +203,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
       })
       await expect(service.disableRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'quiescing-health-disable-1',
         repositoryId: registered.value.repositoryId,
         expectedRepositoryRevision: 1,
@@ -266,6 +269,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
       })).resolves.toMatchObject({ ok: false, error: { code: 'UNAVAILABLE', retryable: true } })
       await expect(ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'read-only-safe-register-1',
         root: 'D:/must-not-be-resolved-in-safe-mode',
         displayName: 'Must not register',
@@ -317,6 +321,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
 
       await expect(ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'incompatible-runtime-register-1',
         root: repository,
         displayName: 'Must not register on an incompatible runtime',
@@ -337,6 +342,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
       const remainingMutationResults = await Promise.all([
         ctx.securityAssurance.updateRepository(invocation, {
           schemaVersion: 1,
+          contractVersion: 1 as const,
           idempotencyKey: 'incompatible-runtime-update-1',
           repositoryId,
           expectedRepositoryRevision: 1,
@@ -344,12 +350,14 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
         }),
         ctx.securityAssurance.disableRepository(invocation, {
           schemaVersion: 1,
+          contractVersion: 1 as const,
           idempotencyKey: 'incompatible-runtime-disable-1',
           repositoryId,
           expectedRepositoryRevision: 1,
         }),
         ctx.securityAssurance.startAssessment(invocation, {
           schemaVersion: 1,
+          contractVersion: 1 as const,
           idempotencyKey: 'incompatible-runtime-start-1',
           repositoryId,
           subject: { kind: 'workspace_snapshot' },
@@ -360,6 +368,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
         }),
         ctx.securityAssurance.resumeAssessment(invocation, {
           schemaVersion: 1,
+          contractVersion: 1 as const,
           idempotencyKey: 'incompatible-runtime-resume-1',
           assessmentId,
           expectedAssessmentRevision: 1,
@@ -367,6 +376,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
         }),
         ctx.securityAssurance.cancelAssessment(invocation, {
           schemaVersion: 1,
+          contractVersion: 1 as const,
           idempotencyKey: 'incompatible-runtime-cancel-1',
           assessmentId,
           expectedAssessmentRevision: 1,
@@ -374,7 +384,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
         }),
         ctx.securityAssurance.recordRiskDecision(invocation, {
           schemaVersion: 1,
-          contractVersion: 1,
+          contractVersion: 1 as const,
           idempotencyKey: 'incompatible-runtime-risk-1',
           assessmentId,
           expectedAssessmentRevision: 1,
@@ -386,6 +396,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
         }),
         ctx.securityAssurance.requestExport(invocation, {
           schemaVersion: 1,
+          contractVersion: 1 as const,
           idempotencyKey: 'incompatible-runtime-export-1',
           assessmentId,
           expectedAssessmentRevision: 1,
@@ -422,6 +433,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
       const invocation = referenceHostInvocation(initialContext.securityAssurance)
       const registered = await initialContext.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'sealed-safe-mode-register-1',
         root: repository,
         displayName: 'Sealed Safe Mode fixture',
@@ -437,6 +449,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await initialContext.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'sealed-safe-mode-start-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' },
@@ -488,6 +501,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
       })).resolves.toMatchObject({ ok: true, value: { kind: 'PREVIEW', assessmentId } })
       await expect(restartedContext.securityAssurance.requestExport(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'sealed-safe-mode-export-1',
         assessmentId,
         expectedAssessmentRevision: 3,

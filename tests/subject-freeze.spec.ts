@@ -49,6 +49,7 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'subject-repository-register-1',
         root: repository,
         displayName: 'Subject fixture',
@@ -65,6 +66,7 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
 
       const request = {
         schemaVersion: 1 as const,
+        contractVersion: 1 as const,
         idempotencyKey: 'assessment-workspace-start-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'workspace_snapshot' as const },
@@ -168,6 +170,7 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'subject-repository-register-2',
         root: repository,
         displayName: 'Exact identity fixture',
@@ -184,6 +187,7 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
 
       const revision = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'assessment-revision-start-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'git_revision', commit: head },
@@ -196,6 +200,7 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
 
       const change = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'assessment-change-start-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'change', baseCommit: base, headCommit: head },
@@ -208,6 +213,7 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
 
       const failed = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'assessment-invalid-revision-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'git_revision', commit: '0000000000000000000000000000000000000000' },
@@ -261,6 +267,7 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'subject-repository-register-special-1',
         root: repository,
         displayName: 'Special object fixture',
@@ -276,6 +283,7 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
       if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
       const started = await ctx.securityAssurance.startAssessment(invocation, {
         schemaVersion: 1,
+        contractVersion: 1 as const,
         idempotencyKey: 'assessment-special-start-1',
         repositoryId: registered.value.repositoryId,
         subject: { kind: 'git_revision', commit: specialCommit },

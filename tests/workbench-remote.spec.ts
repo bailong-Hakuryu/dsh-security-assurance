@@ -149,6 +149,7 @@ async function harness(strictTypert = false, riskDecisionWindow = true): Promise
   const hostInvocation = referenceHostInvocation(ctx.securityAssurance)
   const registered = await ctx.securityAssurance.registerRepository(hostInvocation, {
     schemaVersion: 1,
+    contractVersion: 1,
     idempotencyKey: 'workbench-repository-register-v1',
     root: repository,
     displayName: 'Workbench fixture',
@@ -164,6 +165,7 @@ async function harness(strictTypert = false, riskDecisionWindow = true): Promise
   if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
   const started = await ctx.securityAssurance.startAssessment(hostInvocation, {
     schemaVersion: 1,
+    contractVersion: 1,
     idempotencyKey: 'workbench-assessment-start-v1',
     repositoryId: registered.value.repositoryId,
     subject: { kind: 'workspace_snapshot' },
@@ -256,6 +258,7 @@ describe('Security Assurance Workbench Remote', () => {
         securityAssuranceWorkbenchContextId: authorityId,
         request: {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: 'workbench-export-request-v1',
           assessmentId,
           expectedAssessmentRevision: manifest.value.assessmentRevision,
@@ -407,6 +410,7 @@ describe('Security Assurance Workbench Remote', () => {
         securityAssuranceWorkbenchContextId: authorityId,
         request: {
           ...selection,
+          contractVersion: 1,
           idempotencyKey: 'workbench-confirmed-start-v1',
           startPreflightDigest: catalog.value.startPreflight.proposalDigest,
         },
@@ -926,6 +930,7 @@ describe('Security Assurance Workbench Remote', () => {
         securityAssuranceWorkbenchContextId: authorityId,
         request: {
           schemaVersion: 1,
+          contractVersion: 1,
           assessmentId,
           expectedAssessmentRevision: action.expectedAssessmentRevision,
           idempotencyKey: 'workbench-cancel-blocked-v1',
@@ -966,7 +971,7 @@ describe('Security Assurance Workbench Remote', () => {
     }
     const request = {
       schemaVersion: 1 as const,
-      contractVersion: 1 as const,
+      contractVersion: 1,
       idempotencyKey: 'workbench-risk-denial-v1',
       assessmentId,
       expectedAssessmentRevision: action.expectedAssessmentRevision,
