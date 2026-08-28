@@ -839,6 +839,10 @@ describe('Security Assurance Workbench Remote', () => {
       value: {
         assessmentId,
         kind: 'CHANGED',
+        changed: true,
+        state: 'BLOCKED',
+        terminal: false,
+        snapshotRefreshRequired: true,
       },
     })
   })

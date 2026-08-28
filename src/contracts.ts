@@ -377,6 +377,7 @@ const subjectRelativePathSchema = z.string().min(1).max(1024).refine(path => (
   && !path.startsWith('\\')
   && !/^[a-z]:/iu.test(path)
   && !path.includes('\\')
+  && !/[*?\[\]{}]/u.test(path)
   && path.split('/').every(segment => segment.length > 0 && segment !== '.' && segment !== '..')
 ), 'target paths must be canonical Subject-relative paths')
 
@@ -391,7 +392,12 @@ export const assessmentTargetSelectorV1Schema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('targeted'),
     relativePaths: z.array(subjectRelativePathSchema).min(1).max(128),
-  }),
+  }).refine(
+    target => target.relativePaths.every((path, index, values) => (
+      index === 0 || values[index - 1]! < path
+    )),
+    { message: 'Targeted paths must be unique and canonically ordered' },
+  ),
 ])
 
 export type AssessmentTargetSelectorV1 = z.infer<typeof assessmentTargetSelectorV1Schema>
@@ -1627,6 +1633,24 @@ export const assessmentBlockedRecoveryV1Schema: z.ZodType<AssessmentBlockedRecov
     }),
   })
 
+export interface AssessmentContractSnapshotV1 {
+  readonly schemaVersion: 1
+  readonly assessmentMode: AssessmentMode
+  readonly assessmentProfileId: AssessmentProfileId
+  readonly target: AssessmentTargetSelectorV1
+  readonly targetDigest: DigestEnvelopeV1
+  readonly requestedStrongerControlIds: readonly string[]
+}
+
+export const assessmentContractSnapshotV1Schema: z.ZodType<AssessmentContractSnapshotV1> = z.strictObject({
+  schemaVersion: z.literal(1),
+  assessmentMode: assessmentModeSchema,
+  assessmentProfileId: assessmentProfileIdSchema,
+  target: assessmentTargetSelectorV1Schema,
+  targetDigest: digestEnvelopeV1Schema,
+  requestedStrongerControlIds: z.array(boundedBindingId).max(16),
+})
+
 export interface AssessmentSnapshotV1 {
   readonly schemaVersion: 1
   readonly assessmentId: AssessmentId
@@ -1637,6 +1661,7 @@ export interface AssessmentSnapshotV1 {
     readonly repositoryRevision: number
   }
   readonly subject: AssessmentSubjectReceiptV1
+  readonly contract: AssessmentContractSnapshotV1
   readonly policy: {
     readonly policyId: string
     readonly digest: DigestEnvelopeV1
@@ -1660,6 +1685,7 @@ export const assessmentSnapshotV1Schema: z.ZodType<AssessmentSnapshotV1> = z.str
     repositoryRevision: z.number().int().positive(),
   }),
   subject: assessmentSubjectReceiptV1Schema,
+  contract: assessmentContractSnapshotV1Schema,
   policy: z.strictObject({
     policyId: boundedBindingId,
     digest: digestEnvelopeV1Schema,
@@ -1685,14 +1711,38 @@ export interface AssessmentRevisionSignalV1 {
   readonly schemaVersion: 1
   readonly assessmentId: AssessmentId
   readonly kind: 'CHANGED' | 'TIMED_OUT'
+  readonly changed: boolean
   readonly assessmentRevision: number
+  readonly state: AssessmentState
+  readonly terminal: boolean
+  readonly snapshotRefreshRequired: boolean
 }
 
 export const assessmentRevisionSignalV1Schema: z.ZodType<AssessmentRevisionSignalV1> = z.strictObject({
   schemaVersion: z.literal(1),
   assessmentId: assessmentIdSchema,
   kind: z.enum(['CHANGED', 'TIMED_OUT']),
+  changed: z.boolean(),
   assessmentRevision: z.number().int().positive(),
+  state: assessmentStateSchema,
+  terminal: z.boolean(),
+  snapshotRefreshRequired: z.boolean(),
+}).superRefine((signal, context) => {
+  const expectedChanged = signal.kind === 'CHANGED'
+  const expectedTerminal = signal.state === 'SEALED' || signal.state === 'CANCELED'
+  if (signal.changed !== expectedChanged) {
+    context.addIssue({ code: 'custom', path: ['changed'], message: 'Change flag must agree with signal kind' })
+  }
+  if (signal.snapshotRefreshRequired !== expectedChanged) {
+    context.addIssue({
+      code: 'custom',
+      path: ['snapshotRefreshRequired'],
+      message: 'Snapshot refetch is required exactly when the revision changed',
+    })
+  }
+  if (signal.terminal !== expectedTerminal) {
+    context.addIssue({ code: 'custom', path: ['terminal'], message: 'Terminal flag must agree with state' })
+  }
 })
 
 export interface GetBundleManifestRequest {

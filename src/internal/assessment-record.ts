@@ -29,6 +29,7 @@ const preparedContractV1Schema = z.strictObject({
   assessmentMode: assessmentModeSchema,
   assessmentProfileId: assessmentProfileIdSchema,
   target: assessmentTargetSelectorV1Schema,
+  targetDigest: digestEnvelopeV1Schema,
   requestedStrongerControlIds: z.array(z.string()).max(16),
   policy: z.strictObject({
     policyId: z.string(),
@@ -123,6 +124,14 @@ export function publicAssessmentSnapshot(
     subject: {
       kind: record.subject.source.kind,
       digest: record.subject.digest,
+    },
+    contract: {
+      schemaVersion: 1,
+      assessmentMode: record.contract.assessmentMode,
+      assessmentProfileId: record.contract.assessmentProfileId,
+      target: record.contract.target,
+      targetDigest: record.contract.targetDigest,
+      requestedStrongerControlIds: record.contract.requestedStrongerControlIds,
     },
     policy: {
       policyId: record.contract.policy.policyId,

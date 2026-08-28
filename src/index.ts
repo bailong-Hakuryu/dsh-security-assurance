@@ -949,6 +949,7 @@ export class SecurityAssuranceService extends Service {
         repositoryRoot: repository.canonicalRoot,
         securityRoot: this.securityRoot,
         source: parsed.data.subject,
+        target: parsed.data.target,
         signal: options.signal,
       })
       const interruptedAfterFreeze = interruption<AssessmentReceiptV1>(options)
@@ -958,6 +959,7 @@ export class SecurityAssuranceService extends Service {
         assessmentMode: parsed.data.assessmentMode,
         assessmentProfileId: parsed.data.assessmentProfileId,
         target: parsed.data.target,
+        targetDigest: frozen.targetDigest,
         requestedStrongerControlIds: parsed.data.requestedStrongerControlIds,
         analyzerPortfolio,
       })
@@ -1488,7 +1490,11 @@ export class SecurityAssuranceService extends Service {
               schemaVersion: 1,
               assessmentId: record.assessmentId,
               kind: 'CHANGED',
+              changed: true,
               assessmentRevision: record.assessmentRevision,
+              state: record.state,
+              terminal: record.state === 'SEALED' || record.state === 'CANCELED',
+              snapshotRefreshRequired: true,
             },
           })
         }
@@ -1500,7 +1506,11 @@ export class SecurityAssuranceService extends Service {
               schemaVersion: 1,
               assessmentId: record.assessmentId,
               kind: 'TIMED_OUT',
+              changed: false,
               assessmentRevision: record.assessmentRevision,
+              state: record.state,
+              terminal: record.state === 'SEALED' || record.state === 'CANCELED',
+              snapshotRefreshRequired: false,
             },
           })
         }

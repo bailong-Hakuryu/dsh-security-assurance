@@ -39,6 +39,7 @@ export interface PreparedAssessmentContractV1 {
   readonly assessmentMode: AssessmentMode
   readonly assessmentProfileId: AssessmentProfileId
   readonly target: AssessmentTargetSelectorV1
+  readonly targetDigest: DigestEnvelopeV1
   readonly requestedStrongerControlIds: readonly string[]
   readonly policy: {
     readonly policyId: string
@@ -70,11 +71,12 @@ export interface AdmittedExternalAnalyzerInputV1 {
 }
 
 function coverageSnapshot(
+  targetDigest: DigestEnvelopeV1,
   value: Omit<AssessmentCoverageSnapshotV1, 'digest'>,
 ): AssessmentCoverageSnapshotV1 {
   return {
     ...value,
-    digest: structuredDigest(COVERAGE_MEDIA_TYPE, value),
+    digest: structuredDigest(COVERAGE_MEDIA_TYPE, { targetDigest, ...value }),
   }
 }
 
@@ -179,6 +181,7 @@ export function prepareAssessmentContract(input: {
   readonly assessmentMode: AssessmentMode
   readonly assessmentProfileId: AssessmentProfileId
   readonly target: AssessmentTargetSelectorV1
+  readonly targetDigest: DigestEnvelopeV1
   readonly requestedStrongerControlIds: readonly string[]
   readonly analyzerPortfolio?: readonly AnalyzerPortfolioEntryV1[]
 }): PreparedAssessmentContractV1 {
@@ -205,6 +208,7 @@ export function prepareAssessmentContract(input: {
     assessmentMode: input.assessmentMode,
     assessmentProfileId: input.assessmentProfileId,
     target: input.target,
+    targetDigest: input.targetDigest,
     requestedStrongerControlIds: input.requestedStrongerControlIds,
     policy: {
       policyId: input.policyId,
@@ -212,7 +216,7 @@ export function prepareAssessmentContract(input: {
       value: policyValue,
     },
     analyzerPortfolio: input.analyzerPortfolio ?? [],
-    coverage: coverageSnapshot({
+    coverage: coverageSnapshot(input.targetDigest, {
       status: 'PENDING',
       mandatoryObligations: 1,
       satisfiedObligations: 0,
@@ -230,7 +234,7 @@ function indeterminateOutcome(
   providerComposition: NonNullable<SecuritySubmissionJsonV1> = emptyProviderComposition(),
   evidence: readonly EvidencePublicationInputV1[] = [],
 ): DeterministicAssessmentOutcomeV1 {
-  const coverage = coverageSnapshot({
+  const coverage = coverageSnapshot(contract.targetDigest, {
     status: 'GAP',
     mandatoryObligations: 1,
     satisfiedObligations: 0,
@@ -378,7 +382,7 @@ export function evaluateDeterministicAssessment(
         const coverageComplete = completeCoverage
           && candidateValidation.unresolvedCandidateIds.length === 0
         const coverage = coverageComplete
-          ? coverageSnapshot({
+          ? coverageSnapshot(contract.targetDigest, {
               status: 'COMPLETE',
               mandatoryObligations: 1,
               satisfiedObligations: 1,
@@ -389,7 +393,7 @@ export function evaluateDeterministicAssessment(
                 reason: 'ELIGIBLE_EVIDENCE',
               }],
             })
-          : coverageSnapshot({
+          : coverageSnapshot(contract.targetDigest, {
               status: 'GAP',
               mandatoryObligations: 1,
               satisfiedObligations: 0,
@@ -432,7 +436,7 @@ export function evaluateDeterministicAssessment(
       }
       if (completeCoverage) {
         return {
-          coverage: coverageSnapshot({
+          coverage: coverageSnapshot(contract.targetDigest, {
             status: 'COMPLETE',
             mandatoryObligations: 1,
             satisfiedObligations: 1,
@@ -601,7 +605,7 @@ export function evaluateDeterministicAssessment(
   const complete = contribution.completionDisposition === 'COMPLETE'
   const verdict: SecurityVerdict = findings.length > 0 ? 'FAILED' : 'SATISFIED'
   const coverage = complete
-    ? coverageSnapshot({
+    ? coverageSnapshot(contract.targetDigest, {
         status: 'COMPLETE',
         mandatoryObligations: 1,
         satisfiedObligations: 1,
@@ -612,7 +616,7 @@ export function evaluateDeterministicAssessment(
           reason: 'ELIGIBLE_EVIDENCE',
         }],
       })
-    : coverageSnapshot({
+    : coverageSnapshot(contract.targetDigest, {
         status: 'GAP',
         mandatoryObligations: 1,
         satisfiedObligations: 0,

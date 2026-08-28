@@ -97,6 +97,14 @@ function readySnapshot(id: AssessmentId): AssessmentSnapshotV1 {
       repositoryRevision: 3,
     },
     subject: { kind: 'workspace_snapshot', digest },
+    contract: {
+      schemaVersion: 1,
+      assessmentMode: 'REPOSITORY',
+      assessmentProfileId: 'security/standard',
+      target: { kind: 'repository' },
+      targetDigest: digest,
+      requestedStrongerControlIds: [],
+    },
     policy: { policyId: 'security/standard', digest },
     coverage: {
       status: 'GAP',

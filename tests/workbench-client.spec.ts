@@ -67,6 +67,14 @@ function snapshotAt(
       repositoryRevision: 1,
     },
     subject: { kind: 'workspace_snapshot', digest },
+    contract: {
+      schemaVersion: 1,
+      assessmentMode: 'REPOSITORY',
+      assessmentProfileId: 'security/standard',
+      target: { kind: 'repository' },
+      targetDigest: digest,
+      requestedStrongerControlIds: [],
+    },
     policy: { policyId: 'security/standard', digest },
     coverage: {
       status: 'PENDING',
@@ -2272,7 +2280,11 @@ describe('Security Assurance Workbench Client', () => {
           schemaVersion: 1,
           assessmentId: id,
           kind: 'TIMED_OUT',
+          changed: false,
           assessmentRevision: 1,
+          state: 'RUNNING',
+          terminal: false,
+          snapshotRefreshRequired: false,
         },
       },
     })
@@ -2285,7 +2297,11 @@ describe('Security Assurance Workbench Client', () => {
           schemaVersion: 1,
           assessmentId: id,
           kind: 'CHANGED',
+          changed: true,
           assessmentRevision: 2,
+          state: 'BLOCKED',
+          terminal: false,
+          snapshotRefreshRequired: true,
         },
       },
     })

@@ -17,6 +17,7 @@ import type { BigIntStats } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   AssessmentSubjectSourceV1,
+  AssessmentTargetSelectorV1,
   DigestEnvelopeV1,
 } from '../contracts.ts'
 import { digestEnvelopeV1Schema } from '../contracts.ts'
@@ -29,6 +30,7 @@ const MAX_PATH_BYTES = 1_024
 const MAX_ANALYZER_SOURCE_SLICES = 256
 const MAX_ANALYZER_SLICE_BYTES = 1024 * 1024
 const MAX_ANALYZER_SOURCE_BYTES = 4 * 1024 * 1024
+const TARGET_SELECTOR_MEDIA_TYPE = 'application/vnd.dsh.security.target-selector+json'
 
 export type SubjectFreezeErrorCode =
   | 'invalid_subject'
@@ -75,6 +77,8 @@ type SubjectManifestEntryV1 = FileEntry | SymbolicLinkEntry | SubmoduleEntry
 interface SubjectManifestPayloadV1 {
   readonly schemaVersion: 1
   readonly subject: Readonly<Record<string, unknown>>
+  readonly target: AssessmentTargetSelectorV1
+  readonly targetDigest: DigestEnvelopeV1
   readonly entries: readonly SubjectManifestEntryV1[]
   readonly exclusions: readonly (
     | {
@@ -97,6 +101,7 @@ interface SubjectManifestPayloadV1 {
 export interface FrozenSubject {
   readonly source: AssessmentSubjectSourceV1
   readonly manifestDigest: DigestEnvelopeV1
+  readonly targetDigest: DigestEnvelopeV1
   readonly files: number
   readonly bytes: number
   readonly symbolicLinks: number
@@ -114,6 +119,7 @@ export interface FreezeSubjectOptions {
   readonly repositoryRoot: string
   readonly securityRoot: string
   readonly source: AssessmentSubjectSourceV1
+  readonly target: AssessmentTargetSelectorV1
   readonly signal?: AbortSignal | undefined
 }
 
@@ -589,9 +595,12 @@ export async function freezeSubject(options: FreezeSubjectOptions): Promise<Froz
       }
     }
     assertSubjectBounds(entries)
+    const targetDigest = structuredDigest(TARGET_SELECTOR_MEDIA_TYPE, options.target)
     const payload: SubjectManifestPayloadV1 = {
       schemaVersion: 1,
       subject: resolvedSubject,
+      target: options.target,
+      targetDigest,
       entries: [...entries].sort((left, right) => left.path.localeCompare(right.path, 'en-US')),
       exclusions: [{
         kind: 'policy',
@@ -632,6 +641,7 @@ export async function freezeSubject(options: FreezeSubjectOptions): Promise<Froz
     return {
       source: options.source,
       manifestDigest: rootDigest,
+      targetDigest,
       files: payload.totals.files,
       bytes: payload.totals.bytes,
       symbolicLinks: payload.totals.symbolicLinks,

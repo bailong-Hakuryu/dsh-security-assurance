@@ -1751,7 +1751,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
       if (!this.isActive(session) || session.monitorGeneration !== monitorGeneration) return
       const signal = this.readRemoteResult(session, waited)
       if (signal === undefined) return
-      if (signal.kind === 'TIMED_OUT') continue
+      if (!signal.changed) continue
 
       let refreshed: RemoteResult<SecurityResult<AssessmentSnapshotV1>>
       try {
