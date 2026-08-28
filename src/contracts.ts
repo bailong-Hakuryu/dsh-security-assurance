@@ -985,6 +985,7 @@ export const riskDecisionAttestationV1Schema: z.ZodType<RiskDecisionAttestationV
 
 export interface RecordRiskDecisionRequest {
   readonly schemaVersion: 1
+  readonly contractVersion: 1
   readonly idempotencyKey: string
   readonly assessmentId: AssessmentId
   readonly expectedAssessmentRevision: number
@@ -1000,6 +1001,7 @@ export interface RecordRiskDecisionRequest {
 
 export const recordRiskDecisionRequestSchema: z.ZodType<RecordRiskDecisionRequest> = z.strictObject({
   schemaVersion: z.literal(1),
+  contractVersion: z.literal(1),
   idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
   assessmentId: assessmentIdSchema,
   expectedAssessmentRevision: z.number().int().positive(),

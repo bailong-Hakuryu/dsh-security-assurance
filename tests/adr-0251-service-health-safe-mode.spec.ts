@@ -374,6 +374,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
         }),
         ctx.securityAssurance.recordRiskDecision(invocation, {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: 'incompatible-runtime-risk-1',
           assessmentId,
           expectedAssessmentRevision: 1,

@@ -1316,6 +1316,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
         session.contextId,
         {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey,
           assessmentId: current.assessmentId,
           expectedAssessmentRevision: action.expectedAssessmentRevision,

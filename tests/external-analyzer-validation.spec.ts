@@ -665,6 +665,7 @@ describe('external Analyzer Candidate validation', () => {
         const finding = listed.value.findings[0]
         return service.recordRiskDecision(invocation, {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: 'critical-without-break-glass-policy-v1',
           assessmentId,
           expectedAssessmentRevision: listed.value.assessmentRevision,
@@ -712,6 +713,7 @@ describe('external Analyzer Candidate validation', () => {
         )
         const receipt = await service.recordRiskDecision(ordinaryDecisionInvocation, {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: 'critical-risk-denial-v1',
           assessmentId,
           expectedAssessmentRevision: listed.value.assessmentRevision,
@@ -797,6 +799,7 @@ describe('external Analyzer Candidate validation', () => {
         const firstBefore = await service.getAssessment(firstOperator, { schemaVersion: 1, assessmentId })
         const first = await service.recordRiskDecision(firstOperator, {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: 'critical-action-first-v1',
           assessmentId,
           expectedAssessmentRevision: listed.value.assessmentRevision,
@@ -924,6 +927,7 @@ describe('external Analyzer Candidate validation', () => {
         const finding = listed.value.findings[0]
         const receipt = await service.recordRiskDecision(invocation, {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: 'critical-first-attestation-v1',
           assessmentId,
           expectedAssessmentRevision: listed.value.assessmentRevision,
@@ -1048,6 +1052,7 @@ describe('external Analyzer Candidate validation', () => {
         const finding = initial.value.findings[0]
         const decisionCore = {
           schemaVersion: 1,
+          contractVersion: 1,
           assessmentId,
           finding: {
             recordId: finding.recordId,
@@ -1223,6 +1228,7 @@ describe('external Analyzer Candidate validation', () => {
         const finding = initial.value.findings[0]
         const decisionCore = {
           schemaVersion: 1,
+          contractVersion: 1,
           assessmentId,
           expectedAssessmentRevision: initial.value.assessmentRevision,
           finding: {
@@ -1354,6 +1360,7 @@ describe('external Analyzer Candidate validation', () => {
         const finding = listed.value.findings[0]
         const decisionCore = {
           schemaVersion: 1,
+          contractVersion: 1,
           assessmentId,
           finding: { recordId: finding.recordId, recordRevision: finding.recordRevision },
           decision: 'ACCEPT',
@@ -1441,6 +1448,7 @@ describe('external Analyzer Candidate validation', () => {
         const finding = listed.value.findings[0]
         return service.recordRiskDecision(invocation, {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: 'critical-restart-first-v1',
           assessmentId,
           expectedAssessmentRevision: listed.value.assessmentRevision,
@@ -1466,6 +1474,7 @@ describe('external Analyzer Candidate validation', () => {
         })
         const second = await service.recordRiskDecision(secondInvocation, {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: 'critical-restart-second-v1',
           assessmentId,
           expectedAssessmentRevision: pending.value.assessmentRevision,
@@ -1579,6 +1588,7 @@ describe('external Analyzer Candidate validation', () => {
         const finding = listed.value.findings[0]
         const request = {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: 'risk-decision-boundaries-v1',
           assessmentId,
           expectedAssessmentRevision: listed.value.assessmentRevision,
@@ -1696,6 +1706,7 @@ describe('external Analyzer Candidate validation', () => {
         const summary = listed.value.findings[0]
         const request = {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: 'deny-risk-decision-v1',
           assessmentId,
           expectedAssessmentRevision: listed.value.assessmentRevision,
@@ -1843,6 +1854,7 @@ describe('external Analyzer Candidate validation', () => {
         const summary = listed.value.findings[0]
         const receipt = await service.recordRiskDecision(invocation, {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: 'accept-high-risk-decision-v1',
           assessmentId,
           expectedAssessmentRevision: listed.value.assessmentRevision,

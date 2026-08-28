@@ -549,6 +549,7 @@ describe('Security Assurance Workbench Remote', () => {
         securityAssuranceWorkbenchContextId: authorityId,
         request: {
           schemaVersion: 1,
+          contractVersion: 1,
           idempotencyKey: 'workbench-evidence-risk-denial-v1',
           assessmentId,
           expectedAssessmentRevision: action.expectedAssessmentRevision,
@@ -702,6 +703,7 @@ describe('Security Assurance Workbench Remote', () => {
     }
     const denied = await ctx.securityAssurance.recordRiskDecision(hostInvocation, {
       schemaVersion: 1,
+      contractVersion: 1,
       idempotencyKey: 'workbench-bounded-evidence-risk-denial-v1',
       assessmentId,
       expectedAssessmentRevision: action.expectedAssessmentRevision,
@@ -964,6 +966,7 @@ describe('Security Assurance Workbench Remote', () => {
     }
     const request = {
       schemaVersion: 1 as const,
+      contractVersion: 1 as const,
       idempotencyKey: 'workbench-risk-denial-v1',
       assessmentId,
       expectedAssessmentRevision: action.expectedAssessmentRevision,
