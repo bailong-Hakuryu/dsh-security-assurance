@@ -65,6 +65,13 @@ import {
   WorkbenchOverlay,
   type WorkbenchOverlayInjected,
 } from './workbench/WorkbenchOverlay.tsx'
+export {
+  decodeWorkbenchRouteStateV1,
+  projectWorkbenchRouteStateV1,
+  WORKBENCH_INFORMATION_ARCHITECTURE_V1,
+  type WorkbenchRouteStateV1,
+  type WorkbenchViewIdV1,
+} from './workbench/navigation.ts'
 
 export type { WorkbenchAuthorityContextId } from 'dsh-security-assurance/workbench-remote'
 

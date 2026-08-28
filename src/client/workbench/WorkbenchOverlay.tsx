@@ -37,6 +37,7 @@ import type {
   StartPreflightV1,
 } from '../../contracts.ts'
 import type { WORKBENCH_LOCALE_NAMESPACE } from './locales.ts'
+import { projectWorkbenchRouteStateV1 } from './navigation.ts'
 import type { WorkbenchPresentationSnapshotV1 } from './presentation.ts'
 
 export type WorkbenchOverlaySources = {
@@ -118,6 +119,7 @@ export function WorkbenchOverlay({
 }: WorkbenchOverlayProps) {
   const open = usePresentation(snapshot => snapshot.open)
   const state = useAssessment(snapshot => snapshot)
+  const route = projectWorkbenchRouteStateV1(state)
   const closeRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLElement>(null)
 
@@ -175,7 +177,11 @@ export function WorkbenchOverlay({
             <IconCloseOutline16 />
           </button>
         </header>
-        <div className="dsh-security-dialog__body">
+        <div
+          className="dsh-security-dialog__body"
+          data-workbench-route-version={route.schemaVersion}
+          data-workbench-view={route.viewId}
+        >
           {state.kind === 'CLOSED' && <MessageState title={t('empty.title')} body={t('empty.body')} />}
           {state.kind === 'SELECTION_LOADING' && (
             <MessageState title={t('selection.loadingTitle')} body={t('selection.loadingBody')} role="status" />

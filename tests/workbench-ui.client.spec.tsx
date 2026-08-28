@@ -705,7 +705,9 @@ describe('Security Assurance Workbench UI', () => {
       fireEvent.click(launcher.view.getByRole('button', { name: '打开安全保障工作台' }))
     })
 
-    expect(overlay.view.getByRole('heading', { name: '选择 Assessment' })).toBeTruthy()
+    const overviewHeading = overlay.view.getByRole('heading', { name: '概览' })
+    expect(overviewHeading).toBeTruthy()
+    expect(overviewHeading.closest('[data-workbench-view]')?.getAttribute('data-workbench-view')).toBe('overview')
     expect(overlay.view.getByText(id)).toBeTruthy()
     expect(overlay.view.queryByRole('textbox')).toBeNull()
     expect(overlay.view.queryByText('workbench-session-selector')).toBeNull()
