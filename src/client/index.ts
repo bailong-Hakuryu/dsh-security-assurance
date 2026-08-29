@@ -2076,12 +2076,12 @@ export class SecurityAssuranceWorkbenchController extends Service {
 
   private failClient(
     session: LiveAssessmentSession,
-    error: unknown,
+    _error: unknown,
   ): SecurityAssuranceWorkbenchStateV1 {
     return this.fail(session, {
       source: 'CLIENT',
       code: 'REMOTE_INVOCATION_FAILED',
-      message: error instanceof Error ? error.message : 'The Workbench Remote invocation failed.',
+      message: 'The Workbench Remote invocation failed.',
       retryable: true,
     })
   }
@@ -2274,8 +2274,8 @@ export class SecurityAssuranceWorkbenchController extends Service {
   ): void {
     try {
       listener(state)
-    } catch (error) {
-      console.error('security-assurance-workbench: state listener failed', error)
+    } catch {
+      console.error('security-assurance-workbench: state listener failed')
     }
   }
 }

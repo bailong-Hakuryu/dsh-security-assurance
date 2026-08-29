@@ -1205,6 +1205,8 @@ describe('Security Assurance Workbench UI', () => {
     expect(endpoints.at(-1)).toBe('securityAssuranceWorkbench/getExport')
     expect(overlay.view.getByRole('heading', { name: 'Export Preview 与 Delivery' })).toBeTruthy()
     expect(overlay.view.getByText('security/export/internal-json-v1')).toBeTruthy()
+    expect(overlay.view.getByText('HOST_REGISTERED_LOCAL_AUDIT')).toBeTruthy()
+    expect(overlay.view.getByText('Host-registered local audit delivery')).toBeTruthy()
     expect(overlay.view.getByText('ORIGINAL_CREDENTIAL_VALUES')).toBeTruthy()
     expect(overlay.view.getByText('PRIVATE_STORE_PATHS')).toBeTruthy()
     expect(overlay.view.queryByText(/^[A-Z]:\\/u)).toBeNull()

@@ -650,6 +650,8 @@ async function runBrowserScenario() {
   )
   await page.getByRole('heading', { name: 'Export Preview and Delivery' }).waitFor()
   assert.equal(await page.getByText('security/export/internal-json-v1', { exact: true }).count(), 1)
+  assert.equal(await page.getByText('HOST_REGISTERED_LOCAL_AUDIT', { exact: true }).count(), 1)
+  assert.equal(await page.getByText('Host-registered local audit delivery', { exact: true }).count(), 1)
   assert.equal(await page.getByText('PRIVATE_STORE_PATHS', { exact: true }).count(), 1)
   assert.equal((await dialog.innerText()).includes(normalizedPath(dshHome)), false)
   assert.equal(await page.getByRole('button', { name: /download/iu }).count(), 0)

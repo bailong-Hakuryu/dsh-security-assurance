@@ -987,6 +987,15 @@ function BundleExportView({
               machine
             />
             <Fact
+              label={t('exports.destinationKind')}
+              value={exportState.preview.destination.kind}
+              machine
+            />
+            <Fact
+              label={t('exports.destinationSummary')}
+              value={exportState.preview.destination.summary}
+            />
+            <Fact
               label={t('exports.expiryWindow')}
               value={`${exportState.preview.expiresAfterSeconds} s`}
             />

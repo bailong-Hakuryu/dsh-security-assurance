@@ -628,11 +628,12 @@ or the root plugin.
 
 The package also publishes a Harness-discoverable `./client` entry. It mounts
 `./remote` through `ctx.remote.$mount()` and provides the browser-local
-`ctx.securityAssuranceWorkbench` Controller with twenty-eight public operations:
+`ctx.securityAssuranceWorkbench` Controller with thirty-two public operations:
 `openAssessmentSelection`, `loadMoreAssessments`, `selectAssessment`,
 `openRuntimeHealth`, `refreshRuntimeHealth`, `openRepositories`, `selectRepository`, `requestStartPreflight`,
 `cancelStartPreflight`, `confirmStartAssessment`, `backToAssessmentSelection`,
-`openAssessment`, `openBundle`, `backToAssessmentDetail`, `openFindings`, `loadMoreFindings`, `selectFinding`,
+`openAssessment`, `openBundle`, `previewExport`, `requestExport`,
+`refreshExportStatus`, `downloadExport`, `backToAssessmentDetail`, `openFindings`, `loadMoreFindings`, `selectFinding`,
 `backToFindingList`, `recordRiskDecision`, `resumeAssessment`, `cancelAssessment`,
 `selectEvidence`, `discloseEvidence`,
 `hideEvidenceDisclosure`, `backToFindingDetail`, `closeAssessment`, `getState`,
