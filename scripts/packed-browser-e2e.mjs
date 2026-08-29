@@ -148,6 +148,12 @@ async function createFixtureRepository() {
 }
 
 async function packSecurityArtifact() {
+  const suppliedArtifact = process.env.DSH_SECURITY_PACKED_ARTIFACT
+  if (suppliedArtifact) {
+    const artifact = resolve(suppliedArtifact)
+    await access(artifact, fsConstants.R_OK)
+    return artifact
+  }
   await mkdir(artifactRoot, { recursive: true })
   const packed = await executeNpm([
     '--cache', npmCache,
@@ -564,7 +570,9 @@ async function runBrowserScenario() {
 
   await page.getByRole('button', { name: 'Repositories and New Assessment' }).click()
   await page.getByRole('heading', { name: 'Repositories' }).waitFor()
-  assert.equal(await page.getByText(repositoryDisplayName, { exact: true }).count(), 1)
+  const repositoryLabel = page.getByText(repositoryDisplayName, { exact: true })
+  await repositoryLabel.waitFor()
+  assert.equal(await repositoryLabel.count(), 1)
   assert.equal((await dialog.innerText()).includes(normalizedPath(repositoryRoot)), false)
   await page.getByRole('button', { name: 'New Assessment' }).click()
   await page.getByRole('heading', { name: 'New Assessment' }).waitFor()

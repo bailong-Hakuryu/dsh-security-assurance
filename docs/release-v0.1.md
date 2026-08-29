@@ -25,6 +25,11 @@ pack inspection, fresh-consumer packed integration, and packed real-browser
 Harness E2E. The exact delivered tarball and source revision are recorded in
 the external delivery manifest.
 
+For final artifact verification, the packed scripts accept absolute artifact
+paths through `DSH_SECURITY_PACKED_ARTIFACT` and
+`DSH_CONTROL_PLANE_PACKED_ARTIFACT`. This makes the fresh-consumer and browser
+checks exercise the exact files whose SHA-256 digests are delivered.
+
 ## Acceptance gates before stable promotion
 
 - Verify the delivered tarball digest and install it without workspace links.

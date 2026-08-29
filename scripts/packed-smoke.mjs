@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
@@ -75,37 +75,54 @@ try {
     scripts: { postinstall: 42 },
   }, 'packed indeterminate baseline')
 
-  const packed = await executeNpm([
-    '--cache', npmCache,
-    'pack',
-    '--json',
-    '--pack-destination', artifactRoot,
-  ], {
-    cwd: projectRoot,
-    windowsHide: true,
-  })
-  const manifest = parseTrailingJsonArray(packed.stdout, 'Security npm pack')
-  const filename = manifest[0]?.filename
-  if (typeof filename !== 'string') throw new Error('npm pack did not report an artifact filename')
-  const tarball = join(artifactRoot, filename)
-  const packedControlPlane = await executeNpm([
-    '--cache', npmCache,
-    'pack',
-    '--json',
-    '--pack-destination', artifactRoot,
-  ], {
-    cwd: controlPlaneRoot,
-    windowsHide: true,
-  })
-  const controlPlaneManifest = parseTrailingJsonArray(
-    packedControlPlane.stdout,
-    'Control Plane npm pack',
-  )
-  const controlPlaneFilename = controlPlaneManifest[0]?.filename
-  if (typeof controlPlaneFilename !== 'string') {
-    throw new Error('Control Plane npm pack did not report an artifact filename')
-  }
-  const controlPlaneTarball = join(artifactRoot, controlPlaneFilename)
+  const suppliedSecurityTarball = process.env.DSH_SECURITY_PACKED_ARTIFACT
+  const tarball = suppliedSecurityTarball
+    ? resolve(suppliedSecurityTarball)
+    : await (async () => {
+        const packed = await executeNpm([
+          '--cache', npmCache,
+          'pack',
+          '--json',
+          '--pack-destination', artifactRoot,
+        ], {
+          cwd: projectRoot,
+          windowsHide: true,
+        })
+        const manifest = parseTrailingJsonArray(packed.stdout, 'Security npm pack')
+        const filename = manifest[0]?.filename
+        if (typeof filename !== 'string') {
+          throw new Error('npm pack did not report an artifact filename')
+        }
+        return join(artifactRoot, filename)
+      })()
+  await access(tarball)
+  const filename = basename(tarball)
+
+  const suppliedControlPlaneTarball = process.env.DSH_CONTROL_PLANE_PACKED_ARTIFACT
+  const controlPlaneTarball = suppliedControlPlaneTarball
+    ? resolve(suppliedControlPlaneTarball)
+    : await (async () => {
+        const packedControlPlane = await executeNpm([
+          '--cache', npmCache,
+          'pack',
+          '--json',
+          '--pack-destination', artifactRoot,
+        ], {
+          cwd: controlPlaneRoot,
+          windowsHide: true,
+        })
+        const controlPlaneManifest = parseTrailingJsonArray(
+          packedControlPlane.stdout,
+          'Control Plane npm pack',
+        )
+        const controlPlaneFilename = controlPlaneManifest[0]?.filename
+        if (typeof controlPlaneFilename !== 'string') {
+          throw new Error('Control Plane npm pack did not report an artifact filename')
+        }
+        return join(artifactRoot, controlPlaneFilename)
+      })()
+  await access(controlPlaneTarball)
+  const controlPlaneFilename = basename(controlPlaneTarball)
 
   await writeFile(join(consumerRoot, 'package.json'), `${JSON.stringify({
     name: 'dsh-security-assurance-packed-smoke',
