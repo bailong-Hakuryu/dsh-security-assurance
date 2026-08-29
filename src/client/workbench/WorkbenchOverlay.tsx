@@ -41,6 +41,11 @@ import {
   projectAssessmentActionAvailabilityV1,
   selectAssessmentAvailableActionV1,
 } from './actions.ts'
+import {
+  FINDING_TRIAGE_DIMENSIONS,
+  findingTriageValues,
+  type FindingTriageDimensionV1,
+} from './finding-triage.ts'
 import { projectWorkbenchRouteStateV1 } from './navigation.ts'
 import { projectAssessmentProgressViewV1 } from './progress.ts'
 import type { WorkbenchPresentationSnapshotV1 } from './presentation.ts'
@@ -1937,34 +1942,96 @@ function FindingList({
   readonly selectFinding: (recordId: string) => void
   readonly t: WorkbenchOverlayProps['t']
 }) {
+  const dimensions = FINDING_TRIAGE_DIMENSIONS
+  const [groupBy, setGroupBy] = useState<FindingTriageDimensionV1>('policySignificance')
+  const [filters, setFilters] = useState<Readonly<Record<FindingTriageDimensionV1, string>>>(() => ({
+    policySignificance: '',
+    technicalSeverity: '',
+    validationOutcome: '',
+    evidenceConfidence: '',
+    weakness: '',
+    component: '',
+    sensitivity: '',
+    coverageRelation: '',
+  }))
   if (items.length === 0) return <p className="dsh-security-muted">{t('findings.empty')}</p>
+  const filtered = items.filter(item => dimensions.every(dimension => (
+    filters[dimension] === ''
+    || findingTriageValues(item, dimension).includes(filters[dimension])
+  )))
+  const groups = new Map<string, FindingSummaryV1[]>()
+  for (const item of filtered) {
+    const key = findingTriageValues(item, groupBy)[0] ?? t('value.notAvailable')
+    const group = groups.get(key) ?? []
+    group.push(item)
+    groups.set(key, group)
+  }
   return (
     <>
-      <ul className="dsh-security-finding-list">
-        {items.map(item => (
-          <li key={`${item.recordId}:${item.recordRevision}`}>
-            <button
-              type="button"
-              aria-label={`${t('findings.openItem')} ${item.recordId}`}
-              disabled={loadingMore}
-              onClick={() => { selectFinding(item.recordId) }}
-            >
-              <span className="dsh-security-finding-list__identity">
-                <code>{item.recordId}</code>
-                <small>{item.weaknessClassification.primary}</small>
-              </span>
-              <span className="dsh-security-finding-list__dimensions">
-                <MachineBadge value={item.recordKind} />
-                <MachineBadge value={item.validationState} />
-                <MachineBadge value={item.technicalSeverity ?? t('value.pending')} />
-                <MachineBadge value={item.evidenceConfidence ?? t('value.pending')} />
-                <MachineBadge value={item.policySignificance ?? t('value.pending')} />
-                {item.hasProtectedDetail && <span>{t('findings.protected')}</span>}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
+      <div className="dsh-security-finding-triage" aria-label={t('findings.triage')}>
+        <label>
+          <span>{t('findings.groupBy')}</span>
+          <select value={groupBy} onChange={event => { setGroupBy(event.currentTarget.value as FindingTriageDimensionV1) }}>
+            {dimensions.map(dimension => (
+              <option key={dimension} value={dimension}>{t(`findings.dimension.${dimension}`)}</option>
+            ))}
+          </select>
+        </label>
+        {dimensions.map(dimension => {
+          const values = [...new Set(items.flatMap(item => findingTriageValues(item, dimension)))].sort()
+          return (
+            <label key={dimension}>
+              <span>{t(`findings.dimension.${dimension}`)}</span>
+              <select
+                value={filters[dimension]}
+                onChange={event => {
+                  const value = event.currentTarget.value
+                  setFilters(current => ({ ...current, [dimension]: value }))
+                }}
+              >
+                <option value="">{t('findings.filterAll')}</option>
+                {values.map(value => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+          )
+        })}
+      </div>
+      {groups.size === 0 && <p className="dsh-security-muted">{t('findings.noMatch')}</p>}
+      {[...groups.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([group, groupItems]) => (
+        <section className="dsh-security-finding-group" key={group}>
+          <h3><span>{t(`findings.dimension.${groupBy}`)}</span><MachineBadge value={group} /></h3>
+          <ul className="dsh-security-finding-list">
+            {groupItems.map(item => (
+              <li key={`${item.recordId}:${item.recordRevision}`}>
+                <button
+                  type="button"
+                  aria-label={`${t('findings.openItem')} ${item.recordId}`}
+                  disabled={loadingMore}
+                  onClick={() => { selectFinding(item.recordId) }}
+                >
+                  <span className="dsh-security-finding-list__identity">
+                    <code>{item.recordId}</code>
+                    {item.recordId !== item.candidateId && (
+                      <small>{t('findings.originCandidate')} <code>{item.candidateId}</code></small>
+                    )}
+                    <small>{item.weaknessClassification.primary}</small>
+                    <small>{item.component}</small>
+                  </span>
+                  <span className="dsh-security-finding-list__dimensions">
+                    <MachineBadge value={item.recordKind} />
+                    <MachineBadge value={item.validationState} />
+                    <MachineBadge value={item.technicalSeverity ?? t('value.pending')} />
+                    <MachineBadge value={item.evidenceConfidence ?? t('value.pending')} />
+                    <MachineBadge value={item.policySignificance ?? t('value.pending')} />
+                    <MachineBadge value={item.sensitivity} />
+                    {item.hasProtectedDetail && <span>{t('findings.protected')}</span>}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
       {hasMore && (
         <button
           type="button"
@@ -2014,6 +2081,7 @@ function FindingDetail({
       <code className="dsh-security-finding-detail__id">{detail.recordId}</code>
       <dl className="dsh-security-facts">
         <Fact label={t('findingDetail.recordKind')} value={detail.recordKind} machine />
+        <Fact label={t('findingDetail.candidate')} value={detail.candidateId} machine />
         <Fact label={t('findingDetail.validation')} value={detail.validation.state} machine />
         <Fact label={t('findingDetail.severity')} value={detail.technicalSeverity?.value ?? t('value.pending')} machine={detail.technicalSeverity !== null} />
         <Fact label={t('findingDetail.confidence')} value={detail.evidenceConfidence?.value ?? t('value.pending')} machine={detail.evidenceConfidence !== null} />
@@ -2023,6 +2091,20 @@ function FindingDetail({
         <Fact label={t('findingDetail.riskDecision')} value={detail.riskDecision.state} machine />
         <Fact label={t('findingDetail.attackPath')} value={detail.attackPath.state} machine />
       </dl>
+      <div>
+        <strong>{t('findingDetail.lineage')}</strong>
+        <ul className="dsh-security-metadata-list">
+          {detail.revisionChain.map(revision => (
+            <li key={revision.recordRevision}>
+              <code>{detail.recordId} @ {revision.recordRevision}</code>
+              <MachineBadge value={revision.isCurrent ? 'CURRENT' : 'SUPERSEDED'} />
+              <code>{revision.supersedesRecordRevision === null
+                ? t('findingDetail.lineageRoot')
+                : `${t('findingDetail.supersedes')} ${revision.supersedesRecordRevision}`}</code>
+            </li>
+          ))}
+        </ul>
+      </div>
       {detail.riskDecision.state !== 'NOT_RECORDED' && (
         <RecordedRiskDecision detail={detail} t={t} />
       )}
@@ -2190,13 +2272,16 @@ function RiskDecisionForm({
         </fieldset>
 
         {option?.decision === 'ACCEPT' && (
-          <dl className="dsh-security-facts">
-            <Fact label={t('riskDecision.authorizationMode')} value={option.authorizationMode} machine />
-            <Fact label={t('riskDecision.minimumControls')} value={String(option.minimumCompensatingControls)} />
-            <Fact label={t('riskDecision.maximumLifetime')} value={String(option.maximumLifetimeSeconds)} machine />
-            <Fact label={t('riskDecision.attestations')} value={`${option.completedAttestations} / ${option.requiredAttestations}`} />
-            <Fact label={t('riskDecision.exactMatch')} value={String(option.exactMatchRequired)} machine />
-          </dl>
+          <div className="dsh-security-risk-decision__ceiling">
+            <strong>{t('riskDecision.policyCeiling')}</strong>
+            <dl className="dsh-security-facts">
+              <Fact label={t('riskDecision.authorizationMode')} value={option.authorizationMode} machine />
+              <Fact label={t('riskDecision.minimumControls')} value={String(option.minimumCompensatingControls)} />
+              <Fact label={t('riskDecision.maximumLifetime')} value={String(option.maximumLifetimeSeconds)} machine />
+              <Fact label={t('riskDecision.attestations')} value={`${option.completedAttestations} / ${option.requiredAttestations}`} />
+              <Fact label={t('riskDecision.exactMatch')} value={String(option.exactMatchRequired)} machine />
+            </dl>
+          </div>
         )}
 
         <label className="dsh-security-risk-decision__field">
@@ -2282,6 +2367,12 @@ function RecordedRiskDecision({
         <Fact label={t('riskDecision.recordedAt')} value={decision.recordedAt} machine />
         <Fact label={t('riskDecision.expiry')} value={decision.expiresAt ?? t('value.notAvailable')} machine={decision.expiresAt !== null} />
         <Fact label={t('riskDecision.rationale')} value={decision.rationale} />
+        {decision.scope !== undefined && (
+          <>
+            <Fact label={t('riskDecision.subjectScope')} value={decision.scope.subjectDigest.value} machine />
+            <Fact label={t('riskDecision.policyScope')} value={decision.scope.policyDigest.value} machine />
+          </>
+        )}
       </dl>
       {decision.compensatingControls.length > 0 && (
         <ul className="dsh-security-metadata-list">
@@ -2292,6 +2383,8 @@ function RecordedRiskDecision({
         <div className="dsh-security-risk-decision__attestation" key={attestation.sequence}>
           <strong>{t('riskDecision.attestation')} {attestation.sequence}</strong>
           <code>{attestation.decisionMaker.principalId}</code>
+          <code>{attestation.authorizationEvidence.permission}</code>
+          <code>{attestation.authorizationEvidence.invocationClass}</code>
           <code>{attestation.attestedAt}</code>
         </div>
       ))}
@@ -2380,6 +2473,18 @@ function EvidenceMetadata({
         <Fact label={t('evidence.linkPurpose')} value={view.link.purpose} machine />
         <Fact label={t('evidence.eligibility')} value={view.link.eligibilityDecision} machine />
         <Fact label={t('evidence.eligibilityArtifact')} value={view.link.eligibilityDecisionArtifactId} machine />
+        <Fact label={t('evidence.producerLineage')} value={view.producerLineage.status} machine />
+        {view.producerLineage.status === 'VERIFIED'
+          ? (
+              <>
+                <Fact label={t('evidence.producer')} value={`${view.producerLineage.producer.analyzerId}@${view.producerLineage.producer.analyzerVersion}`} machine />
+                <Fact label={t('evidence.producerBuild')} value={view.producerLineage.producer.buildDigest.value} machine />
+              </>
+            )
+          : <Fact label={t('evidence.producer')} value={view.producerLineage.reason} machine />}
+        <Fact label={t('evidence.lineageArtifact')} value={view.producerLineage.lineageArtifactId} machine />
+        <Fact label={t('evidence.redactedSummary')} value={`${view.redactedSummary.kind}:${view.redactedSummary.contentStatus}`} machine />
+        <Fact label={t('evidence.summaryByteLength')} value={String(view.redactedSummary.byteLength)} machine />
         <Fact label={t('evidence.protectionPolicy')} value={view.protection.policyId} machine />
         <Fact label={t('evidence.protectionStatus')} value={view.protection.status} machine />
         <Fact label={t('evidence.retention')} value={view.retention.status} machine />

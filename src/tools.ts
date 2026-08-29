@@ -102,6 +102,12 @@ export interface SecurityAssessmentFindingSummaryV1 {
   readonly technicalSeverity: FindingSummaryV1['technicalSeverity']
   readonly evidenceConfidence: FindingSummaryV1['evidenceConfidence']
   readonly policySignificance: FindingSummaryV1['policySignificance']
+  readonly component: string
+  readonly sensitivity: FindingSummaryV1['sensitivity']
+  readonly coverageRelations: {
+    readonly obligationId: string
+    readonly state: 'SATISFIED' | 'GAP'
+  }[]
   readonly hasProtectedDetail: boolean
 }
 
@@ -309,6 +315,28 @@ const FINDINGS_OUTPUT = {
               ],
               required: true,
             },
+            component: { type: 'string', required: true },
+            sensitivity: {
+              type: 'string',
+              const: 'PROTECTED_DETAIL',
+              required: true,
+            },
+            coverageRelations: {
+              type: 'array',
+              required: true,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  obligationId: { type: 'string', required: true },
+                  state: {
+                    type: 'string',
+                    enum: ['SATISFIED', 'GAP'],
+                    required: true,
+                  },
+                },
+              },
+            },
             hasProtectedDetail: { type: 'boolean', required: true },
           },
         },
@@ -451,6 +479,9 @@ function findingSummaryValue(summary: FindingSummaryV1): SecurityAssessmentFindi
     technicalSeverity: summary.technicalSeverity,
     evidenceConfidence: summary.evidenceConfidence,
     policySignificance: summary.policySignificance,
+    component: summary.component,
+    sensitivity: summary.sensitivity,
+    coverageRelations: summary.coverageRelations.map(relation => ({ ...relation })),
     hasProtectedDetail: summary.hasProtectedDetail,
   }
 }

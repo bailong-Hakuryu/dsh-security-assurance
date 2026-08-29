@@ -150,6 +150,9 @@ function findingSummary(
     technicalSeverity: 'HIGH',
     evidenceConfidence: 'HIGH',
     policySignificance: 'BLOCKING',
+    component: 'src',
+    sensitivity: 'PROTECTED_DETAIL',
+    coverageRelations: [{ obligationId: 'security/output-encoding', state: 'SATISFIED' }],
     hasProtectedDetail: true,
   }
 }
@@ -243,6 +246,20 @@ function evidenceMetadataView(detail: FindingDetailViewV1): WorkbenchEvidenceMet
       purpose: link.purpose,
       eligibilityDecision: link.eligibilityDecision,
       eligibilityDecisionArtifactId: link.eligibilityDecisionArtifactId,
+    },
+    producerLineage: {
+      status: 'VERIFIED',
+      producer: {
+        analyzerId: 'security/reference-analyzer',
+        analyzerVersion: '1.0.0',
+        buildDigest: { ...link.digest, value: 'b'.repeat(64) },
+      },
+      lineageArtifactId: link.eligibilityDecisionArtifactId,
+    },
+    redactedSummary: {
+      kind: 'SCHEMA_METADATA',
+      byteLength: link.digest.byteLength,
+      contentStatus: 'REDACTED',
     },
     purpose: 'FINDING_TRIAGE',
     viewProfileId: 'security/evidence-view/metadata-only-v1',

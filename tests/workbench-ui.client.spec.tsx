@@ -321,6 +321,9 @@ function findingSummaryItem(id: AssessmentId): FindingSummaryV1 {
     technicalSeverity: 'HIGH',
     evidenceConfidence: 'HIGH',
     policySignificance: 'BLOCKING',
+    component: 'src',
+    sensitivity: 'PROTECTED_DETAIL',
+    coverageRelations: [{ obligationId: 'security/output-encoding', state: 'SATISFIED' }],
     hasProtectedDetail: true,
   }
 }
@@ -410,6 +413,20 @@ function evidenceMetadataView(detail: FindingDetailViewV1): WorkbenchEvidenceMet
       purpose: link.purpose,
       eligibilityDecision: link.eligibilityDecision,
       eligibilityDecisionArtifactId: link.eligibilityDecisionArtifactId,
+    },
+    producerLineage: {
+      status: 'VERIFIED',
+      producer: {
+        analyzerId: 'security/reference-analyzer',
+        analyzerVersion: '1.0.0',
+        buildDigest: { ...link.digest, value: 'b'.repeat(64) },
+      },
+      lineageArtifactId: link.eligibilityDecisionArtifactId,
+    },
+    redactedSummary: {
+      kind: 'SCHEMA_METADATA',
+      byteLength: link.digest.byteLength,
+      contentStatus: 'REDACTED',
     },
     purpose: 'FINDING_TRIAGE',
     viewProfileId: 'security/evidence-view/metadata-only-v1',
@@ -530,7 +547,7 @@ describe('Security Assurance Workbench UI', () => {
     expect(overlay.view.getByText(view.evidence.digest.value)).toBeTruthy()
     expect(overlay.view.getByText(view.evidence.digest.algorithm)).toBeTruthy()
     expect(overlay.view.getByText(view.evidence.digest.mediaType)).toBeTruthy()
-    expect(overlay.view.getByText(String(view.evidence.digest.byteLength))).toBeTruthy()
+    expect(overlay.view.getAllByText(String(view.evidence.digest.byteLength)).length).toBeGreaterThanOrEqual(2)
     expect(overlay.view.getByText(view.evidence.digest.canonicalization)).toBeTruthy()
     expect(overlay.view.getByText('CONTROL_PLANE')).toBeTruthy()
     expect(overlay.view.getByText('VALIDATION_EVIDENCE')).toBeTruthy()
@@ -685,10 +702,10 @@ describe('Security Assurance Workbench UI', () => {
       fireEvent.click(overlay.view.getByRole('button', { name: '查看 Findings' }))
     })
     expect(overlay.view.getByRole('heading', { name: 'Findings' })).toBeTruthy()
-    expect(overlay.view.getByText('cwe/79')).toBeTruthy()
+    expect(overlay.view.getAllByText('cwe/79').length).toBeGreaterThanOrEqual(2)
     expect(overlay.view.getAllByText('HIGH').length).toBeGreaterThanOrEqual(2)
-    expect(overlay.view.getByText('BLOCKING')).toBeTruthy()
-    expect(overlay.view.getByText('VALIDATED')).toBeTruthy()
+    expect(overlay.view.getAllByText('BLOCKING').length).toBeGreaterThanOrEqual(2)
+    expect(overlay.view.getAllByText('VALIDATED').length).toBeGreaterThanOrEqual(2)
     expect(overlay.view.getByText('包含受保护详情')).toBeTruthy()
     expect(overlay.view.queryByText('src/render.ts')).toBeNull()
 
@@ -697,8 +714,13 @@ describe('Security Assurance Workbench UI', () => {
     })
     expect(overlay.view.getByText(unresolved.recordId)).toBeTruthy()
     expect(overlay.view.getByText('UNRESOLVED_CANDIDATE')).toBeTruthy()
-    expect(overlay.view.getByText('UNRESOLVED')).toBeTruthy()
+    expect(overlay.view.getAllByText('UNRESOLVED').length).toBeGreaterThanOrEqual(2)
     expect(overlay.view.queryByRole('button', { name: '加载更多 Findings' })).toBeNull()
+
+    fireEvent.change(overlay.view.getByLabelText('验证结论'), { target: { value: 'UNRESOLVED' } })
+    expect(overlay.view.queryByText(summary.recordId)).toBeNull()
+    expect(overlay.view.getByText(unresolved.recordId)).toBeTruthy()
+    fireEvent.change(overlay.view.getByLabelText('验证结论'), { target: { value: '' } })
 
     await act(async () => {
       fireEvent.click(overlay.view.getByRole('button', {

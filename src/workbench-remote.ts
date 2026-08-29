@@ -129,6 +129,26 @@ export interface WorkbenchEvidenceMetadataViewV1 {
     readonly eligibilityDecision: 'ELIGIBLE' | 'INELIGIBLE'
     readonly eligibilityDecisionArtifactId: string
   }
+  readonly producerLineage:
+    | {
+        readonly status: 'VERIFIED'
+        readonly producer: {
+          readonly analyzerId: string
+          readonly analyzerVersion: string
+          readonly buildDigest: DigestEnvelopeV1
+        }
+        readonly lineageArtifactId: string
+      }
+    | {
+        readonly status: 'NOT_AVAILABLE'
+        readonly reason: 'PRODUCER_IDENTITY_NOT_RECORDED'
+        readonly lineageArtifactId: string
+      }
+  readonly redactedSummary: {
+    readonly kind: 'SCHEMA_METADATA'
+    readonly byteLength: number
+    readonly contentStatus: 'REDACTED'
+  }
   readonly purpose: 'FINDING_TRIAGE'
   readonly viewProfileId: 'security/evidence-view/metadata-only-v1'
   readonly protection: {
@@ -192,6 +212,8 @@ export interface WorkbenchEvidenceDisclosureViewV1 {
     readonly eligibilityDecision: 'ELIGIBLE' | 'INELIGIBLE'
     readonly eligibilityDecisionArtifactId: string
   }
+  readonly producerLineage: WorkbenchEvidenceMetadataViewV1['producerLineage']
+  readonly redactedSummary: WorkbenchEvidenceMetadataViewV1['redactedSummary']
   readonly purpose: 'VALIDATION_REVIEW'
   readonly viewProfileId: 'security/evidence-view/bounded-json-v1'
   readonly protection: {

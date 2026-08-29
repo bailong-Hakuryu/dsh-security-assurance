@@ -1280,6 +1280,12 @@ describe('security_assessment_findings disclosure', () => {
           technicalSeverity: 'MEDIUM',
           evidenceConfidence: 'HIGH',
           policySignificance: 'BLOCKING',
+          component: 'repository-root',
+          sensitivity: 'PROTECTED_DETAIL',
+          coverageRelations: [{
+            obligationId: 'node-package-install-lifecycle-policy',
+            state: 'SATISFIED',
+          }],
           hasProtectedDetail: true,
         }],
         nextCursor: expect.stringMatching(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u),

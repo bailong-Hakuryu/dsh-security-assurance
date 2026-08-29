@@ -56,6 +56,16 @@ describe('ADR 0269 purpose- and Profile-bound Evidence disclosure', () => {
         eligibilityDecision: 'ELIGIBLE',
         eligibilityDecisionArtifactId: 'eligibility-decision',
       },
+      producerLineage: {
+        status: 'NOT_AVAILABLE',
+        reason: 'PRODUCER_IDENTITY_NOT_RECORDED',
+        lineageArtifactId: 'eligibility-decision',
+      },
+      redactedSummary: {
+        kind: 'SCHEMA_METADATA',
+        byteLength: digest.byteLength,
+        contentStatus: 'REDACTED',
+      },
       purpose: 'FINDING_TRIAGE',
       viewProfileId: 'security/evidence-view/metadata-only-v1',
       protection: { policyId: 'evidence/local-protected', status: 'AVAILABLE' },

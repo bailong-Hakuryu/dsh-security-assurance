@@ -32,6 +32,9 @@ describe('ADR 0268 Finding query projections', () => {
       technicalSeverity: 'HIGH',
       evidenceConfidence: 'HIGH',
       policySignificance: 'BLOCKING',
+      component: 'src',
+      sensitivity: 'PROTECTED_DETAIL',
+      coverageRelations: [{ obligationId: 'application-security-analysis', state: 'SATISFIED' }],
       hasProtectedDetail: true,
     }
     expect(findingSummaryV1Schema.safeParse(summary).success).toBe(true)

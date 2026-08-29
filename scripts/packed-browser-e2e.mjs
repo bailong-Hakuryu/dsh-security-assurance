@@ -578,7 +578,14 @@ async function runBrowserScenario() {
   const assessmentId = blocked.assessmentId
   assert.match(assessmentId, /^asm-[0-9a-f-]{36}$/u)
   assert.equal(await page.getByText('BLOCKED', { exact: true }).count() > 0, true)
-  assert.equal(await page.getByText('RECORD_RISK_DECISION', { exact: true }).count(), 1)
+  assert.equal(
+    await page.locator('.dsh-security-actions').getByText('RECORD_RISK_DECISION', { exact: true }).count(),
+    1,
+  )
+  assert.equal(
+    await page.locator('.dsh-security-recovery').getByText('RECORD_RISK_DECISION', { exact: true }).count(),
+    1,
+  )
 
   await page.getByRole('button', { name: 'View Findings' }).click()
   await page.getByRole('heading', { name: 'Findings' }).waitFor()

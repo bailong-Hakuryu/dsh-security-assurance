@@ -1,10 +1,13 @@
+import { z } from 'zod'
 import {
+  digestEnvelopeV1Schema,
   EVIDENCE_VIEW_METADATA_ONLY_PROFILE_ID,
   evidenceViewV1Schema,
 } from '../contracts.ts'
 import type {
   BundleManifestV1,
   EvidenceViewContentV1,
+  EvidenceProducerLineageV1,
   EvidenceViewV1,
   FindingDetailViewV1,
   GetEvidenceViewRequest,
@@ -31,6 +34,19 @@ export interface EvidenceViewPolicies {
   readonly evidenceProtectionId: RepositoryBindingsV1['evidenceProtectionId']
   readonly dataEgressPolicyId: RepositoryBindingsV1['dataEgressPolicyId']
 }
+
+const analyzerIdentityProjectionSchema = z.object({
+  analyzerId: z.string().min(1).max(128),
+  analyzerVersion: z.string().min(1).max(128),
+  buildDigest: digestEnvelopeV1Schema,
+})
+
+const evidenceProducerSourceSchema = z.object({
+  analyzerIdentity: analyzerIdentityProjectionSchema.optional(),
+  producerEligibility: z.object({
+    analyzerIdentity: analyzerIdentityProjectionSchema,
+  }).optional(),
+})
 
 function sameDigest(
   left: GetEvidenceViewRequest['evidenceDigest'],
@@ -72,6 +88,33 @@ function boundedContent(
     expiresAt,
     value: artifact.value,
   }
+}
+
+function producerLineage(
+  submission: SecurityAssuranceSubmissionV1,
+  lineageArtifactId: string,
+): EvidenceProducerLineageV1 {
+  const lineageArtifact = submission.payload.evidence.find(candidate => (
+    candidate.artifactId === lineageArtifactId
+  ))
+  if (lineageArtifact === undefined) {
+    throw new TypeError('Evidence Link lineage artifact is missing from the sealed Submission')
+  }
+  const parsed = evidenceProducerSourceSchema.safeParse(lineageArtifact.value)
+  const producer = parsed.success
+    ? parsed.data.analyzerIdentity ?? parsed.data.producerEligibility?.analyzerIdentity
+    : undefined
+  return producer === undefined
+    ? {
+        status: 'NOT_AVAILABLE',
+        reason: 'PRODUCER_IDENTITY_NOT_RECORDED',
+        lineageArtifactId,
+      }
+    : {
+        status: 'VERIFIED',
+        producer,
+        lineageArtifactId,
+      }
 }
 
 /**
@@ -133,6 +176,15 @@ export class EvidenceViewModule {
         purpose: link.purpose,
         eligibilityDecision: link.eligibilityDecision,
         eligibilityDecisionArtifactId: link.eligibilityDecisionArtifactId,
+      },
+      producerLineage: producerLineage(
+        submission,
+        link.eligibilityDecisionArtifactId,
+      ),
+      redactedSummary: {
+        kind: 'SCHEMA_METADATA',
+        byteLength: artifact.digest.byteLength,
+        contentStatus: 'REDACTED',
       },
       purpose: request.purpose,
       viewProfileId: request.viewProfileId,

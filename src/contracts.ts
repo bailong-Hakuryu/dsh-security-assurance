@@ -866,6 +866,15 @@ export interface FindingSummaryV1 {
   readonly technicalSeverity: TechnicalSeverity | null
   readonly evidenceConfidence: EvidenceConfidence | null
   readonly policySignificance: PolicySignificance | null
+  /** Redacted logical component identity; never a file or Host path. */
+  readonly component: string
+  /** Summary-level disclosure classification, kept separate from severity and confidence. */
+  readonly sensitivity: 'PROTECTED_DETAIL'
+  /** Bounded Coverage relations used for triage without disclosing Evidence payloads. */
+  readonly coverageRelations: readonly {
+    readonly obligationId: string
+    readonly state: AssessmentCoverageResolutionV1['state']
+  }[]
   readonly hasProtectedDetail: boolean
 }
 
@@ -886,6 +895,12 @@ export const findingSummaryV1Schema: z.ZodType<FindingSummaryV1> = z.strictObjec
   technicalSeverity: technicalSeveritySchema.nullable(),
   evidenceConfidence: evidenceConfidenceSchema.nullable(),
   policySignificance: policySignificanceSchema.nullable(),
+  component: boundedBindingId,
+  sensitivity: z.literal('PROTECTED_DETAIL'),
+  coverageRelations: z.array(z.strictObject({
+    obligationId: boundedBindingId,
+    state: z.enum(['SATISFIED', 'GAP']),
+  })).max(256),
   hasProtectedDetail: z.boolean(),
 })
 
@@ -2808,6 +2823,22 @@ export type EvidenceViewContentV1 =
       readonly value: SecuritySubmissionJsonV1
     }
 
+export type EvidenceProducerLineageV1 =
+  | {
+      readonly status: 'VERIFIED'
+      readonly producer: {
+        readonly analyzerId: string
+        readonly analyzerVersion: string
+        readonly buildDigest: DigestEnvelopeV1
+      }
+      readonly lineageArtifactId: string
+    }
+  | {
+      readonly status: 'NOT_AVAILABLE'
+      readonly reason: 'PRODUCER_IDENTITY_NOT_RECORDED'
+      readonly lineageArtifactId: string
+    }
+
 export interface EvidenceViewV1 {
   readonly schemaVersion: 1
   readonly assessmentId: AssessmentId
@@ -2827,6 +2858,12 @@ export interface EvidenceViewV1 {
     readonly purpose: 'VALIDATION_EVIDENCE' | 'COUNTER_EVIDENCE'
     readonly eligibilityDecision: 'ELIGIBLE' | 'INELIGIBLE'
     readonly eligibilityDecisionArtifactId: string
+  }
+  readonly producerLineage: EvidenceProducerLineageV1
+  readonly redactedSummary: {
+    readonly kind: 'SCHEMA_METADATA'
+    readonly byteLength: number
+    readonly contentStatus: 'REDACTED'
   }
   readonly purpose: EvidenceViewPurposeV1
   readonly viewProfileId: EvidenceViewProfileIdV1
@@ -2864,6 +2901,24 @@ const evidenceViewContentV1Schema: z.ZodType<EvidenceViewContentV1> = z.discrimi
   ), { message: 'bounded Evidence content byteLength does not match its JSON value' }),
 ])
 
+const evidenceProducerLineageV1Schema: z.ZodType<EvidenceProducerLineageV1> =
+  z.discriminatedUnion('status', [
+    z.strictObject({
+      status: z.literal('VERIFIED'),
+      producer: z.strictObject({
+        analyzerId: boundedBindingId,
+        analyzerVersion: z.string().min(1).max(128),
+        buildDigest: digestEnvelopeV1Schema,
+      }),
+      lineageArtifactId: boundedBindingId,
+    }),
+    z.strictObject({
+      status: z.literal('NOT_AVAILABLE'),
+      reason: z.literal('PRODUCER_IDENTITY_NOT_RECORDED'),
+      lineageArtifactId: boundedBindingId,
+    }),
+  ])
+
 export const evidenceViewV1Schema: z.ZodType<EvidenceViewV1> = z.strictObject({
   schemaVersion: z.literal(1),
   assessmentId: assessmentIdSchema,
@@ -2884,6 +2939,12 @@ export const evidenceViewV1Schema: z.ZodType<EvidenceViewV1> = z.strictObject({
     eligibilityDecision: z.enum(['ELIGIBLE', 'INELIGIBLE']),
     eligibilityDecisionArtifactId: boundedBindingId,
   }),
+  producerLineage: evidenceProducerLineageV1Schema,
+  redactedSummary: z.strictObject({
+    kind: z.literal('SCHEMA_METADATA'),
+    byteLength: z.number().int().nonnegative(),
+    contentStatus: z.literal('REDACTED'),
+  }),
   purpose: z.enum(['FINDING_TRIAGE', 'VALIDATION_REVIEW']),
   viewProfileId: z.enum([
     EVIDENCE_VIEW_METADATA_ONLY_PROFILE_ID,
@@ -2899,6 +2960,27 @@ export const evidenceViewV1Schema: z.ZodType<EvidenceViewV1> = z.strictObject({
     status: z.literal('LOCAL_ONLY'),
   }),
   content: evidenceViewContentV1Schema,
+}).superRefine((view, context) => {
+  if (view.viewProfileId === EVIDENCE_VIEW_METADATA_ONLY_PROFILE_ID && (
+    view.purpose !== 'FINDING_TRIAGE'
+    || view.content.kind !== 'REDACTED'
+    || view.content.reason !== 'PROFILE_METADATA_ONLY'
+  )) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Metadata-only Evidence Views must remain redacted for Finding triage',
+    })
+  }
+  if (
+    view.viewProfileId === EVIDENCE_VIEW_BOUNDED_JSON_PROFILE_ID
+    && view.content.kind === 'BOUNDED_JSON'
+    && view.purpose !== 'VALIDATION_REVIEW'
+  ) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Bounded JSON Evidence Views require the validation-review purpose',
+    })
+  }
 })
 
 export interface SecuritySubmissionArtifactV1 {

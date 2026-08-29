@@ -246,6 +246,14 @@ function normalizedSourceAnchor(
       }
 }
 
+function redactedComponent(
+  sourceAnchor: z.infer<typeof sourceAnchorSchema>,
+): string {
+  const path = normalizedSourceAnchor(sourceAnchor).path
+  const separator = path.indexOf('/')
+  return separator < 0 ? 'repository-root' : path.slice(0, separator)
+}
+
 function sortedDimensions(
   values: Readonly<Record<string, string | number | boolean>> | undefined,
 ): readonly FindingDetailDimensionV1[] {
@@ -539,6 +547,11 @@ function projectFindingSummaries(
   submission: FindingQuerySourceV1,
 ): FindingSummaryV1[] {
   const value = findingsArtifactValueSchema.parse(submission.payload.findings.value)
+  const coverage = assessmentCoverageSnapshotV1Schema.parse(submission.payload.coverage.value)
+  const coverageRelations = coverage.resolutions.map(relation => ({
+    obligationId: relation.obligationId,
+    state: relation.state,
+  }))
   const findings: FindingSummaryV1[] = value.findings.map(finding => ({
     schemaVersion: 1,
     assessmentId: submission.payload.assessment.assessmentId,
@@ -553,6 +566,9 @@ function projectFindingSummaries(
     technicalSeverity: finding.technicalSeverity.value,
     evidenceConfidence: finding.evidenceConfidence.value,
     policySignificance: finding.policySignificance,
+    component: redactedComponent(finding.sourceAnchor),
+    sensitivity: 'PROTECTED_DETAIL',
+    coverageRelations,
     hasProtectedDetail: true,
   }))
   const admissions = new Map<string, z.infer<typeof candidateAdmissionSchema>>()
@@ -583,6 +599,9 @@ function projectFindingSummaries(
       technicalSeverity: null,
       evidenceConfidence: null,
       policySignificance: null,
+      component: redactedComponent(admission.sourceAnchor),
+      sensitivity: 'PROTECTED_DETAIL',
+      coverageRelations,
       hasProtectedDetail: true,
     })
   }
