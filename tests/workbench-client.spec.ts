@@ -1911,7 +1911,7 @@ describe('Security Assurance Workbench Client', () => {
     let healthRead = 0
     const healthSnapshot = (state: 'READ_ONLY_SAFE' | 'READY') => ({
       schemaVersion: 1 as const,
-      product: { name: 'dsh-security-assurance' as const, version: '0.0.0-development' as const },
+      product: { name: 'dsh-security-assurance' as const, version: '0.1.0-rc.1' as const },
       compatibility: {
         targetHarnessVersion: '0.1.1-rc.2' as const,
         requiredNodeRange: '^22.19.0 || >=24.0.0' as const,

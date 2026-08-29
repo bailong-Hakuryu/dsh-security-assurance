@@ -4,10 +4,13 @@ DSH Security Assurance is an independent DeepSeek Harness plugin for
 evidence-backed application-security assessment. It integrates through public
 Harness and Cordis seams and does not modify Harness Core.
 
-## Current implementation status
+## v0.1 release candidate status
 
-This repository is under active vertical-slice development, not at the
-`0.1.0-rc.1` release candidate. The current private development package proves:
+Version `0.1.0-rc.1` is the first complete, installable v0.1 candidate. It is
+intended for acceptance and release-gate verification. Stable `0.1.0`
+promotion is limited to version, signature, and release metadata after the
+exact candidate artifact passes every required gate; no unqualified behavior
+change may be folded into that promotion. The candidate proves:
 
 - dormant bundle installation metadata;
 - real Cordis registration at `ctx.securityAssurance`;
@@ -784,7 +787,7 @@ Repository using public identifier configuration:
 ```yaml
 assuranceProviders:
   - providerId: dsh/security-assurance
-    providerVersion: 0.0.0-development
+    providerVersion: 0.1.0-rc.1
     activation: required
     configuration:
       repositoryId: repo-00000000-0000-4000-8000-000000000000
@@ -857,6 +860,7 @@ pnpm build
 pnpm pack:dry-run
 pnpm pack:smoke
 pnpm pack:browser-e2e
+pnpm release:check
 ```
 
 `pack:smoke` installs the packed artifact into a fresh temporary consumer and
@@ -874,6 +878,9 @@ reference, so this command deliberately makes no HMR coverage claim.
 All five bundle rows in `cordis.patch.yml` are disabled by default.
 Installation alone does not activate a security authority, Host Repository
 Provider, model tool, Workbench Remote, or optional Control Plane Provider.
+
+The candidate acceptance checklist and stable-promotion boundary are recorded
+in `docs/release-v0.1.md`.
 
 ## Design authority
 

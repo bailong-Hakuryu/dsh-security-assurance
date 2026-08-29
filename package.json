@@ -1,9 +1,10 @@
 {
   "name": "dsh-security-assurance",
   "description": "Evidence-backed application-security assurance for DeepSeek Harness",
-  "version": "0.0.0-development",
-  "private": true,
-  "license": "UNLICENSED",
+  "version": "0.1.0-rc.1",
+  "private": false,
+  "license": "MIT",
+  "packageManager": "pnpm@11.7.0",
   "type": "module",
   "sideEffects": false,
   "main": "lib/index.js",
@@ -106,7 +107,10 @@
     "lib/types/invariant.d.ts",
     "lib/types/invariant.d.ts.map",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "SECURITY.md"
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
@@ -132,12 +136,14 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && tsdown && node scripts/generate-typert.mjs",
+    "prepack": "pnpm build",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "pack:dry-run": "npm --cache .scratch/npm-cache pack --dry-run",
     "pack:smoke": "node scripts/packed-smoke.mjs",
-    "pack:browser-e2e": "node scripts/packed-browser-e2e.mjs"
+    "pack:browser-e2e": "node scripts/packed-browser-e2e.mjs",
+    "release:check": "pnpm typecheck && pnpm build && pnpm test && pnpm pack:dry-run && pnpm pack:smoke && pnpm pack:browser-e2e"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",

@@ -895,7 +895,7 @@ describe('Security Assurance Workbench UI', () => {
   it('renders bilingual Service-owned Runtime Health without repair or bypass controls', async () => {
     const health = {
       schemaVersion: 1,
-      product: { name: 'dsh-security-assurance', version: '0.0.0-development' },
+      product: { name: 'dsh-security-assurance', version: '0.1.0-rc.1' },
       compatibility: {
         targetHarnessVersion: '0.1.1-rc.2',
         requiredNodeRange: '^22.19.0 || >=24.0.0',
@@ -944,7 +944,7 @@ describe('Security Assurance Workbench UI', () => {
     expect(overlay.view.getByRole('heading', { name: 'Runtime Health' })).toBeTruthy()
     expect(overlay.view.getAllByText('READ_ONLY_SAFE').length).toBeGreaterThan(0)
     expect(overlay.view.getByText('dsh-security-assurance')).toBeTruthy()
-    expect(overlay.view.getByText('0.0.0-development')).toBeTruthy()
+    expect(overlay.view.getByText('0.1.0-rc.1')).toBeTruthy()
     expect(overlay.view.getByRole('heading', { name: '操作准入' })).toBeTruthy()
     expect(overlay.view.getAllByText('false')).toHaveLength(2)
     expect(overlay.view.getByText('SQLite persistence is unavailable; configuration details are redacted.')).toBeTruthy()

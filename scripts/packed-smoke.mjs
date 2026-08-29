@@ -25,6 +25,18 @@ function executeNpm(args, options) {
   return execute('npm', args, options)
 }
 
+function parseTrailingJsonArray(output, label) {
+  for (let index = output.lastIndexOf('['); index >= 0; index = output.lastIndexOf('[', index - 1)) {
+    try {
+      const value = JSON.parse(output.slice(index).trim())
+      if (Array.isArray(value)) return value
+    } catch {
+      // npm lifecycle output may precede the final --json payload.
+    }
+  }
+  throw new Error(`${label} did not emit a trailing JSON array`)
+}
+
 async function createFixtureRepository(root, manifest, commitMessage) {
   await mkdir(root)
   await writeFile(join(root, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
@@ -72,7 +84,7 @@ try {
     cwd: projectRoot,
     windowsHide: true,
   })
-  const manifest = JSON.parse(packed.stdout)
+  const manifest = parseTrailingJsonArray(packed.stdout, 'Security npm pack')
   const filename = manifest[0]?.filename
   if (typeof filename !== 'string') throw new Error('npm pack did not report an artifact filename')
   const tarball = join(artifactRoot, filename)
@@ -85,7 +97,10 @@ try {
     cwd: controlPlaneRoot,
     windowsHide: true,
   })
-  const controlPlaneManifest = JSON.parse(packedControlPlane.stdout)
+  const controlPlaneManifest = parseTrailingJsonArray(
+    packedControlPlane.stdout,
+    'Control Plane npm pack',
+  )
   const controlPlaneFilename = controlPlaneManifest[0]?.filename
   if (typeof controlPlaneFilename !== 'string') {
     throw new Error('Control Plane npm pack did not report an artifact filename')
@@ -1792,7 +1807,17 @@ if (importContext.reflect.get('securityAssurance') !== undefined
 }
 const SecurityAssuranceService = (await import('dsh-security-assurance')).default
 const EngineeringControlPlane = (await import('dsh-engineering-control-plane')).default
+const engineeringTools = await import('dsh-engineering-control-plane/tools')
+const engineeringClient = await import('dsh-engineering-control-plane/client')
+const engineeringInvariant = await import('dsh-engineering-control-plane/invariant')
 const { sealAssuranceSubmissionV1 } = await import('dsh-engineering-control-plane/assurance-provider')
+if (
+  engineeringTools.name !== 'engineering-control-plane-tools'
+  || engineeringClient.name !== 'engineering-control-plane-client'
+  || engineeringInvariant.name !== 'engineering-control-plane-invariant'
+) {
+  throw new Error('packed Control Plane public exports are incomplete')
+}
 const conformance = await import('dsh-security-assurance/conformance')
 const providerConformanceFixture = conformance.createAssuranceProviderConformanceFixtureV1()
 const providerFailureReport = await conformance.runAssuranceProviderContractSuiteV1(
@@ -2539,6 +2564,7 @@ try {
 process.stdout.write(JSON.stringify({
   adapterImport: 'PASS',
   sideEffectFree: 'PASS',
+  controlPlanePublicExports: 'PASS',
   hostPolicyMatrix: 'PASS',
   requiredIntegration: 'PASS',
   failedGate: 'PASS',
@@ -2557,6 +2583,7 @@ process.stdout.write(JSON.stringify({
   if (
     adapterResult.adapterImport !== 'PASS'
     || adapterResult.sideEffectFree !== 'PASS'
+    || adapterResult.controlPlanePublicExports !== 'PASS'
     || adapterResult.conformanceProviderScenarios !== 'PASS'
   ) {
     throw new Error('packed Adapter smoke probe returned an invalid result')

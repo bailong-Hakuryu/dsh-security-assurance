@@ -47,11 +47,13 @@ Primary boundary decisions: ADR 0001, 0002, 0100, 0101, 0235, and 0236.
 | qualified Harness target | `0.1.1-rc.2` exactly |
 | Node range | `^22.19 || >=24` |
 | first public candidate | `0.1.0-rc.1` |
-| development package version | `0.0.0-development` |
+| current candidate package version | `0.1.0-rc.1` |
 | module format | ESM |
 | JavaScript target | ES2024 |
 
 Development builds remain private and MUST NOT claim the public RC version.
+The qualified candidate uses `0.1.0-rc.1`; promotion to stable `0.1.0` follows
+ADR 0087 and changes only version, signature, and release metadata.
 The final package is one installation unit with independent entry points:
 
 | Export | Responsibility | Side effects on import |

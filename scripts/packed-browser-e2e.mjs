@@ -57,6 +57,18 @@ function executeNpm(args, options) {
   return execute('npm', args, { ...options, maxBuffer: 64 * 1024 * 1024 })
 }
 
+function parseTrailingJsonArray(output, label) {
+  for (let index = output.lastIndexOf('['); index >= 0; index = output.lastIndexOf('[', index - 1)) {
+    try {
+      const value = JSON.parse(output.slice(index).trim())
+      if (Array.isArray(value)) return value
+    } catch {
+      // npm lifecycle output may precede the final --json payload.
+    }
+  }
+  throw new Error(`${label} did not emit a trailing JSON array`)
+}
+
 function runStreaming(command, args, options) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, {
@@ -143,7 +155,7 @@ async function packSecurityArtifact() {
     '--json',
     '--pack-destination', artifactRoot,
   ], { cwd: projectRoot, windowsHide: true })
-  const manifest = JSON.parse(packed.stdout)
+  const manifest = parseTrailingJsonArray(packed.stdout, 'Security npm pack')
   const filename = manifest[0]?.filename
   if (typeof filename !== 'string') throw new Error('npm pack did not report a Security artifact')
   return join(artifactRoot, filename)

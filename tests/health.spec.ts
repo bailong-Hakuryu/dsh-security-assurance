@@ -41,7 +41,7 @@ describe('SecurityAssuranceService health tracer', () => {
       schemaVersion: 1,
       product: {
         name: 'dsh-security-assurance',
-        version: '0.0.0-development',
+        version: '0.1.0-rc.1',
       },
       compatibility: {
         targetHarnessVersion: '0.1.1-rc.2',
