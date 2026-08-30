@@ -13,9 +13,6 @@
         repositories:
           - schemaVersion: 1
             bindingId: current-workspace
-            idempotencyKey: !!js >-
-              'host-repository-provider:cwd:' +
-              Buffer.from(process.cwd()).toString('base64url').slice(0, 80)
             root: !!js process.cwd()
             displayName: Current workspace
             bindings:

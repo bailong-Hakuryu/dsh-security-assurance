@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { realpath, stat } from 'node:fs/promises'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from 'zod'
 import type {
@@ -16,7 +18,7 @@ const bindingIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._/-]{0,127}$/i)
 export interface HostRepositoryRegistrationV1 {
   readonly schemaVersion: 1
   readonly bindingId: string
-  readonly idempotencyKey: string
+  readonly idempotencyKey?: string | undefined
   readonly root: string
   readonly displayName: string
   readonly bindings: RepositoryBindingsV1
@@ -25,7 +27,7 @@ export interface HostRepositoryRegistrationV1 {
 const hostRepositoryRegistrationV1Schema: z.ZodType<HostRepositoryRegistrationV1> = z.strictObject({
   schemaVersion: z.literal(1),
   bindingId: bindingIdSchema,
-  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+  idempotencyKey: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/).optional(),
   root: z.string().min(1).max(4096),
   displayName: z.string().trim().min(1).max(128),
   bindings: repositoryBindingsV1Schema,
@@ -111,11 +113,17 @@ export class SecurityAssuranceHostRepositoryProvider extends Service {
       permissions: ['repository:admin'],
     }))
     for (const registration of parsed.data.repositories) {
+      const canonicalRoot = await realpath(registration.root)
+      if (!(await stat(canonicalRoot)).isDirectory()) {
+        throw new TypeError(`Host Repository binding '${registration.bindingId}' root is not a directory`)
+      }
+      const idempotencyKey = registration.idempotencyKey
+        ?? `host-repository-provider:root:${createHash('sha256').update(canonicalRoot).digest('hex')}`
       const result = await service.registerRepository(invocation, {
         schemaVersion: 1,
         contractVersion: 1,
-        idempotencyKey: registration.idempotencyKey,
-        root: registration.root,
+        idempotencyKey,
+        root: canonicalRoot,
         displayName: registration.displayName,
         bindings: registration.bindings,
       })

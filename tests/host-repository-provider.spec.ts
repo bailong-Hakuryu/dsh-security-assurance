@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -128,6 +129,55 @@ describe('Security Assurance Host Repository Provider', () => {
       expect(Object.isFrozen(binding)).toBe(true)
     } finally {
       await providerFiber.dispose()
+      await securityFiber.dispose()
+    }
+  })
+
+  it('derives a non-reversible idempotency key from the canonical Repository root', async () => {
+    const repository = await cleanRepository()
+    const configuredRoot = `${repository}/.`
+    const canonicalRoot = await realpath(repository)
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-host-repository-home-'))
+    temporaryRoots.push(dshHome)
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+    const ctx = new Context()
+    const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const originalRegister = ctx.securityAssurance.registerRepository.bind(ctx.securityAssurance)
+    const requests: unknown[] = []
+    vi.spyOn(ctx.securityAssurance, 'registerRepository').mockImplementation(async (invocation, request, options) => {
+      requests.push(request)
+      return originalRegister(invocation, request, options)
+    })
+    let providerFiber: Awaited<ReturnType<Context['plugin']>> | undefined
+    try {
+      providerFiber = await ctx.plugin(SecurityAssuranceHostRepositoryProvider, {
+        repositories: [{
+          schemaVersion: 1,
+          bindingId: 'derived-identity',
+          root: configuredRoot,
+          displayName: 'Derived Identity Repository',
+          bindings: {
+            policyId: 'security/node-package-lifecycle',
+            assessmentProfileId: 'security/standard',
+            evidenceProtectionId: 'evidence/local-protected',
+            dataEgressPolicyId: 'egress/deny-by-default',
+            platform,
+            deliveryDestinationIds: [],
+          },
+        }],
+      })
+      const expectedKey = 'host-repository-provider:root:'
+        + createHash('sha256').update(canonicalRoot).digest('hex')
+      expect(requests).toEqual([expect.objectContaining({
+        root: canonicalRoot,
+        idempotencyKey: expectedKey,
+      })])
+      expect(expectedKey).not.toContain(Buffer.from(canonicalRoot).toString('base64url'))
+    } finally {
+      await providerFiber?.dispose()
       await securityFiber.dispose()
     }
   })

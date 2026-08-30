@@ -6,7 +6,7 @@ Harness and Cordis seams and does not modify Harness Core.
 
 ## v0.1 release candidate status
 
-Version `0.1.0-rc.4` is the directly usable v0.1 candidate for Harness
+Version `0.1.0-rc.6` is the directly usable v0.1 candidate for Harness
 `0.1.2-alpha.1`. It is
 intended for acceptance and release-gate verification. Stable `0.1.0`
 promotion is limited to version, signature, and release metadata after the
@@ -57,7 +57,7 @@ change may be folded into that promotion. The candidate proves:
   `recordRiskDecision`, `resumeAssessment`, and `cancelAssessment` without putting a Principal, permissions, or Security
   Invocation on the wire;
 - legacy Workbench browser source retained for future migration, but deliberately
-  excluded from the `0.1.0-rc.4` package because Harness `0.1.2-alpha.1` no longer
+  excluded from the `0.1.0-rc.6` package because Harness `0.1.2-alpha.1` no longer
   publishes the client-runtime preset it was built against. Direct Web users
   instead receive Harness's generic cards for the eight registered model tools.
   The legacy source previously provided one transient
@@ -108,9 +108,10 @@ change may be folded into that promotion. The candidate proves:
 - Host-trusted, canonical-digest-bound external Analyzer Qualification Records
   covering exact Analyzer build, Policy, Mode, Coverage, Evidence schemas,
   execution backend, Provider, egress, platform, issuance, and expiry;
-- frozen per-Assessment Eligibility Decisions: a precisely qualified complete
-  Reference Analyzer may satisfy its one declared obligation, while missing,
-  scope-incompatible, not-yet-valid, or expired Qualification remains Advisory;
+- frozen per-Assessment Eligibility Decisions: qualified external Evidence and
+  Findings remain visible, but a generic external clean claim stays Advisory;
+  only the package-owned reference-validation contract can independently bind
+  its exact Candidate Evidence to the frozen Subject and Policy;
 - versioned external Candidate Finding contracts with bounded weakness,
   Security Claim, Source Anchor, JSON Pointer, and contributed-Evidence links;
 - one exact deterministic Conformance Validation Contract that independently
@@ -574,7 +575,6 @@ first mutation, and invokes the root Service with package-owned Host authority:
 repositories:
   - schemaVersion: 1
     bindingId: mission-repository
-    idempotencyKey: host-repository-provider:mission-repository:v1
     root: /absolute/host/repository
     displayName: Mission Repository
     bindings:
@@ -585,6 +585,11 @@ repositories:
       platform: linux
       deliveryDestinationIds: []
 ```
+
+`idempotencyKey` is optional. When omitted, the Host Adapter resolves and
+validates the directory first, then derives a non-reversible identity from the
+full canonical root with SHA-256. Deployments may still provide an explicit
+stable key when their lifecycle requires one.
 
 After activation, trusted Host composition may call
 `ctx.securityAssuranceHostRepositories.resolve(bindingId)` to obtain the
@@ -793,7 +798,7 @@ Repository using public identifier configuration:
 ```yaml
 assuranceProviders:
   - providerId: dsh/security-assurance
-    providerVersion: 0.1.0-rc.4
+    providerVersion: 0.1.0-rc.6
     activation: required
     configuration:
       repositoryId: repo-00000000-0000-4000-8000-000000000000
@@ -855,8 +860,8 @@ commands from the Git repository that users want the plugins to govern; the
 launcher cwd becomes the `current-workspace` binding automatically.
 
 ```powershell
-dsh plugin --profile web add D:\path\to\dsh-engineering-control-plane-0.1.3.tgz
-dsh plugin --profile web add D:\path\to\dsh-security-assurance-0.1.0-rc.4.tgz
+dsh plugin --profile web add D:\path\to\dsh-engineering-control-plane-0.1.5.tgz
+dsh plugin --profile web add D:\path\to\dsh-security-assurance-0.1.0-rc.6.tgz
 dsh --profile web --dump-config
 dsh web
 ```

@@ -16,7 +16,7 @@ const packageJson = JSON.parse(
 
 describe('v0.1 release candidate package', () => {
   it('binds runtime and package identity to the candidate version', () => {
-    expect(packageJson.version).toBe('0.1.0-rc.5')
+    expect(packageJson.version).toBe('0.1.0-rc.6')
     expect(SECURITY_ASSURANCE_PRODUCT_VERSION).toBe(packageJson.version)
   })
 

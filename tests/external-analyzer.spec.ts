@@ -273,7 +273,7 @@ describe('external Analyzer composition', () => {
     }
   })
 
-  it('seals a precisely qualified Reference Analyzer contribution as Gate-bearing Coverage', async () => {
+  it('keeps a qualified external clean claim advisory without an independent Evidence verifier', async () => {
     const repository = await repositoryFixture()
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-qualified-analyzer-home-'))
     temporaryRoots.push(dshHome)
@@ -452,13 +452,13 @@ describe('external Analyzer composition', () => {
         ok: true,
         value: {
           state: 'SEALED',
-          verdict: 'SATISFIED',
+          verdict: 'INDETERMINATE',
           coverage: {
-            status: 'COMPLETE',
+            status: 'GAP',
             resolutions: [{
               obligationId: 'application-security-analysis',
-              state: 'SATISFIED',
-              reason: 'ELIGIBLE_EVIDENCE',
+              state: 'GAP',
+              reason: 'EVIDENCE_INELIGIBLE',
             }],
           },
         },
@@ -471,7 +471,7 @@ describe('external Analyzer composition', () => {
         ok: true,
         value: {
           payload: {
-            assessment: { verdict: 'SATISFIED' },
+            assessment: { verdict: 'INDETERMINATE' },
             providerComposition: {
               value: {
                 analyzers: [{
@@ -485,7 +485,13 @@ describe('external Analyzer composition', () => {
             },
             evidence: expect.arrayContaining([
               expect.objectContaining({ schemaId: 'fixture/reference-qualified-evidence' }),
-              expect.objectContaining({ schemaId: 'dsh/security-evidence-eligibility-decision' }),
+              expect.objectContaining({
+                schemaId: 'dsh/security-evidence-eligibility-decision',
+                value: expect.objectContaining({
+                  decision: 'INELIGIBLE',
+                  reason: 'INDEPENDENT_VERIFIER_UNAVAILABLE',
+                }),
+              }),
             ]),
           },
         },

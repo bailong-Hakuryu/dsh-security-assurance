@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-rc.6] - 2026-08-30
+
+- Keep generic external Analyzer clean claims advisory until an independent
+  Evidence verifier can bind their content to the frozen Subject and Policy.
+- Derive omitted Host Repository idempotency keys from the full canonical root
+  with SHA-256, avoiding truncated reversible path identities.
+- Canonicalize and validate Host Repository roots before registration.
+
 ## [0.1.0-rc.5] - 2026-08-30
 
 - Reject workspace snapshots that traverse ancestor symlinks/junctions and

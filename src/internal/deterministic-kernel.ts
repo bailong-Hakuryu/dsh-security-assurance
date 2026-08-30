@@ -146,13 +146,23 @@ function externalAnalyzerEvidence(
     })).slice(0, 16)}`
     if (artifactIds.has(eligibilityArtifactId)) throw new TypeError('Eligibility Decision identity collides')
     artifactIds.add(eligibilityArtifactId)
-    const evidenceEligible = externalCompleteCoverageClaimIsEligible(analysis, obligationId)
+    const structurallyBoundCoverage = externalCompleteCoverageClaimIsStructurallyBound(
+      analysis,
+      obligationId,
+    )
+    // Protocol v1 has one package-owned conformance verifier. Arbitrary
+    // external Evidence schemas remain advisory even when Host-qualified.
+    const evidenceEligible = contract.policy.policyId === 'security/reference-validation'
+      && analysis.contribution.candidateFindings.length > 0
+      && structurallyBoundCoverage
     const eligibilityReason = evidenceEligible
       ? null
       : analysis.portfolioEntry.eligibility.reason
         ?? (analysis.contribution.candidateFindings.length > 0
           ? 'UNRESOLVED_CANDIDATES'
-          : 'CONTRIBUTION_INELIGIBLE')
+          : structurallyBoundCoverage
+            ? 'INDEPENDENT_VERIFIER_UNAVAILABLE'
+            : 'CONTRIBUTION_INELIGIBLE')
     evidence.push({
       artifactId: eligibilityArtifactId,
       schemaId: 'dsh/security-evidence-eligibility-decision',
@@ -334,7 +344,7 @@ function completeCoverageClaimIsEligible(
     && canonicalJson(claim.evidenceDigest) === canonicalJson(contribution.manifestEvidence.digest)
 }
 
-function externalCompleteCoverageClaimIsEligible(
+function externalCompleteCoverageClaimIsStructurallyBound(
   analysis: AdmittedExternalAnalyzerInputV1,
   obligationId: string,
 ): boolean {
@@ -375,9 +385,15 @@ export function evaluateDeterministicAssessment(
         ...externalAnalyzerEvidence(contract, externalAnalyses, obligationId),
         ...candidateValidation.evidence,
       ]
-      const completeCoverage = externalAnalyses.some(analysis => (
-        externalCompleteCoverageClaimIsEligible(analysis, obligationId)
-      ))
+      // Gate-bearing complete Coverage is reserved for the one package-owned
+      // conformance contract after every contributed Candidate is independently
+      // validated or rejected against the frozen Subject.
+      const completeCoverage = contract.policy.policyId === 'security/reference-validation'
+        && candidateValidation.unresolvedCandidateIds.length === 0
+        && externalAnalyses.some(analysis => (
+          analysis.contribution.candidateFindings.length > 0
+          && externalCompleteCoverageClaimIsStructurallyBound(analysis, obligationId)
+        ))
       if (candidateValidation.findings.length > 0) {
         const coverageComplete = completeCoverage
           && candidateValidation.unresolvedCandidateIds.length === 0
