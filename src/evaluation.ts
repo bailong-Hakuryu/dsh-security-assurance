@@ -1207,6 +1207,17 @@ function stratumSelectorKey(selector: BenchmarkStratumSelectorV1): string {
   return `${selector.dimension}\0${selector.value}`
 }
 
+function hasMandatorySeverityStrata(
+  definitions: readonly BenchmarkStratumDefinitionV1[],
+): boolean {
+  const severities = new Set(definitions.flatMap(definition => (
+    definition.selector.dimension === 'SEVERITY'
+      ? [definition.selector.value]
+      : []
+  )))
+  return severities.has('CRITICAL') && severities.has('HIGH')
+}
+
 function parseRequest(input: unknown): EffectivenessMetricsRequestV1 {
   const parsed = effectivenessMetricsRequestV1Schema.safeParse(input)
   if (
@@ -1229,6 +1240,7 @@ function parseRequest(input: unknown): EffectivenessMetricsRequestV1 {
   if (
     !unique(stratumIds)
     || !unique(stratumSelectors)
+    || !hasMandatorySeverityStrata(parsed.data.stratumDefinitions)
     || !stratumDimensions.has('SEVERITY')
     || !stratumDimensions.has('WEAKNESS_FAMILY')
     || !stratumDimensions.has('ASSESSMENT_MODE')
@@ -1839,6 +1851,59 @@ function airGapCaseKey(value: { caseId: string, repetitionId?: string | undefine
   return `${value.repetitionId ?? ''}\0${value.caseId}`
 }
 
+const AIR_GAPPED_EVALUATION_MAX_WORK_UNITS = 500_000
+
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+/** Reject multiplicative inputs before Zod traverses their nested evidence. */
+function airGappedEvaluationFitsWorkBudget(input: unknown): boolean {
+  const candidate = recordOf(input)
+  if (candidate === undefined) return true
+  const declaredArmIds = candidate['declaredArmIds']
+  const sealedArmResults = candidate['sealedArmResults']
+  const adjudications = candidate['adjudications']
+  const stratumDefinitions = candidate['stratumDefinitions']
+  const manifest = recordOf(candidate['groundTruthManifest'])
+  const manifestCases = manifest?.['cases']
+  const audit = recordOf(candidate['airGapAudit'])
+  const auditedArmIds = audit?.['auditedArmIds']
+  const auditedSealedResultIds = audit?.['auditedSealedResultIds']
+  const violations = audit?.['violations']
+  if (
+    !Array.isArray(declaredArmIds)
+    || !Array.isArray(sealedArmResults)
+    || !Array.isArray(adjudications)
+    || !Array.isArray(stratumDefinitions)
+    || !Array.isArray(manifestCases)
+  ) return true
+
+  let workUnits = declaredArmIds.length * manifestCases.length
+    + declaredArmIds.length
+    + sealedArmResults.length
+    + adjudications.length
+    + stratumDefinitions.length
+    + (Array.isArray(auditedArmIds) ? auditedArmIds.length : 0)
+    + (Array.isArray(auditedSealedResultIds) ? auditedSealedResultIds.length : 0)
+    + (Array.isArray(violations) ? violations.length : 0)
+  if (workUnits > AIR_GAPPED_EVALUATION_MAX_WORK_UNITS) return false
+
+  for (const manifestCase of manifestCases) {
+    const defects = recordOf(manifestCase)?.['groundTruthDefects']
+    if (Array.isArray(defects)) workUnits += defects.length
+    if (workUnits > AIR_GAPPED_EVALUATION_MAX_WORK_UNITS) return false
+  }
+  for (const sealedResult of sealedArmResults) {
+    const findings = recordOf(recordOf(sealedResult)?.['result'])?.['findings']
+    if (Array.isArray(findings)) workUnits += findings.length
+    if (workUnits > AIR_GAPPED_EVALUATION_MAX_WORK_UNITS) return false
+  }
+  return true
+}
+
 function sameDigest(
   left: z.infer<typeof digestEnvelopeV1Schema>,
   right: z.infer<typeof digestEnvelopeV1Schema>,
@@ -1853,6 +1918,7 @@ function sameDigest(
 export function assembleAirGappedEvaluationV1(
   input: unknown,
 ): AirGappedEvaluationAssemblyV1 {
+  if (!airGappedEvaluationFitsWorkBudget(input)) return invalidAirGappedEvaluationEvidence()
   const parsed = airGappedEvaluationAssemblyRequestV1Schema.safeParse(input)
   if (!parsed.success) return invalidAirGappedEvaluationEvidence()
   const request = parsed.data
@@ -1868,6 +1934,12 @@ export function assembleAirGappedEvaluationV1(
   const manifestCases = new Map(
     request.groundTruthManifest.cases.map(item => [airGapCaseKey(item), item]),
   )
+  const manifestDefectIds = new Map(
+    request.groundTruthManifest.cases.map(item => [
+      airGapCaseKey(item),
+      new Set(item.groundTruthDefects.map(defect => defect.defectId)),
+    ]),
+  )
   if (
     request.groundTruthManifest.sealedAtEpochMs > request.groundTruthOpenedAtEpochMs
     || request.sealedArmResults.some(item => (
@@ -1880,6 +1952,7 @@ export function assembleAirGappedEvaluationV1(
 
   let undeclaredRunnerCase = false
   const resultsByArm = new Map<string, Map<string, SealedAirGappedArmResultV1>>()
+  const findingIdsByArmCase = new Map<string, Set<string>>()
   for (const armId of affectedArmIds) resultsByArm.set(armId, new Map())
   for (const sealedResult of request.sealedArmResults) {
     const key = airGapCaseKey(sealedResult.runnerInput)
@@ -1901,6 +1974,12 @@ export function assembleAirGappedEvaluationV1(
     >
     if (armResults.has(key)) return invalidAirGappedEvaluationEvidence()
     armResults.set(key, sealedResult)
+    findingIdsByArmCase.set(
+      `${sealedResult.armId}\0${key}`,
+      new Set(sealedResult.result.kind === 'COMPLETED'
+        ? sealedResult.result.findings.map(item => item.findingId)
+        : []),
+    )
   }
 
   const adjudications = new Map<string, AirGappedFindingAdjudicationV1>()
@@ -1915,11 +1994,9 @@ export function assembleAirGappedEvaluationV1(
     if (
       sealedResult?.result.kind !== 'COMPLETED'
       || manifestCase === undefined
-      || !sealedResult.result.findings.some(item => item.findingId === adjudication.findingId)
+      || !findingIdsByArmCase.get(`${adjudication.armId}\0${caseKey}`)?.has(adjudication.findingId)
       || (matchedDefectId !== null
-        && !manifestCase.groundTruthDefects.some(
-          item => item.defectId === matchedDefectId,
-        ))
+        && !manifestDefectIds.get(caseKey)?.has(matchedDefectId))
     ) {
       return invalidAirGappedEvaluationEvidence()
     }

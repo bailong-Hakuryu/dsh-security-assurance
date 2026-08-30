@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { realpath, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
@@ -117,11 +117,11 @@ import {
 import { reachControlPlaneCancellationCrashCheckpoint } from './internal/control-plane-cancellation-crash-checkpoint.ts'
 import {
   EXECUTE_CONTROL_PLANE_PROVIDER_OPERATION,
+  controlPlaneOperationIdempotencyKey,
   type ControlPlaneAssessmentOperation,
   type ControlPlaneAssessmentOperationOutcome,
   type ControlPlaneCancellationOperation,
   type ControlPlaneCancellationOperationOutcome,
-  type ControlPlaneProviderContext,
   type ControlPlaneProviderOperation,
   type ControlPlaneProviderOperationOutcome,
 } from './internal/control-plane-provider-operation.ts'
@@ -292,19 +292,6 @@ function buildRuntimeHealth(
       ...harnessVerificationChecks,
     ],
   })
-}
-
-function controlPlaneOperationIdempotencyKey(
-  operation: 'start' | 'resume' | 'cancel',
-  context: ControlPlaneProviderContext,
-): string {
-  const prefix = operation === 'start' ? '' : `${operation}\0`
-  const digest = createHash('sha256')
-    .update(`${prefix}${context.invocationId}\0${context.missionId}\0${context.attempt}`)
-    .digest('hex')
-  return operation === 'start'
-    ? `control-plane-${digest}`
-    : `control-plane-${operation}-${digest}`
 }
 
 function controlPlaneSecurityFailure(code: PublicSecurityErrorCode): ControlPlaneAssessmentOperationOutcome {
@@ -1758,7 +1745,11 @@ export class SecurityAssuranceService extends Service {
     const started = await this.startAssessment(invocation, {
       schemaVersion: 1,
       contractVersion: 1,
-      idempotencyKey: controlPlaneOperationIdempotencyKey('start', operation.context),
+      idempotencyKey: controlPlaneOperationIdempotencyKey(
+        'start',
+        operation.context,
+        operation.repositoryId,
+      ),
       repositoryId: operation.repositoryId,
       subject: { kind: 'workspace_snapshot' },
       assessmentMode: 'REPOSITORY',
@@ -1829,7 +1820,11 @@ export class SecurityAssuranceService extends Service {
     options: InvocationOptions,
   ): Promise<ControlPlaneCancellationOperationOutcome> {
     const started = await lookupControlPlaneAssessment(this, invocation, {
-      idempotencyKey: controlPlaneOperationIdempotencyKey('start', operation.context),
+      idempotencyKey: controlPlaneOperationIdempotencyKey(
+        'start',
+        operation.context,
+        operation.repositoryId,
+      ),
       repositoryId: operation.repositoryId,
     })
     if (started === undefined) return { kind: 'EXTERNAL_ASSESSMENT_NOT_STARTED' }

@@ -12,7 +12,8 @@ describe('ADR 0296 Control Plane cancellation resolves only an existing Assessme
     const cancellation = source.slice(start, end)
 
     expect(cancellation).toContain('lookupControlPlaneAssessment(this, invocation, {')
-    expect(cancellation).toContain("controlPlaneOperationIdempotencyKey('start', operation.context)")
+    expect(cancellation).toContain("controlPlaneOperationIdempotencyKey(\n        'start',")
+    expect(cancellation).toContain('operation.repositoryId')
     expect(cancellation).toContain("kind: 'EXTERNAL_ASSESSMENT_NOT_STARTED'")
     expect(cancellation).toContain('this.cancelAssessment(invocation, {')
     expect(cancellation).toContain('this.getAssessment(invocation, {')

@@ -6,7 +6,7 @@ Harness and Cordis seams and does not modify Harness Core.
 
 ## v0.1 release candidate status
 
-Version `0.1.0-rc.6` is the directly usable v0.1 candidate for Harness
+Version `0.1.0-rc.7` is the directly usable v0.1 candidate for Harness
 `0.1.2-alpha.1`. It is
 intended for acceptance and release-gate verification. Stable `0.1.0`
 promotion is limited to version, signature, and release metadata after the
@@ -57,7 +57,7 @@ change may be folded into that promotion. The candidate proves:
   `recordRiskDecision`, `resumeAssessment`, and `cancelAssessment` without putting a Principal, permissions, or Security
   Invocation on the wire;
 - legacy Workbench browser source retained for future migration, but deliberately
-  excluded from the `0.1.0-rc.6` package because Harness `0.1.2-alpha.1` no longer
+  excluded from the `0.1.0-rc.7` package because Harness `0.1.2-alpha.1` no longer
   publishes the client-runtime preset it was built against. Direct Web users
   instead receive Harness's generic cards for the eight registered model tools.
   The legacy source previously provided one transient
@@ -381,12 +381,12 @@ budget exhaustion, crash, and incorrect outcome remain included measured
 results. Missing denominators and unadjudicated Findings produce explicit
 `INCONCLUSIVE` reasons rather than a fabricated zero or passing conclusion.
 The engine also requires predeclared sample floors across Severity, Weakness
-Family, Assessment Mode, and Supported Ecosystem. It derives case or Ground
-Truth defect sample units itself, excludes Benchmark-invalid Cases uniformly,
-counts product failures, and makes every deficient Stratum explicitly
-`INCONCLUSIVE`. Results are canonically ordered, strict, recursively immutable,
-and calculated by the same pure implementation consumed by packed release
-tooling.
+Family, Assessment Mode, and Supported Ecosystem, including distinct mandatory
+Critical and High Severity strata. It derives case or Ground Truth defect sample
+units itself, excludes Benchmark-invalid Cases uniformly, counts product
+failures, and makes every deficient Stratum explicitly `INCONCLUSIVE`. Results
+are canonically ordered, strict, recursively immutable, and calculated by the
+same pure implementation consumed by packed release tooling.
 
 For stochastic evidence, an optional frozen repetition plan names the complete
 independent repetition by Benchmark Case matrix, confidence level, and maximum
@@ -408,6 +408,9 @@ Manifest only after every declared Arm result is sealed and only under a matchin
 contract registered before Runner admission. The assembler requires exact audit
 coverage, preserves evaluator and seal provenance, converts absent adjudications
 to explicit `UNADJUDICATED` outcomes, and invokes the same Metrics Engine itself.
+It also rejects an Arm-by-Case and nested-evidence composition above the fixed
+500,000 work-unit ceiling before deep validation, and uses indexed Finding and
+defect joins rather than multiplicative scans.
 Any access, canary, hint, or timing violation invalidates the complete Evaluation
 Run and returns no per-Arm metric output.
 
@@ -798,7 +801,7 @@ Repository using public identifier configuration:
 ```yaml
 assuranceProviders:
   - providerId: dsh/security-assurance
-    providerVersion: 0.1.0-rc.6
+    providerVersion: 0.1.0-rc.7
     activation: required
     configuration:
       repositoryId: repo-00000000-0000-4000-8000-000000000000
@@ -860,8 +863,8 @@ commands from the Git repository that users want the plugins to govern; the
 launcher cwd becomes the `current-workspace` binding automatically.
 
 ```powershell
-dsh plugin --profile web add D:\path\to\dsh-engineering-control-plane-0.1.5.tgz
-dsh plugin --profile web add D:\path\to\dsh-security-assurance-0.1.0-rc.6.tgz
+dsh plugin --profile web add D:\path\to\dsh-engineering-control-plane-0.1.6.tgz
+dsh plugin --profile web add D:\path\to\dsh-security-assurance-0.1.0-rc.7.tgz
 dsh --profile web --dump-config
 dsh web
 ```

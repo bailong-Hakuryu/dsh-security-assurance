@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.0-rc.7] - 2026-08-30
+
+- Bind Control Plane Assessment start idempotency to the configured Repository
+  so a provider reconfiguration cannot alias or orphan another start identity.
+- Require explicit Critical and High benchmark strata before effectiveness or
+  non-inferiority evidence can be measured.
+- Reject multiplicative air-gapped evaluation inputs under one combined work
+  budget and replace nested adjudication scans with indexed identity lookups.
+
 ## [0.1.0-rc.6] - 2026-08-30
 
 - Keep generic external Analyzer clean claims advisory until an independent

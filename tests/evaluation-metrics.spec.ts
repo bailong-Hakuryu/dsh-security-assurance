@@ -56,6 +56,11 @@ const severityWeights = {
 
 const sufficientStratumDefinitions = [
   {
+    stratumId: 'severity-critical',
+    selector: { dimension: 'SEVERITY', value: 'CRITICAL' },
+    minimumSamples: 1,
+  },
+  {
     stratumId: 'severity-high',
     selector: { dimension: 'SEVERITY', value: 'HIGH' },
     minimumSamples: 1,
@@ -198,7 +203,7 @@ describe('Effectiveness Metrics Engine v1', () => {
         validatedFindings: 2,
         unadjudicatedFindings: 0,
         productFailures: 0,
-        sufficientStrata: 4,
+        sufficientStrata: 5,
         inconclusiveStrata: 0,
       },
       metrics: {
@@ -234,6 +239,15 @@ describe('Effectiveness Metrics Engine v1', () => {
           sampleUnit: 'CASE',
           minimumSamples: 1,
           observedSamples: 2,
+          status: 'SUFFICIENT',
+          reasonCodes: [],
+        },
+        {
+          stratumId: 'severity-critical',
+          selector: { dimension: 'SEVERITY', value: 'CRITICAL' },
+          sampleUnit: 'GROUND_TRUTH_DEFECT',
+          minimumSamples: 1,
+          observedSamples: 1,
           status: 'SUFFICIENT',
           reasonCodes: [],
         },
@@ -281,6 +295,12 @@ describe('Effectiveness Metrics Engine v1', () => {
           weaknessFamily: 'cwe-79',
           policyBlocking: true,
         },
+        {
+          defectId: 'defect-critical',
+          severity: 'CRITICAL',
+          weaknessFamily: 'cwe-79',
+          policyBlocking: true,
+        },
       ],
       result: { kind: 'PRODUCT_FAILURE', failure: 'CRASH' },
     }]))
@@ -288,16 +308,16 @@ describe('Effectiveness Metrics Engine v1', () => {
     expect(result.counts).toEqual({
       includedCases: 1,
       benchmarkInvalidCases: 0,
-      groundTruthDefects: 1,
+      groundTruthDefects: 2,
       validatedFindings: 0,
       unadjudicatedFindings: 0,
       productFailures: 1,
-      sufficientStrata: 4,
+      sufficientStrata: 5,
       inconclusiveStrata: 0,
     })
     expect(result.metrics).toMatchObject({
-      criticalHighValidatedRecall: { numerator: 0, denominator: 1, value: 0 },
-      severityWeightedValidatedRecall: { numerator: 0, denominator: 5, value: 0 },
+      criticalHighValidatedRecall: { numerator: 0, denominator: 2, value: 0 },
+      severityWeightedValidatedRecall: { numerator: 0, denominator: 13, value: 0 },
       unsafeSatisfactionRate: { numerator: 0, denominator: 1, value: 0 },
       coverageHonestyRate: { numerator: 0, denominator: 1, value: 0 },
       validatedPrecision: { status: 'INCONCLUSIVE', numerator: 0, denominator: 0, value: null },
@@ -413,7 +433,9 @@ describe('Effectiveness Metrics Engine v1', () => {
         severityWeights: { ...severityWeights, CRITICAL: 1 },
       },
       request([validCase], [
-        ...sufficientStratumDefinitions.slice(1),
+        ...sufficientStratumDefinitions.filter(
+          definition => definition.selector.dimension !== 'SEVERITY',
+        ),
         {
           stratumId: 'weakness-cwe-89',
           selector: { dimension: 'WEAKNESS_FAMILY', value: 'cwe-89' },
@@ -431,6 +453,16 @@ describe('Effectiveness Metrics Engine v1', () => {
           selector: { dimension: 'SEVERITY', value: 'CRITICAL' },
           minimumSamples: 1,
         },
+      ]),
+      request([validCase], [
+        {
+          stratumId: 'severity-low',
+          selector: { dimension: 'SEVERITY', value: 'LOW' },
+          minimumSamples: 1,
+        },
+        ...sufficientStratumDefinitions.filter(
+          definition => definition.selector.dimension !== 'SEVERITY',
+        ),
       ]),
       request([{ ...validCase, repetitionId: 'rep-a' }]),
       request([repeatedValidCase, repeatedValidCase], repetitionStratumDefinitions, repetitionPlan),
@@ -506,6 +538,11 @@ describe('Effectiveness Metrics Engine v1', () => {
       },
     ], [
       {
+        stratumId: 'severity-critical',
+        selector: { dimension: 'SEVERITY', value: 'CRITICAL' },
+        minimumSamples: 1,
+      },
+      {
         stratumId: 'weakness-cwe-79',
         selector: { dimension: 'WEAKNESS_FAMILY', value: 'cwe-79' },
         minimumSamples: 3,
@@ -538,7 +575,7 @@ describe('Effectiveness Metrics Engine v1', () => {
       benchmarkInvalidCases: 1,
       productFailures: 2,
       sufficientStrata: 2,
-      inconclusiveStrata: 2,
+      inconclusiveStrata: 3,
     })
     expect(result.strata).toEqual([
       {
@@ -558,6 +595,15 @@ describe('Effectiveness Metrics Engine v1', () => {
         observedSamples: 2,
         status: 'SUFFICIENT',
         reasonCodes: [],
+      },
+      {
+        stratumId: 'severity-critical',
+        selector: { dimension: 'SEVERITY', value: 'CRITICAL' },
+        sampleUnit: 'GROUND_TRUTH_DEFECT',
+        minimumSamples: 1,
+        observedSamples: 0,
+        status: 'INCONCLUSIVE',
+        reasonCodes: ['INSUFFICIENT_SAMPLE_COUNT'],
       },
       {
         stratumId: 'severity-high',
@@ -589,12 +635,20 @@ describe('Effectiveness Metrics Engine v1', () => {
         assessmentMode: 'CHANGE',
         supportedEcosystem: 'node',
         expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
-        groundTruthDefects: [{
-          defectId: 'defect-high',
-          severity: 'HIGH',
-          weaknessFamily: 'cwe-79',
-          policyBlocking: true,
-        }],
+        groundTruthDefects: [
+          {
+            defectId: 'defect-high',
+            severity: 'HIGH',
+            weaknessFamily: 'cwe-79',
+            policyBlocking: true,
+          },
+          {
+            defectId: 'defect-critical',
+            severity: 'CRITICAL',
+            weaknessFamily: 'cwe-79',
+            policyBlocking: true,
+          },
+        ],
         result: {
           kind: 'COMPLETED',
           verdict: 'FAILED',
@@ -602,6 +656,9 @@ describe('Effectiveness Metrics Engine v1', () => {
           findings: [{
             findingId: 'finding-match',
             adjudication: { status: 'MATCHED', defectId: 'defect-high' },
+          }, {
+            findingId: 'finding-critical-match',
+            adjudication: { status: 'MATCHED', defectId: 'defect-critical' },
           }],
         },
       },
@@ -612,12 +669,20 @@ describe('Effectiveness Metrics Engine v1', () => {
         assessmentMode: 'CHANGE',
         supportedEcosystem: 'node',
         expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
-        groundTruthDefects: [{
-          defectId: 'defect-high',
-          severity: 'HIGH',
-          weaknessFamily: 'cwe-79',
-          policyBlocking: true,
-        }],
+        groundTruthDefects: [
+          {
+            defectId: 'defect-high',
+            severity: 'HIGH',
+            weaknessFamily: 'cwe-79',
+            policyBlocking: true,
+          },
+          {
+            defectId: 'defect-critical',
+            severity: 'CRITICAL',
+            weaknessFamily: 'cwe-79',
+            policyBlocking: true,
+          },
+        ],
         result: {
           kind: 'COMPLETED',
           verdict: 'SATISFIED',
@@ -663,10 +728,10 @@ describe('Effectiveness Metrics Engine v1', () => {
     expect(result.conclusion).toBe('MEASURED')
     expect(result.counts).toMatchObject({
       includedCases: 2,
-      sufficientStrata: 4,
+      sufficientStrata: 5,
       inconclusiveStrata: 0,
     })
-    expect(result.strata.map(item => item.observedSamples)).toEqual([1, 1, 1, 1])
+    expect(result.strata.map(item => item.observedSamples)).toEqual([1, 1, 1, 1, 2])
     expect(result.repetitionAnalysis).toEqual({
       method: 'HOEFFDING_TWO_SIDED_V1',
       confidenceLevel: 0.95,
@@ -699,12 +764,20 @@ describe('Effectiveness Metrics Engine v1', () => {
       assessmentMode: 'CHANGE',
       supportedEcosystem: 'node',
       expectedCoverage: 'INCOMPLETE_OR_UNSUPPORTED',
-      groundTruthDefects: [{
-        defectId: 'defect-high',
-        severity: 'HIGH',
-        weaknessFamily: 'cwe-79',
-        policyBlocking: true,
-      }],
+      groundTruthDefects: [
+        {
+          defectId: 'defect-high',
+          severity: 'HIGH',
+          weaknessFamily: 'cwe-79',
+          policyBlocking: true,
+        },
+        {
+          defectId: 'defect-critical',
+          severity: 'CRITICAL',
+          weaknessFamily: 'cwe-79',
+          policyBlocking: true,
+        },
+      ],
       result: {
         kind: 'COMPLETED',
         verdict: repetitionId === 'rep-a' ? 'FAILED' : 'SATISFIED',
@@ -778,6 +851,11 @@ describe('Effectiveness Metrics Engine v1', () => {
         severity: 'HIGH',
         weaknessFamily: 'cwe-79',
         policyBlocking: true,
+      }, {
+        defectId: 'defect-critical',
+        severity: 'CRITICAL',
+        weaknessFamily: 'cwe-79',
+        policyBlocking: true,
       }],
       result: {
         kind: 'COMPLETED',
@@ -788,7 +866,12 @@ describe('Effectiveness Metrics Engine v1', () => {
           adjudication: matched
             ? { status: 'MATCHED', defectId: 'defect-high' }
             : { status: 'NOT_MATCHED' },
-        }],
+        }, ...matched
+          ? [{
+              findingId: `finding-critical-${repetitionId}`,
+              adjudication: { status: 'MATCHED' as const, defectId: 'defect-critical' },
+            }]
+          : []],
       },
     })
     const result = calculateEffectivenessMetricsV1(request(
@@ -808,7 +891,7 @@ describe('Effectiveness Metrics Engine v1', () => {
     expect(result.conclusion).toBe('INCONCLUSIVE')
     expect(result.reasonCodes).toEqual(['INSUFFICIENT_BENCHMARK_STRATA'])
     expect(result.repetitionAnalysis?.status).toBe('SUFFICIENT')
-    expect(result.counts).toMatchObject({ sufficientStrata: 3, inconclusiveStrata: 1 })
+    expect(result.counts).toMatchObject({ sufficientStrata: 4, inconclusiveStrata: 1 })
     expect(result.strata.find(item => item.stratumId === 'severity-high')).toMatchObject({
       status: 'INCONCLUSIVE',
       reasonCodes: ['EXCESSIVE_CONFIDENCE_INTERVAL_WIDTH'],
@@ -1096,6 +1179,11 @@ describe('Air-gapped Evaluation Engine v1', () => {
             severity: 'HIGH',
             weaknessFamily: 'cwe-79',
             policyBlocking: true,
+          }, {
+            defectId: 'defect-critical',
+            severity: 'CRITICAL',
+            weaknessFamily: 'cwe-79',
+            policyBlocking: true,
           }],
         }],
       },
@@ -1122,7 +1210,10 @@ describe('Air-gapped Evaluation Engine v1', () => {
             kind: 'COMPLETED',
             verdict: 'FAILED',
             coverageStatus: 'GAP',
-            findings: [{ findingId: 'finding-candidate' }],
+            findings: [
+              { findingId: 'finding-candidate' },
+              { findingId: 'finding-candidate-critical' },
+            ],
           },
           sealedAtEpochMs: 300,
           resultDigest: digest('e'),
@@ -1142,6 +1233,13 @@ describe('Air-gapped Evaluation Engine v1', () => {
           findingId: 'finding-candidate',
           adjudication: { status: 'MATCHED', defectId: 'defect-high' },
           adjudicationRecordId: 'adjudication-candidate',
+        },
+        {
+          armId: 'candidate-arm',
+          caseId: 'case-hidden',
+          findingId: 'finding-candidate-critical',
+          adjudication: { status: 'MATCHED', defectId: 'defect-critical' },
+          adjudicationRecordId: 'adjudication-candidate-critical',
         },
       ],
       airGapAudit: {
@@ -1205,12 +1303,21 @@ describe('Air-gapped Evaluation Engine v1', () => {
     })
     expect(result.arms[1]?.metricsRequest.cases[0]).toMatchObject({
       caseId: 'case-hidden',
-      groundTruthDefects: [{ defectId: 'defect-high' }],
+      groundTruthDefects: [
+        { defectId: 'defect-high' },
+        { defectId: 'defect-critical' },
+      ],
       result: {
-        findings: [{
-          findingId: 'finding-candidate',
-          adjudication: { status: 'MATCHED', defectId: 'defect-high' },
-        }],
+        findings: [
+          {
+            findingId: 'finding-candidate',
+            adjudication: { status: 'MATCHED', defectId: 'defect-high' },
+          },
+          {
+            findingId: 'finding-candidate-critical',
+            adjudication: { status: 'MATCHED', defectId: 'defect-critical' },
+          },
+        ],
       },
     })
     expect(Object.isFrozen(result)).toBe(true)
@@ -1326,6 +1433,19 @@ describe('Air-gapped Evaluation Engine v1', () => {
       repositoryPath: 'C:\\private\\holdout',
     })).toThrow(AirGappedEvaluationInputError)
   })
+
+  it('rejects individually valid arrays whose combined evaluation work exceeds the host budget', () => {
+    const oversized = baseAssemblyRequest()
+    oversized.declaredArmIds = Array.from({ length: 600 }, (_value, index) => `arm-${index}`)
+    oversized.groundTruthManifest.cases = Array.from({ length: 1_000 }, (_value, index) => ({
+      ...oversized.groundTruthManifest.cases[0]!,
+      caseId: `case-${index}`,
+    }))
+
+    expect(() => assembleAirGappedEvaluationV1(oversized)).toThrow(
+      AirGappedEvaluationInputError,
+    )
+  })
 })
 
 describe('Utility Metrics Engine v1', () => {
@@ -1368,6 +1488,11 @@ describe('Utility Metrics Engine v1', () => {
       groundTruthDefects: [{
         defectId: 'defect-high',
         severity: 'HIGH',
+        weaknessFamily: 'cwe-79',
+        policyBlocking: true,
+      }, {
+        defectId: 'defect-critical',
+        severity: 'CRITICAL',
         weaknessFamily: 'cwe-79',
         policyBlocking: true,
       }],
@@ -1552,6 +1677,11 @@ describe('Paired Arm Comparison Engine v1', () => {
         severity: 'HIGH',
         weaknessFamily: 'cwe-79',
         policyBlocking: true,
+      }, {
+        defectId: 'defect-critical',
+        severity: 'CRITICAL',
+        weaknessFamily: 'cwe-79',
+        policyBlocking: true,
       }],
       result: {
         kind: 'COMPLETED',
@@ -1586,6 +1716,11 @@ describe('Paired Arm Comparison Engine v1', () => {
           severity: 'HIGH',
           weaknessFamily: 'cwe-79',
           policyBlocking: true,
+        }, {
+          defectId: 'defect-critical',
+          severity: 'CRITICAL',
+          weaknessFamily: 'cwe-79',
+          policyBlocking: true,
         }],
         result: {
           kind: 'COMPLETED',
@@ -1596,7 +1731,12 @@ describe('Paired Arm Comparison Engine v1', () => {
             adjudication: successful
               ? { status: 'MATCHED', defectId: 'defect-high' }
               : { status: 'NOT_MATCHED' },
-          }],
+          }, ...successful
+            ? [{
+                findingId: `finding-critical-${repetitionId}`,
+                adjudication: { status: 'MATCHED' as const, defectId: 'defect-critical' },
+              }]
+            : []],
         },
       })),
       repetitionStratumDefinitions,
@@ -1683,12 +1823,12 @@ describe('Paired Arm Comparison Engine v1', () => {
     })
     expect(result.metrics).toEqual({
       criticalHighValidatedRecall: {
-        status: 'MEASURED', baselineValue: 0, candidateValue: 1,
-        rawDelta: 1, directionalDelta: 1, preferredDirection: 'HIGHER', outcome: 'IMPROVED',
+        status: 'MEASURED', baselineValue: 0, candidateValue: 0.5,
+        rawDelta: 0.5, directionalDelta: 0.5, preferredDirection: 'HIGHER', outcome: 'IMPROVED',
       },
       severityWeightedValidatedRecall: {
-        status: 'MEASURED', baselineValue: 0, candidateValue: 1,
-        rawDelta: 1, directionalDelta: 1, preferredDirection: 'HIGHER', outcome: 'IMPROVED',
+        status: 'MEASURED', baselineValue: 0, candidateValue: 5 / 13,
+        rawDelta: 5 / 13, directionalDelta: 5 / 13, preferredDirection: 'HIGHER', outcome: 'IMPROVED',
       },
       validatedPrecision: {
         status: 'MEASURED', baselineValue: 0, candidateValue: 1,
@@ -1731,7 +1871,7 @@ describe('Paired Arm Comparison Engine v1', () => {
         && metric.conservativeDirectionalDelta !== null
         && metric.conservativeDirectionalDelta > 0,
     )).toBe(true)
-    expect(passing.nonInferiority?.strata).toHaveLength(4)
+    expect(passing.nonInferiority?.strata).toHaveLength(5)
     expect(passing.nonInferiority?.strata.every(
       item => item.validatedRecall.status === 'PASSED',
     )).toBe(true)

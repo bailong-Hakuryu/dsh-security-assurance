@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type {
   AssessmentId,
   InvocationOptions,
@@ -11,6 +12,39 @@ export interface ControlPlaneProviderContext extends ControlPlaneRepositoryBindi
   readonly invocationId: string
   readonly missionId: string
   readonly attempt: number
+}
+
+/**
+ * Derive a stable operation identity without allowing a Repository rebind to
+ * alias the original Assessment start. Resume and cancellation remain scoped
+ * to the immutable Control Plane invocation they reconcile.
+ */
+export function controlPlaneOperationIdempotencyKey(
+  operation: 'start',
+  context: ControlPlaneProviderContext,
+  repositoryId: RepositoryId,
+): string
+export function controlPlaneOperationIdempotencyKey(
+  operation: 'resume' | 'cancel',
+  context: ControlPlaneProviderContext,
+): string
+export function controlPlaneOperationIdempotencyKey(
+  operation: 'start' | 'resume' | 'cancel',
+  context: ControlPlaneProviderContext,
+  repositoryId?: RepositoryId,
+): string {
+  if (operation === 'start' && repositoryId === undefined) {
+    throw new TypeError('control-plane start identity requires a Repository binding')
+  }
+  const prefix = operation === 'start'
+    ? `start\0${repositoryId as string}\0`
+    : `${operation}\0`
+  const digest = createHash('sha256')
+    .update(`${prefix}${context.invocationId}\0${context.missionId}\0${context.attempt}`)
+    .digest('hex')
+  return operation === 'start'
+    ? `control-plane-${digest}`
+    : `control-plane-${operation}-${digest}`
 }
 
 export interface ControlPlaneAssessmentOperation {

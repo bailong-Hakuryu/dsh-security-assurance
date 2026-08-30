@@ -5,19 +5,25 @@ import { describe, expect, it } from 'vitest'
 describe('ADR 0299 Control Plane Assurance Retry starts a distinct Assessment', () => {
   it('binds Assessment idempotency to the Provider Invocation and reserves recover for the same invocation', async () => {
     const service = await readFile(join(import.meta.dirname, '..', 'src', 'index.ts'), 'utf8')
+    const operationIdentity = await readFile(
+      join(import.meta.dirname, '..', 'src', 'internal', 'control-plane-provider-operation.ts'),
+      'utf8',
+    )
     const adapter = await readFile(
       join(import.meta.dirname, '..', 'src', 'control-plane-provider.ts'),
       'utf8',
     )
-    const keyStart = service.indexOf('function controlPlaneOperationIdempotencyKey(')
-    const keyEnd = service.indexOf('\n}\n\nfunction controlPlaneSecurityFailure', keyStart) + 2
-    const keyBuilder = service.slice(keyStart, keyEnd)
+    const keyStart = operationIdentity.indexOf('export function controlPlaneOperationIdempotencyKey(')
+    const keyEnd = operationIdentity.indexOf('\n}\n\nexport interface ControlPlaneAssessmentOperation', keyStart) + 2
+    const keyBuilder = operationIdentity.slice(keyStart, keyEnd)
 
     expect(keyStart).toBeGreaterThan(-1)
     expect(keyEnd).toBeGreaterThan(keyStart)
     expect(keyBuilder).toContain('context.invocationId')
     expect(keyBuilder).toContain('context.missionId')
     expect(keyBuilder).toContain('context.attempt')
+    expect(keyBuilder).toContain('repositoryId')
+    expect(keyBuilder).toContain('start\\0')
     expect(keyBuilder).toContain("return operation === 'start'")
     expect(adapter).toContain("{ kind: 'ASSESS', context, repositoryId }")
     expect(adapter).toContain("{ kind: 'RECOVER', context, repositoryId }")
