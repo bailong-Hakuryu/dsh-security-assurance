@@ -41,10 +41,10 @@ describe('SecurityAssuranceService health tracer', () => {
       schemaVersion: 1,
       product: {
         name: 'dsh-security-assurance',
-        version: '0.1.0-rc.1',
+        version: '0.1.0-rc.2',
       },
       compatibility: {
-        targetHarnessVersion: '0.1.1-rc.2',
+        targetHarnessVersion: '0.1.2-alpha.1',
         requiredNodeRange: '^22.19.0 || >=24.0.0',
       },
       state: 'READY',

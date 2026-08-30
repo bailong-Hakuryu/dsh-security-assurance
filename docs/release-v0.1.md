@@ -3,8 +3,8 @@
 ## Candidate
 
 - Package: `dsh-security-assurance`
-- Candidate version: `0.1.0-rc.1`
-- Qualified Harness target: `0.1.1-rc.2`
+- Candidate version: `0.1.0-rc.2`
+- Qualified Harness target: `0.1.2-alpha.1`
 - Node.js: `^22.19.0 || >=24.0.0`
 - License: MIT
 
@@ -20,21 +20,24 @@ Run the complete local gate with:
 pnpm release:check
 ```
 
-It covers type checking, the full deterministic test suite, a clean build, npm
-pack inspection, fresh-consumer packed integration, and packed real-browser
-Harness E2E. The exact delivered tarball and source revision are recorded in
-the external delivery manifest.
+It covers type checking, the full current-Harness deterministic test suite, a
+clean build, npm pack inspection, and a fresh Harness `0.1.2-alpha.1` Web
+profile that installs both packed bundles, composes their active rows, boots a
+clean Git repository, completes browser-token authentication, and serves the
+Web page. Legacy `0.1.1-rc.2` consumer and browser scenarios remain available
+as non-release compatibility checks. The exact delivered tarball and source
+revision are recorded in the external delivery manifest.
 
 For final artifact verification, the packed scripts accept absolute artifact
 paths through `DSH_SECURITY_PACKED_ARTIFACT` and
-`DSH_CONTROL_PLANE_PACKED_ARTIFACT`. This makes the fresh-consumer and browser
-checks exercise the exact files whose SHA-256 digests are delivered.
+`DSH_CONTROL_PLANE_PACKED_ARTIFACT`. This makes the latest-Harness profile
+smoke exercise the exact files whose SHA-256 digests are delivered.
 
 ## Acceptance gates before stable promotion
 
 - Verify the delivered tarball digest and install it without workspace links.
-- Exercise the intended repository and Workbench flows under the deployment
-  policy that will be used in production.
+- Exercise the intended repository and generic Web tool-card flows under the
+  deployment policy that will be used in production.
 - Record Windows, Linux, and macOS packed-installation evidence before claiming
   stable cross-platform support.
 - Complete the Release Constitution evidence set, support matrix, holdout,

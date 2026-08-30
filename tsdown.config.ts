@@ -3,17 +3,6 @@ import { typertPlugin } from '@deepseek-ai/dsh-typert-generator/tsdown'
 
 const decorators = typertPlugin({ faces: ['host'] })
 
-const clientExternals = new Set([
-  '@deepseek-ai/cordis',
-  '@deepseek-ai/dsh-client-runtime/client',
-  '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-ui-slots',
-  'react',
-  'react/jsx-runtime',
-  'react-dom',
-  'react-dom/client',
-])
-
 /** Bundle implemented public entries from declaration-build JavaScript. */
 export default defineConfig([
   {
@@ -116,27 +105,5 @@ export default defineConfig([
     dts: false,
     clean: false,
     plugins: [{ ...decorators, writeBundle: undefined }],
-  },
-  {
-    name: 'dsh-security-assurance/client',
-    entry: { client: 'lib/types/client/index.js' },
-    outDir: 'lib',
-    format: ['cjs'],
-    platform: 'browser',
-    target: 'es2024',
-    fixedExtension: false,
-    dts: false,
-    sourcemap: true,
-    clean: false,
-    deps: {
-      neverBundle: (specifier: string) => clientExternals.has(specifier),
-      alwaysBundle: (specifier: string) => !clientExternals.has(specifier),
-    },
-    outputOptions: {
-      entryFileNames: 'client.js',
-      banner: 'window.__ModuleLoader__.load({ id: "dsh-security-assurance", factory: (require) => {',
-      footer: 'return module.exports; } });',
-      intro: 'var module = { exports: {} }; var exports = module.exports;',
-    },
   },
 ])

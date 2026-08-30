@@ -16,7 +16,7 @@ const packageJson = JSON.parse(
 
 describe('v0.1 release candidate package', () => {
   it('binds runtime and package identity to the candidate version', () => {
-    expect(packageJson.version).toBe('0.1.0-rc.1')
+    expect(packageJson.version).toBe('0.1.0-rc.2')
     expect(SECURITY_ASSURANCE_PRODUCT_VERSION).toBe(packageJson.version)
   })
 
@@ -37,7 +37,7 @@ describe('v0.1 release candidate package', () => {
     expect(packageJson.scripts?.['release:check']).toMatch(
       /pnpm typecheck && pnpm build && pnpm test/,
     )
-    expect(packageJson.scripts?.['release:check']).toContain('pnpm pack:smoke')
-    expect(packageJson.scripts?.['release:check']).toContain('pnpm pack:browser-e2e')
+    expect(packageJson.scripts?.['release:check']).toContain('pnpm pack:profile-smoke')
+    expect(packageJson.scripts?.['release:check']).not.toContain('pnpm pack:browser-e2e')
   })
 })

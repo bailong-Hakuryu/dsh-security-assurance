@@ -4,7 +4,9 @@ import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { defineTool, type GenericCallView, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import {
   cancelAssessmentRequestSchema,
+  getCatalogRequestSchema,
   getAssessmentRequestSchema,
+  listRepositoriesRequestSchema,
   listFindingsRequestSchema,
   requestExportRequestSchema,
   resumeAssessmentRequestSchema,
@@ -18,6 +20,8 @@ import {
   type FindingListPageV1,
   type FindingSummaryV1,
   type ExportRequestReceiptV1,
+  type RepositoryListSnapshotV1,
+  type SecurityCatalogSnapshotV1,
   type SecurityInvocation,
   type SecurityVerdict,
 } from './contracts.ts'
@@ -118,6 +122,137 @@ export interface SecurityAssessmentFindingsV1 {
   readonly findings: SecurityAssessmentFindingSummaryV1[]
   readonly nextCursor: string | null
 }
+
+/** Model-safe Repository selection list with no root or root-identity digest. */
+export interface SecurityRepositorySelectionV1 {
+  readonly schemaVersion: 1
+  readonly repositories: {
+    readonly repositoryId: string
+    readonly repositoryRevision: number
+    readonly state: 'ENABLED' | 'DISABLED'
+    readonly displayName: string
+    readonly policyId: string
+    readonly assessmentProfileId: string
+    readonly platform: 'win32' | 'linux' | 'darwin'
+  }[]
+  readonly truncated: boolean
+}
+
+/** Model-safe effective choices needed to construct an Assessment start request. */
+export interface SecurityAssessmentCatalogV1 {
+  readonly schemaVersion: 1
+  readonly repository: null | {
+    readonly repositoryId: string
+    readonly repositoryRevision: number
+    readonly state: 'ENABLED' | 'DISABLED'
+    readonly displayName: string
+  }
+  readonly assessmentModes: {
+    readonly assessmentMode: 'REPOSITORY' | 'CHANGE' | 'TARGETED'
+    readonly targetKind: 'repository' | 'change' | 'targeted'
+    readonly subjectKinds: ('git_revision' | 'change' | 'workspace_snapshot')[]
+    readonly support: 'SUPPORTED' | 'UNSUPPORTED'
+    readonly limitations: string[]
+  }[]
+  readonly assessmentProfiles: {
+    readonly assessmentProfileId: string
+    readonly limitations: string[]
+  }[]
+  readonly strongerControls: {
+    readonly controlId: string
+    readonly requiresControlIds: string[]
+  }[]
+  readonly supportedEcosystemIds: string[]
+  readonly supportedPlatforms: ('win32' | 'linux' | 'darwin')[]
+}
+
+const REPOSITORIES_OUTPUT = {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      schemaVersion: { type: 'integer', const: 1, required: true },
+      repositories: {
+        type: 'array',
+        required: true,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            repositoryId: { type: 'string', required: true },
+            repositoryRevision: { type: 'integer', required: true },
+            state: { type: 'string', enum: ['ENABLED', 'DISABLED'], required: true },
+            displayName: { type: 'string', required: true },
+            policyId: { type: 'string', required: true },
+            assessmentProfileId: { type: 'string', required: true },
+            platform: { type: 'string', enum: ['win32', 'linux', 'darwin'], required: true },
+          },
+        },
+      },
+      truncated: { type: 'boolean', required: true },
+    },
+  },
+  render: (_args: unknown, value: SecurityRepositorySelectionV1) => ([{
+    type: 'text' as const,
+    text: JSON.stringify(value),
+  }]),
+} as const
+
+const CATALOG_OUTPUT = {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      schemaVersion: { type: 'integer', const: 1, required: true },
+      repository: {
+        required: true,
+        oneOf: [{ type: 'null' }, {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            repositoryId: { type: 'string', required: true },
+            repositoryRevision: { type: 'integer', required: true },
+            state: { type: 'string', enum: ['ENABLED', 'DISABLED'], required: true },
+            displayName: { type: 'string', required: true },
+          },
+        }],
+      },
+      assessmentModes: {
+        type: 'array', required: true, items: {
+          type: 'object', additionalProperties: false, properties: {
+            assessmentMode: { type: 'string', enum: ['REPOSITORY', 'CHANGE', 'TARGETED'], required: true },
+            targetKind: { type: 'string', enum: ['repository', 'change', 'targeted'], required: true },
+            subjectKinds: { type: 'array', items: { type: 'string', enum: ['git_revision', 'change', 'workspace_snapshot'] }, required: true },
+            support: { type: 'string', enum: ['SUPPORTED', 'UNSUPPORTED'], required: true },
+            limitations: { type: 'array', items: { type: 'string' }, required: true },
+          },
+        },
+      },
+      assessmentProfiles: {
+        type: 'array', required: true, items: {
+          type: 'object', additionalProperties: false, properties: {
+            assessmentProfileId: { type: 'string', required: true },
+            limitations: { type: 'array', items: { type: 'string' }, required: true },
+          },
+        },
+      },
+      strongerControls: {
+        type: 'array', required: true, items: {
+          type: 'object', additionalProperties: false, properties: {
+            controlId: { type: 'string', required: true },
+            requiresControlIds: { type: 'array', items: { type: 'string' }, required: true },
+          },
+        },
+      },
+      supportedEcosystemIds: { type: 'array', items: { type: 'string' }, required: true },
+      supportedPlatforms: { type: 'array', items: { type: 'string', enum: ['win32', 'linux', 'darwin'] }, required: true },
+    },
+  },
+  render: (_args: unknown, value: SecurityAssessmentCatalogV1) => ([{
+    type: 'text' as const,
+    text: JSON.stringify(value),
+  }]),
+} as const
 
 const START_OUTPUT = {
   schema: {
@@ -496,6 +631,70 @@ function findingsValue(page: FindingListPageV1): SecurityAssessmentFindingsV1 {
   }
 }
 
+function repositoriesValue(snapshot: RepositoryListSnapshotV1): SecurityRepositorySelectionV1 {
+  return {
+    schemaVersion: 1,
+    repositories: snapshot.repositories.map(repository => ({
+      repositoryId: repository.repositoryId,
+      repositoryRevision: repository.repositoryRevision,
+      state: repository.state,
+      displayName: repository.displayName,
+      policyId: repository.bindings.policyId,
+      assessmentProfileId: repository.bindings.assessmentProfileId,
+      platform: repository.bindings.platform,
+    })),
+    truncated: snapshot.truncated,
+  }
+}
+
+function catalogValue(snapshot: SecurityCatalogSnapshotV1): SecurityAssessmentCatalogV1 {
+  return {
+    schemaVersion: 1,
+    repository: snapshot.repository === null
+      ? null
+      : {
+          repositoryId: snapshot.repository.repositoryId,
+          repositoryRevision: snapshot.repository.repositoryRevision,
+          state: snapshot.repository.state,
+          displayName: snapshot.repository.displayName,
+        },
+    assessmentModes: snapshot.assessmentModes.map(mode => ({
+      assessmentMode: mode.assessmentMode,
+      targetKind: mode.targetKind,
+      subjectKinds: [...mode.subjectKinds],
+      support: mode.support,
+      limitations: [...mode.limitations],
+    })),
+    assessmentProfiles: snapshot.assessmentProfiles.map(profile => ({
+      assessmentProfileId: profile.assessmentProfileId,
+      limitations: [...profile.limitations],
+    })),
+    strongerControls: snapshot.strongerControls.map(control => ({
+      controlId: control.controlId,
+      requiresControlIds: [...control.requiresControlIds],
+    })),
+    supportedEcosystemIds: [...snapshot.supportedEcosystemIds],
+    supportedPlatforms: [...snapshot.supportedPlatforms],
+  }
+}
+
+function presentRepositories(): GenericCallView {
+  return {
+    card: 'generic',
+    title: 'List security repositories',
+    kind: 'read',
+  }
+}
+
+function presentCatalog(args: { readonly repository_id?: string }): GenericCallView {
+  return {
+    card: 'generic',
+    title: 'Read security assessment catalog',
+    kind: 'read',
+    rawInput: args.repository_id,
+  }
+}
+
 function presentStatus(args: { readonly assessment_id: string }): GenericCallView {
   return {
     card: 'generic',
@@ -555,6 +754,85 @@ const SecurityAssuranceTools = {
   name: 'dsh-security-assurance-tools',
   inject: ['agents', 'securityAssurance', 'tools'],
   apply(ctx: Context): void {
+    ctx.tools.register(defineTool({
+      name: 'security_repositories',
+      description: 'List the bounded, path-free Security Repository choices visible to the calling Harness '
+        + 'session. Use an ENABLED repositoryId from this result with security_catalog and '
+        + 'security_assessment_start. This tool never returns repository roots, root digests, credentials, '
+        + 'authority metadata, or storage handles.',
+      parameters: {
+        limit: {
+          type: 'integer',
+          required: true,
+          description: 'Maximum repositories to return, from 1 through 100.',
+        },
+        state: {
+          type: 'string',
+          enum: ['ENABLED', 'DISABLED'],
+          description: 'Optional Repository state filter.',
+        },
+      },
+      output: REPOSITORIES_OUTPUT,
+      async execute(args, exec) {
+        const parsed = listRepositoriesRequestSchema.safeParse({
+          schemaVersion: 1,
+          limit: args.limit,
+          ...args.state === undefined ? {} : { state: args.state },
+        })
+        if (!parsed.success) {
+          return reject(
+            'security_repositories arguments do not match the Repository list contract',
+            'SECURITY_INVALID_REQUEST',
+          )
+        }
+        const result = await ctx.securityAssurance.listRepositories(
+          harnessSessionInvocation(ctx, exec, 'repository:read'),
+          parsed.data,
+          { signal: exec.signal },
+        )
+        if (!result.ok) return reject(result.error.message, `SECURITY_${result.error.code}`)
+        return repositoriesValue(result.value)
+      },
+      isConcurrencySafe: () => true,
+      presentCall: presentRepositories,
+    }))
+
+    ctx.tools.register(defineTool({
+      name: 'security_catalog',
+      description: 'Read the effective Security Assessment modes, profiles, target/subject kinds, stronger '
+        + 'controls, ecosystems, and platforms. Pass an exact repositoryId from security_repositories to '
+        + 'obtain repository-specific choices before security_assessment_start. This tool returns no paths, '
+        + 'Evidence, provider credentials, authority metadata, or mutable registry handles.',
+      parameters: {
+        repository_id: {
+          type: 'string',
+          description: 'Optional exact registered Repository id from security_repositories.',
+        },
+      },
+      output: CATALOG_OUTPUT,
+      async execute(args, exec) {
+        const parsed = getCatalogRequestSchema.safeParse({
+          schemaVersion: 1,
+          ...args.repository_id === undefined ? {} : { repositoryId: args.repository_id },
+        })
+        if (!parsed.success) {
+          return reject(
+            'security_catalog arguments do not match the Security Catalog contract',
+            'SECURITY_INVALID_REQUEST',
+          )
+        }
+        const result = await ctx.securityAssurance.getCatalog(
+          harnessSessionInvocation(ctx, exec, 'repository:read'),
+          parsed.data,
+          { signal: exec.signal },
+        )
+        if (!result.ok) return reject(result.error.message, `SECURITY_${result.error.code}`)
+        return catalogValue(result.value)
+      },
+      isConcurrencySafe: () => true,
+      presentCall: presentCatalog,
+    }))
+
     ctx.tools.register(defineTool({
       name: 'security_assessment_start',
       description: 'Start one durable Security Assessment against an already registered Repository. Use only '

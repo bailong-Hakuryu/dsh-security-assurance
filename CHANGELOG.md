@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-rc.2] - 2026-08-30
+
+- Add a direct-use Harness bundle for the launcher cwd and enable the Host,
+  invariant, Repository Provider, tool, and optional Control Plane rows.
+- Resolve Control Plane integration through stable Host repository binding IDs.
+- Add bounded Repository selection and Security Catalog model tools.
+- Export a Schemastery `Config` schema and qualify Harness `0.1.2-alpha.1`.
+
 All notable changes to this project are documented in this file.
 
 ## [0.1.0-rc.1] - 2026-08-29

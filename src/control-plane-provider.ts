@@ -20,6 +20,7 @@ import {
   type SecurityInvocation,
 } from './contracts.ts'
 import type { SecurityAssuranceService } from './index.ts'
+import type { SecurityAssuranceHostRepositoryProvider } from './host-repository-provider.ts'
 import { resolveTrustedInvocation } from './internal/authority.ts'
 import { canonicalJson } from './internal/canonical.ts'
 import {
@@ -54,15 +55,30 @@ function invocationOptions(options?: ProviderInvocationOptions) {
   return options?.signal === undefined ? {} : { signal: options.signal }
 }
 
-function configuredRepositoryId(request: AssuranceRequestV1): RepositoryId | undefined {
+async function configuredRepositoryId(
+  ctx: Context,
+  request: AssuranceRequestV1,
+): Promise<RepositoryId | undefined> {
   const configuration = request.configuration
   if (
     configuration === undefined
     || Object.keys(configuration).length !== 1
-    || !Object.hasOwn(configuration, 'repositoryId')
   ) return undefined
-  const parsed = repositoryIdSchema.safeParse(configuration.repositoryId)
-  return parsed.success ? parsed.data : undefined
+  if (Object.hasOwn(configuration, 'repositoryId')) {
+    const parsed = repositoryIdSchema.safeParse(configuration.repositoryId)
+    return parsed.success ? parsed.data : undefined
+  }
+  if (!Object.hasOwn(configuration, 'repositoryBindingId')) return undefined
+  const bindingId = configuration.repositoryBindingId
+  if (typeof bindingId !== 'string') return undefined
+  let provider: SecurityAssuranceHostRepositoryProvider | undefined
+  try {
+    provider = ctx.get('securityAssuranceHostRepositories') as SecurityAssuranceHostRepositoryProvider | undefined
+  } catch {
+    return undefined
+  }
+  const binding = await provider?.resolve(bindingId)
+  return binding?.state === 'ENABLED' ? binding.repositoryId : undefined
 }
 
 function canonicalSubmissionEvidence(
@@ -180,6 +196,7 @@ function assessmentOutcome(
 class SecurityAssuranceProvider implements AssuranceProviderV1 {
   constructor(
     readonly descriptor: AssuranceProviderDescriptorV1,
+    private readonly ctx: Context,
     private readonly service: SecurityAssuranceService,
     private readonly invocation: SecurityInvocation,
   ) {}
@@ -189,7 +206,7 @@ class SecurityAssuranceProvider implements AssuranceProviderV1 {
     request: AssuranceRequestV1,
     options?: ProviderInvocationOptions,
   ): Promise<AssuranceProviderOutcomeV1> {
-    const repositoryId = configuredRepositoryId(request)
+    const repositoryId = await configuredRepositoryId(this.ctx, request)
     if (repositoryId === undefined) return externalFailure('failed', 'invalid_provider_configuration')
     const outcome = await executeControlPlaneProviderOperation(
       this.service,
@@ -205,7 +222,7 @@ class SecurityAssuranceProvider implements AssuranceProviderV1 {
     request: AssuranceRequestV1,
     options?: ProviderInvocationOptions,
   ): Promise<AssuranceProviderOutcomeV1> {
-    const repositoryId = configuredRepositoryId(request)
+    const repositoryId = await configuredRepositoryId(this.ctx, request)
     if (repositoryId === undefined) return externalFailure('failed', 'invalid_provider_configuration')
     const outcome = await executeControlPlaneProviderOperation(
       this.service,
@@ -221,7 +238,7 @@ class SecurityAssuranceProvider implements AssuranceProviderV1 {
     request: AssuranceRequestV1,
     options?: ProviderInvocationOptions,
   ): Promise<AssuranceProviderCancellationOutcomeV1> {
-    const repositoryId = configuredRepositoryId(request)
+    const repositoryId = await configuredRepositoryId(this.ctx, request)
     if (repositoryId === undefined) throw new Error('Security Provider configuration is invalid')
     const outcome = await executeControlPlaneProviderOperation(
       this.service,
@@ -266,7 +283,7 @@ const SecurityAssuranceControlPlaneProvider = {
     return ctx.engineeringControlPlane.registerAssuranceProvider(
       SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
       (descriptor: AssuranceProviderDescriptorV1) => (
-        new SecurityAssuranceProvider(descriptor, ctx.securityAssurance, invocation)
+        new SecurityAssuranceProvider(descriptor, ctx, ctx.securityAssurance, invocation)
       ),
     )
   },

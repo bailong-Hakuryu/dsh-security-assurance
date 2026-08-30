@@ -1,23 +1,32 @@
-# Security Assurance is installed as a dormant capability. Deployment owners
-# enable this row only after providing a qualified configuration.
+# Direct-use composition for the repository from which Harness is launched.
+# Later profile layers may replace any complete row with deployment policy.
 - insert:
     - id: dsh-security-assurance
       name: dsh-security-assurance
-      disabled: true
-    # Optional package-owned composition verification. Enable beside the root
-    # Service only when the Harness invariant registry is present.
     - id: dsh-security-assurance-invariant
       name: dsh-security-assurance/invariant
-      disabled: true
     - id: dsh-security-assurance-tools
       name: dsh-security-assurance/tools
-      disabled: true
     - id: dsh-security-assurance-control-plane-provider
       name: dsh-security-assurance/control-plane-provider
-      disabled: true
     - id: dsh-security-assurance-host-repository-provider
       name: dsh-security-assurance/host-repository-provider
-      disabled: true
+      config:
+        repositories:
+          - schemaVersion: 1
+            bindingId: current-workspace
+            idempotencyKey: !!js >-
+              'host-repository-provider:cwd:' +
+              Buffer.from(process.cwd()).toString('base64url').slice(0, 80)
+            root: !!js process.cwd()
+            displayName: Current workspace
+            bindings:
+              policyId: security/node-package-lifecycle
+              assessmentProfileId: security/standard
+              evidenceProtectionId: evidence/local-protected
+              dataEgressPolicyId: egress/deny-by-default
+              platform: !!js process.platform
+              deliveryDestinationIds: []
     # Requires a Host-authenticated Workbench authority resolver supplied by
     # the deployment composition; never enable as an anonymous LAN Remote.
     - id: dsh-security-assurance-workbench-remote

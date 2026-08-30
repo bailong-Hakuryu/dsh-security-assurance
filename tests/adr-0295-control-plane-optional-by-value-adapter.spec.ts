@@ -32,7 +32,7 @@ describe('ADR 0295 optional by-value Control Plane Adapter', () => {
     })
   })
 
-  it('accepts only repositoryId configuration and transfers sealed evidence by value', async () => {
+  it('accepts only one Host-owned repository identity and transfers sealed evidence by value', async () => {
     const source = await readFile(
       join(import.meta.dirname, '..', 'src', 'control-plane-provider.ts'),
       'utf8',
@@ -40,6 +40,8 @@ describe('ADR 0295 optional by-value Control Plane Adapter', () => {
 
     expect(source).toContain("Object.keys(configuration).length !== 1")
     expect(source).toContain("Object.hasOwn(configuration, 'repositoryId')")
+    expect(source).toContain("Object.hasOwn(configuration, 'repositoryBindingId')")
+    expect(source).toContain("ctx.get('securityAssuranceHostRepositories')")
     expect(source).toContain('canonicalSubmission: canonicalJson(submission)')
     expect(source).toContain('sourceDigest: `sha256:${submission.digest.value}`')
     expect(source).toContain("artifactId: 'security-assurance-submission'")

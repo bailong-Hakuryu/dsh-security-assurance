@@ -6,7 +6,7 @@ import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentStatus } from '@deepseek-ai/dsh-agent'
-import { CallId, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { ToolCallId as CallId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -83,6 +83,8 @@ async function execute(
 async function executeTool(
   ctx: Context,
   name: 'security_assessment_start'
+    | 'security_repositories'
+    | 'security_catalog'
     | 'security_assessment_status'
     | 'security_assessment_findings'
     | 'security_assessment_resume'
@@ -202,17 +204,33 @@ describe('security assessment tool registration', () => {
         inject: ['agents', 'securityAssurance', 'tools'],
       })
       const start = fixture.ctx.tools.get('security_assessment_start')
+      const repositories = fixture.ctx.tools.get('security_repositories')
+      const catalog = fixture.ctx.tools.get('security_catalog')
       const status = fixture.ctx.tools.get('security_assessment_status')
       const findings = fixture.ctx.tools.get('security_assessment_findings')
       const resume = fixture.ctx.tools.get('security_assessment_resume')
       const cancel = fixture.ctx.tools.get('security_assessment_cancel')
       const exportAssessment = fixture.ctx.tools.get('security_assessment_export')
       expect(start?.name).toBe('security_assessment_start')
+      expect(repositories?.name).toBe('security_repositories')
+      expect(catalog?.name).toBe('security_catalog')
       expect(status?.name).toBe('security_assessment_status')
       expect(findings?.name).toBe('security_assessment_findings')
       expect(resume?.name).toBe('security_assessment_resume')
       expect(cancel?.name).toBe('security_assessment_cancel')
       expect(exportAssessment?.name).toBe('security_assessment_export')
+      expect(fixture.ctx.tools.executionMode({
+        callId: CallId('security-repositories-mode'),
+        name: 'security_repositories',
+        arguments: { limit: 20, state: 'ENABLED' },
+        signal: toolSignal,
+      })).toEqual({ kind: 'parallel' })
+      expect(fixture.ctx.tools.executionMode({
+        callId: CallId('security-catalog-mode'),
+        name: 'security_catalog',
+        arguments: {},
+        signal: toolSignal,
+      })).toEqual({ kind: 'parallel' })
       expect(fixture.ctx.tools.executionMode({
         callId: CallId('security-start-mode'),
         name: 'security_assessment_start',
@@ -328,6 +346,17 @@ describe('security assessment tool registration', () => {
         rawInput: 'asm-00000000-0000-0000-0000-000000000000',
       })
       expect(start?.presentCall?.({ forged: true })).toBeUndefined()
+      expect(repositories?.presentCall?.({ limit: 20 })).toEqual({
+        card: 'generic',
+        title: 'List security repositories',
+        kind: 'read',
+      })
+      expect(catalog?.presentCall?.({})).toEqual({
+        card: 'generic',
+        title: 'Read security assessment catalog',
+        kind: 'read',
+        rawInput: undefined,
+      })
       expect(status?.presentCall?.({ forged: true })).toBeUndefined()
       expect(findings?.presentCall?.({ forged: true })).toBeUndefined()
       expect(resume?.presentCall?.({ forged: true })).toBeUndefined()
@@ -336,6 +365,8 @@ describe('security assessment tool registration', () => {
 
       await fixture.toolsFiber.dispose()
       expect(fixture.ctx.tools.get('security_assessment_start')).toBeUndefined()
+      expect(fixture.ctx.tools.get('security_repositories')).toBeUndefined()
+      expect(fixture.ctx.tools.get('security_catalog')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_status')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_findings')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_resume')).toBeUndefined()
@@ -349,10 +380,28 @@ describe('security assessment tool registration', () => {
 })
 
 describe('security assessment tool transport conformance', () => {
-  it('keeps all six model-visible input and output surfaces closed and explicitly bounded', async () => {
+  it('keeps all eight model-visible input and output surfaces closed and explicitly bounded', async () => {
     const fixture = await harness()
     try {
       const contracts = {
+        security_repositories: {
+          input: ['limit', 'state'],
+          required: ['limit'],
+          output: ['repositories', 'schemaVersion', 'truncated'],
+        },
+        security_catalog: {
+          input: ['repository_id'],
+          required: [],
+          output: [
+            'assessmentModes',
+            'assessmentProfiles',
+            'repository',
+            'schemaVersion',
+            'strongerControls',
+            'supportedEcosystemIds',
+            'supportedPlatforms',
+          ],
+        },
         security_assessment_start: {
           input: [
             'assessment_mode',
@@ -1421,6 +1470,85 @@ describe('security_assessment_status authority', () => {
       expect(after.error?.info?.code).toBe('SECURITY_TOOL_DRIVER_REQUIRED')
     } finally {
       disposeAgent()
+      await fixture.dispose()
+    }
+  })
+})
+
+describe('security repository and catalog selection tools', () => {
+  it('projects one registered Repository and its effective start choices without paths', async () => {
+    const repository = await repositoryFixture({ name: 'security-selection-fixture', version: '1.0.0' })
+    const fixture = await harness()
+    const root = stubAgent(`security-tool-selection-${Math.random()}`)
+    const disposeRoot = fixture.ctx.agents.register(root.agent)
+    try {
+      const platform = process.platform
+      if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+        throw new Error(`unsupported test platform: ${platform}`)
+      }
+      const registered = await fixture.ctx.securityAssurance.registerRepository(
+        referenceHostInvocation(fixture.ctx.securityAssurance),
+        {
+          schemaVersion: 1,
+          contractVersion: 1,
+          idempotencyKey: 'security-tool-selection-repository-v1',
+          root: repository,
+          displayName: 'Security selection fixture',
+          bindings: {
+            policyId: 'security/node-package-lifecycle',
+            assessmentProfileId: 'security/standard',
+            evidenceProtectionId: 'evidence/local-protected',
+            dataEgressPolicyId: 'egress/deny-by-default',
+            platform,
+            deliveryDestinationIds: [],
+          },
+        },
+      )
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+
+      openTurn(root)
+      const repositories = resultValue(await executeTool(
+        fixture.ctx,
+        'security_repositories',
+        { limit: 20, state: 'ENABLED' },
+        root.agent,
+      ))
+      expect(repositories).toEqual({
+        schemaVersion: 1,
+        repositories: [{
+          repositoryId: registered.value.repositoryId,
+          repositoryRevision: 1,
+          state: 'ENABLED',
+          displayName: 'Security selection fixture',
+          policyId: 'security/node-package-lifecycle',
+          assessmentProfileId: 'security/standard',
+          platform,
+        }],
+        truncated: false,
+      })
+      expect(JSON.stringify(repositories)).not.toContain(repository)
+      expect(JSON.stringify(repositories)).not.toContain('rootIdentityDigest')
+
+      const catalog = resultValue(await executeTool(
+        fixture.ctx,
+        'security_catalog',
+        { repository_id: registered.value.repositoryId },
+        root.agent,
+      ))
+      expect(catalog).toMatchObject({
+        schemaVersion: 1,
+        repository: {
+          repositoryId: registered.value.repositoryId,
+          repositoryRevision: 1,
+          state: 'ENABLED',
+          displayName: 'Security selection fixture',
+        },
+        assessmentProfiles: [{ assessmentProfileId: 'security/standard' }],
+      })
+      expect(JSON.stringify(catalog)).not.toContain(repository)
+      expect(JSON.stringify(catalog)).not.toContain('rootIdentityDigest')
+    } finally {
+      disposeRoot()
       await fixture.dispose()
     }
   })

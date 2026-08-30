@@ -15,6 +15,7 @@ import type { AnalyzerDescriptorV1 } from '../src/analyzer.ts'
 import SecurityAssuranceControlPlaneProvider, {
   SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
 } from '../src/control-plane-provider.ts'
+import SecurityAssuranceHostRepositoryProvider from '../src/host-repository-provider.ts'
 import {
   assertConformanceReportV1,
   createAssuranceProviderConformanceFixtureV1,
@@ -85,7 +86,13 @@ function registerScriptedEngineeringProvider(ctx: Context): () => void {
   let sequence = 0
   const provider: SubagentProvider = {
     name: 'spawn',
-    capabilities: { outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
+    capabilities: {
+      agentOptions: true,
+      outputSchema: true,
+      depthLimit: true,
+      toolFilter: true,
+      persona: true,
+    },
     inheritsParentContext: false,
     async start(request) {
       const role = request.label?.split(' · ')[0]
@@ -365,6 +372,14 @@ describe('Security Assurance Control Plane Provider', () => {
       gate: { kind: 'approved' as const, reasons: [] },
     },
     {
+      caseName: 'satisfied Security Verdict through a stable Host binding',
+      packageJson: { name: 'safe-control-plane-binding-fixture', version: '1.0.0', type: 'module' },
+      assuranceOutcome: 'satisfied' as const,
+      missionStatus: 'APPROVED' as const,
+      useHostBinding: true,
+      gate: { kind: 'approved' as const, reasons: [] },
+    },
+    {
       caseName: 'failed Security Verdict',
       packageJson: {
         name: 'unsafe-control-plane-fixture',
@@ -418,6 +433,7 @@ describe('Security Assurance Control Plane Provider', () => {
     missionStatus,
     gate,
     configurationMissing,
+    useHostBinding,
   }) => {
     const repository = await nodeRepositoryFixture(packageJson)
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-control-plane-home-'))
@@ -433,22 +449,49 @@ describe('Security Assurance Control Plane Provider', () => {
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)
     }
-    const registered = await ctx.securityAssurance.registerRepository(invocation, {
-      schemaVersion: 1,
-      contractVersion: 1 as const,
-      idempotencyKey: 'control-plane-provider-register-1',
-      root: repository,
-      displayName: 'Control Plane Provider fixture',
-      bindings: {
-        policyId: 'security/node-package-lifecycle',
-        assessmentProfileId: 'security/standard',
-        evidenceProtectionId: 'evidence/local-protected',
-        dataEgressPolicyId: 'egress/deny-by-default',
-        platform,
-        deliveryDestinationIds: [],
-      },
-    })
-    if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+    const repositoryBindings = {
+      policyId: 'security/node-package-lifecycle',
+      assessmentProfileId: 'security/standard',
+      evidenceProtectionId: 'evidence/local-protected',
+      dataEgressPolicyId: 'egress/deny-by-default',
+      platform,
+      deliveryDestinationIds: [],
+    }
+    const hostRepositoryFiber = useHostBinding
+      ? await ctx.plugin(SecurityAssuranceHostRepositoryProvider, {
+          repositories: [{
+            schemaVersion: 1,
+            bindingId: 'current-workspace',
+            idempotencyKey: 'control-plane-provider-register-1',
+            root: repository,
+            displayName: 'Control Plane Provider fixture',
+            bindings: repositoryBindings,
+          }],
+        })
+      : undefined
+    let repositoryId: string | undefined
+    if (useHostBinding) {
+      repositoryId = (await ctx.securityAssuranceHostRepositories.resolve('current-workspace'))?.repositoryId
+    } else {
+      const registered = await ctx.securityAssurance.registerRepository(invocation, {
+        schemaVersion: 1,
+        contractVersion: 1 as const,
+        idempotencyKey: 'control-plane-provider-register-1',
+        root: repository,
+        displayName: 'Control Plane Provider fixture',
+        bindings: repositoryBindings,
+      })
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+      repositoryId = registered.value.repositoryId
+    }
+    if (repositoryId === undefined) throw new Error('Repository registration did not return an identity')
+    if (useHostBinding) {
+      expect(await ctx.securityAssuranceHostRepositories.resolve('current-workspace')).toMatchObject({
+        bindingId: 'current-workspace',
+        repositoryId,
+        state: 'ENABLED',
+      })
+    }
     const notApplicable = { mode: 'not_applicable' as const, reason: 'Not required by this fixture.' }
     const controlPlaneFiber = await ctx.plugin(EngineeringControlPlane, {
       dshHome,
@@ -469,7 +512,11 @@ describe('Security Assurance Control Plane Provider', () => {
           activation: 'required',
           ...configurationMissing
             ? {}
-            : { configuration: { repositoryId: registered.value.repositoryId } },
+            : {
+                configuration: useHostBinding
+                  ? { repositoryBindingId: 'current-workspace' }
+                  : { repositoryId },
+              },
         }],
       }],
       verificationProfiles: [{
@@ -560,6 +607,7 @@ describe('Security Assurance Control Plane Provider', () => {
     } finally {
       await adapterFiber.dispose()
       await controlPlaneFiber.dispose()
+      await hostRepositoryFiber?.dispose()
       await securityFiber.dispose()
       disposeScriptedProvider()
       await subagentFiber.dispose()

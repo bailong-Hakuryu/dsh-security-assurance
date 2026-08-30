@@ -6,7 +6,8 @@ Harness and Cordis seams and does not modify Harness Core.
 
 ## v0.1 release candidate status
 
-Version `0.1.0-rc.1` is the first complete, installable v0.1 candidate. It is
+Version `0.1.0-rc.2` is the directly usable v0.1 candidate for Harness
+`0.1.2-alpha.1`. It is
 intended for acceptance and release-gate verification. Stable `0.1.0`
 promotion is limited to version, signature, and release metadata after the
 exact candidate artifact passes every required gate; no unqualified behavior
@@ -20,7 +21,8 @@ change may be folded into that promotion. The candidate proves:
   and Detail, purpose-bound Evidence View, Bundle Manifest, and Assurance
   Submission operations;
 - an independently activatable `dsh-security-assurance/tools` Consumer with
-  bounded `security_assessment_start`, read-only `security_assessment_status`
+  bounded `security_repositories`, `security_catalog`,
+  `security_assessment_start`, read-only `security_assessment_status`
   and `security_assessment_findings`, and revision-bound
   `security_assessment_resume` and `security_assessment_cancel`, plus bounded
   `security_assessment_export` model tools. They derive the exact live Harness
@@ -54,8 +56,11 @@ change may be folded into that promotion. The candidate proves:
   `waitForAssessmentRevision`, and revision-bound, idempotent
   `recordRiskDecision`, `resumeAssessment`, and `cancelAssessment` without putting a Principal, permissions, or Security
   Invocation on the wire;
-- a package-owned `dsh-security-assurance/client` browser entry that mounts the
-  generated Remote contribution and provides one transient
+- legacy Workbench browser source retained for future migration, but deliberately
+  excluded from the `0.1.0-rc.2` package because Harness `0.1.2-alpha.1` no longer
+  publishes the client-runtime preset it was built against. Direct Web users
+  instead receive Harness's generic cards for the eight registered model tools.
+  The legacy source previously provided one transient
   `ctx.securityAssuranceWorkbench` Controller. It opens authenticated Runtime Health,
   redacted Repository and Assessment selectors, builds the New Assessment Wizard only
   from Catalog choices, confirms immutable Start Preflight proposals, fetches immutable Snapshots,
@@ -205,14 +210,14 @@ change may be folded into that promotion. The candidate proves:
   records the external Assessment identity and leaves that same Assessment
   `CANCELED` without Verdict or Seal, including restart reconciliation when the
   Security commit precedes Control Plane Invocation termination; and
-- fresh packed Harness `0.1.1-rc.2` profile proof for `disabled`, absent
+- historical packed Harness `0.1.1-rc.2` profile proof for `disabled`, absent
   `when-available`, absent `required`, valid required integration, Adapter
   unload, and full profile restart; and
 - packed fail-closed Gate proof for a real Security `FAILED → REWORK_REQUIRED`,
   a real Security `INDETERMINATE → BLOCKED`, a digest-tampered Submission that
   is rejected before Evidence import, and a frozen Provider that disappears
   mid-Attempt without falling back to another registered version; and
-- a fresh packed Harness `0.1.1-rc.2` Reference Host driven through a real
+- historical packed Harness `0.1.1-rc.2` Reference Host driven through a real
   Chrome-family browser. The scenario proves Host-authenticated selection,
   keyboard/focus behavior, Runtime Health, digest-bound start, `BLOCKED` Risk
   Denial, sealed metadata-first Evidence and explicit bounded disclosure,
@@ -550,7 +555,7 @@ idempotency, and durable delivery handling to `requestExport`. The bounded
 artifact content, digests, paths, URLs, credentials, destination options,
 download capabilities, timestamps, and correlation. It does not grant
 `export:read` or `export:download`. The entry is lifecycle-owned: unloading it
-removes all six tools
+removes all eight tools
 without stopping the root Security Service.
 
 The transport conformance suite locks each tool's exact model-visible input and
@@ -614,7 +619,8 @@ await ctx.plugin(SecurityAssuranceWorkbenchRemote, {
 })
 ```
 
-Harness `0.1.1-rc.2` protects `trusted-host` Remote traffic against Host-header,
+The previously qualified Harness `0.1.1-rc.2` Remote transport protects
+`trusted-host` traffic against Host-header,
 DNS-rebinding, and cross-site confusion, but that transport fence is explicitly
 not user authentication and does not supply an Operator identity to a Remote
 method. Consequently this Adapter has no anonymous or fixed-superuser fallback:
@@ -787,7 +793,7 @@ Repository using public identifier configuration:
 ```yaml
 assuranceProviders:
   - providerId: dsh/security-assurance
-    providerVersion: 0.1.0-rc.1
+    providerVersion: 0.1.0-rc.2
     activation: required
     configuration:
       repositoryId: repo-00000000-0000-4000-8000-000000000000
@@ -841,14 +847,34 @@ its proof, the next explicit Mission cancellation resolves the stable start
 identity, observes the same Assessment as terminal, and returns that same ID;
 it does not create, resume, or replace an Assessment.
 
+## Install both plugins into Harness Web
+
+Install the Control Plane first because its bundle supplies the shared invariant
+registry used by both companions, then install Security Assurance. Run these
+commands from the Git repository that users want the plugins to govern; the
+launcher cwd becomes the `current-workspace` binding automatically.
+
+```powershell
+dsh plugin --profile web add D:\path\to\dsh-engineering-control-plane-0.1.1.tgz
+dsh plugin --profile web add D:\path\to\dsh-security-assurance-0.1.0-rc.2.tgz
+dsh --profile web --dump-config
+dsh web
+```
+
+No manual Repository UUID or profile activation patch is required. In the Web
+conversation, users can ask the model to call `security_repositories` and
+`security_catalog`, start an Assessment with `security_assessment_start`, or
+create a governed engineering Mission with `mission_start`. Harness renders the
+eight Security tools and the Mission tools with its generic tool cards.
+
 ## Development
 
 Requirements:
 
 - Node `^22.19.0 || >=24.0.0`
 - pnpm
-- the qualified read-only Harness reference at
-  `D:\Deepseek\deepseek-harness-master` for local Cordis development linking
+- the qualified Harness `0.1.2-alpha.1` checkout at
+  `D:\Deepseek\deepseek-harness-latest` for local Cordis development linking
 
 Commands:
 
@@ -858,26 +884,26 @@ pnpm typecheck
 pnpm test
 pnpm build
 pnpm pack:dry-run
-pnpm pack:smoke
-pnpm pack:browser-e2e
+pnpm pack:profile-smoke
 pnpm release:check
 ```
 
-`pack:smoke` installs the packed artifact into a fresh temporary consumer and
-opens a real Harness Agent turn over the installed entry. It proves the bounded
-Start -> Status -> Findings -> Export lifecycle, including SEALED polling,
-canonical rendering, Export idempotency replay, and disclosure exclusions.
+`pack:profile-smoke` packs both plugins, installs them into a fresh Web profile
+of the local Harness `0.1.2-alpha.1` checkout, verifies the composed bundle
+rows, boots the real Web Host from a clean Git fixture, and requires an HTTP
+response before shutdown. This is the current direct-use release gate.
 
-`pack:browser-e2e` packs the current Security artifact, installs the exact
-registry Harness release into a fresh temporary profile, adds a temporary
-test-only Reference Host authority layer, and drives a locally installed Chrome
-or Edge through the assembled Client. It does not modify Harness or ship that
-test authority layer. Shared Web HMR remains disabled in the qualified Harness
-reference, so this command deliberately makes no HMR coverage claim.
+The older packed consumer and browser scripts remain in source only as migration
+evidence for Harness `0.1.1-rc.2`. They are not package scripts, current release
+gates, or supported development dependencies, and their old browser entry is
+not included in the published package.
 
-All five bundle rows in `cordis.patch.yml` are disabled by default.
-Installation alone does not activate a security authority, Host Repository
-Provider, model tool, Workbench Remote, or optional Control Plane Provider.
+The root Service, invariant, Repository Provider, eight model tools, and
+optional Control Plane Provider are enabled by the bundle. The launcher cwd is
+registered idempotently as `current-workspace`; `security_repositories` and
+`security_catalog` expose only the bounded path-free choices needed to start an
+Assessment. The Workbench Remote remains disabled because it still requires a
+deployment-supplied authenticated Host authority resolver.
 
 The candidate acceptance checklist and stable-promotion boundary are recorded
 in `docs/release-v0.1.md`.

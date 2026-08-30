@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { realpath, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import z from 'zod'
 import {
@@ -373,6 +374,11 @@ export interface Config {
   /** Optional explicit Harness home; defaults through the shared DSH_HOME resolver. */
   readonly dshHome?: string | undefined
 }
+
+/** Harness/Cordis configuration contract for startup-time validation and UI tooling. */
+export const Config = Schema.object({
+  dshHome: Schema.string(),
+})
 
 const securityAssuranceConfigSchema: z.ZodType<Config> = z.strictObject({
   dshHome: z.string().min(1).max(4096).optional(),
