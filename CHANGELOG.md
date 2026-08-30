@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.0-rc.4] - 2026-08-30
+
+- Align the direct-use pair with Engineering Control Plane `0.1.3`, whose
+  qualified Web role policies use only tools registered by Harness
+  `0.1.2-alpha.1`.
+
 ## [0.1.0-rc.3] - 2026-08-30
 
 - Fence direct-use invariant activation on durable Host repository bootstrap.

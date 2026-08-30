@@ -11,7 +11,7 @@ export {
 
 /** Public product identity of this v0.1 release candidate. */
 export const SECURITY_ASSURANCE_PRODUCT_NAME = 'dsh-security-assurance' as const
-export const SECURITY_ASSURANCE_PRODUCT_VERSION = '0.1.0-rc.3' as const
+export const SECURITY_ASSURANCE_PRODUCT_VERSION = '0.1.0-rc.4' as const
 export const TARGET_HARNESS_VERSION = '0.1.2-alpha.1' as const
 export const REQUIRED_NODE_RANGE = '^22.19.0 || >=24.0.0' as const
 
