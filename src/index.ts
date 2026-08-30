@@ -182,6 +182,7 @@ import {
 } from './internal/sealed-artifacts.ts'
 import {
   freezeSubject,
+  reapSubjectStaging,
   readVerifiedNodePackageManifestSlices,
   SubjectFreezeError,
 } from './internal/subject-freeze.ts'
@@ -2240,12 +2241,13 @@ export class SecurityAssuranceService extends Service {
       record.subject.digest,
       window.evidenceReceipts,
     )
-    const outcome = this.riskDecisions.finalizedOutcome(record, evidence)
+    const finalizedAt = new Date().toISOString()
+    const outcome = this.riskDecisions.finalizedOutcome(record, evidence, finalizedAt)
     const readiness = checkSealReadiness(record.contract, outcome, window.evidenceReceipts)
     if (!readiness.ready) throw new Error(`seal readiness failed: ${readiness.violations.join(',')}`)
     const artifacts = assembleSealedArtifacts(record, outcome, {
       sealId: `seal-${randomUUID()}`,
-      sealedAt: new Date().toISOString(),
+      sealedAt: finalizedAt,
     })
     await publishSealedArtifacts(this.securityRoot, assessmentId, artifacts)
     persistence.sealAssessment({
@@ -2265,6 +2267,7 @@ export class SecurityAssuranceService extends Service {
   private async initialize(config: Config): Promise<SecurityPersistence | undefined> {
     try {
       const dshHome = resolveDshHome(config.dshHome)
+      await reapSubjectStaging(join(dshHome, 'security-assurance'))
       const persistence = await openSecurityPersistence({
         databasePath: join(dshHome, 'security-assurance', 'security-assurance.sqlite'),
       })

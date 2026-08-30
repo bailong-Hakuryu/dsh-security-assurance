@@ -7,6 +7,8 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import SecurityAssuranceService from '../src/index.ts'
 import type { AssessmentId, SecurityInvocation } from '../src/index.ts'
+import { analyzeNodePackageInstallLifecycle } from '../src/internal/builtin-node-package-lifecycle-analyzer.ts'
+import { structuredDigest } from '../src/internal/canonical.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
 const run = promisify(execFile)
@@ -60,6 +62,36 @@ async function waitUntilSealed(
 }
 
 describe('qualified built-in Node package lifecycle Analyzer', () => {
+  it('detects duplicate scripts keys without treating quoted descriptions as properties', () => {
+    const subjectDigest = structuredDigest(
+      'application/vnd.dsh.security.subject-manifest+json',
+      { fixture: 'duplicate-scripts' },
+    )
+    const cleanText = '{"description":"literal \\"scripts\\": token","scripts":{"postinstall":"echo hi"}}\n'
+    const clean = analyzeNodePackageInstallLifecycle({
+      subjectDigest,
+      slices: [{
+        path: 'package.json',
+        text: cleanText,
+        digest: structuredDigest('application/octet-stream', { text: cleanText }),
+      }],
+    })
+    expect(clean.completionDisposition).toBe('COMPLETE')
+    expect(clean.diagnostics).not.toContain('PACKAGE_MANIFEST_DUPLICATE_SECURITY_KEY')
+
+    const duplicateText = '{"scripts":{"postinstall":"echo first"},"scripts":{"postinstall":"echo second"}}\n'
+    const duplicate = analyzeNodePackageInstallLifecycle({
+      subjectDigest,
+      slices: [{
+        path: 'package.json',
+        text: duplicateText,
+        digest: structuredDigest('application/octet-stream', { text: duplicateText }),
+      }],
+    })
+    expect(duplicate.completionDisposition).toBe('INCOMPLETE')
+    expect(duplicate.diagnostics).toContain('PACKAGE_MANIFEST_DUPLICATE_SECURITY_KEY')
+  })
+
   it('seals SATISFIED when eligible Evidence proves all Node package manifests omit install lifecycle scripts', async () => {
     const repository = await nodeRepositoryFixture({
       name: 'safe-node-fixture',

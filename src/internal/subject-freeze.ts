@@ -33,6 +33,7 @@ const MAX_ANALYZER_SOURCE_SLICES = 256
 const MAX_ANALYZER_SLICE_BYTES = 1024 * 1024
 const MAX_ANALYZER_SOURCE_BYTES = 4 * 1024 * 1024
 const TARGET_SELECTOR_MEDIA_TYPE = 'application/vnd.dsh.security.target-selector+json'
+const WINDOWS_RENAME_RETRY_DELAYS_MS = [5, 10, 25, 50, 100, 200] as const
 
 export type SubjectFreezeErrorCode =
   | 'invalid_subject'
@@ -123,6 +124,21 @@ export interface FreezeSubjectOptions {
   readonly source: AssessmentSubjectSourceV1
   readonly target: AssessmentTargetSelectorV1
   readonly signal?: AbortSignal | undefined
+}
+
+/** Remove abandoned Subject staging trees left by a hard process termination. */
+export async function reapSubjectStaging(securityRoot: string): Promise<void> {
+  const stagingParent = join(securityRoot, 'staging')
+  let entries
+  try {
+    entries = await readdir(stagingParent, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  await Promise.all(entries
+    .filter(entry => entry.isDirectory() && /^subject-[0-9a-f-]{36}$/u.test(entry.name))
+    .map(entry => rm(join(stagingParent, entry.name), { recursive: true, force: true })))
 }
 
 interface GitTreeEntry {
@@ -674,19 +690,47 @@ export async function freezeSubject(options: FreezeSubjectOptions): Promise<Froz
       mode: 0o444,
     })
     const publishedRoot = join(subjectsRoot, rootDigest.value)
-    try {
-      await rename(stagingRoot, publishedRoot)
-      published = true
-      await verifyPublishedSnapshot(publishedRoot, rootDigest)
-      await lockTree(publishedRoot)
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code !== 'EEXIST' && code !== 'ENOTEMPTY' && code !== 'EPERM' && code !== 'EACCES') {
-        throw error
+    let renamed = false
+    for (let attempt = 0; !renamed; attempt += 1) {
+      try {
+        await rename(stagingRoot, publishedRoot)
+        renamed = true
+        published = true
+        await verifyPublishedSnapshot(publishedRoot, rootDigest)
+        await lockTree(publishedRoot)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        const delay = WINDOWS_RENAME_RETRY_DELAYS_MS[attempt]
+        let destinationExists = false
+        if (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY') {
+          try {
+            const destinationStatus = await lstat(publishedRoot)
+            destinationExists = destinationStatus.isDirectory() && !destinationStatus.isSymbolicLink()
+          } catch {
+            destinationExists = false
+          }
+        }
+        if (destinationExists) {
+          await verifyPublishedSnapshot(publishedRoot, rootDigest)
+          await rm(stagingRoot, { recursive: true, force: true })
+          published = true
+          renamed = true
+          continue
+        }
+        if (
+          process.platform === 'win32'
+          && delay !== undefined
+          && (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES')
+        ) {
+          await new Promise(resolve => setTimeout(resolve, delay))
+          continue
+        }
+        if (code !== 'EEXIST' && code !== 'ENOTEMPTY') throw error
+        await verifyPublishedSnapshot(publishedRoot, rootDigest)
+        await rm(stagingRoot, { recursive: true, force: true })
+        published = true
+        renamed = true
       }
-      await verifyPublishedSnapshot(publishedRoot, rootDigest)
-      await rm(stagingRoot, { recursive: true, force: true })
-      published = true
     }
     canceled(options.signal)
     return {

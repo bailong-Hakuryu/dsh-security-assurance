@@ -251,7 +251,13 @@ function redactedComponent(
 ): string {
   const path = normalizedSourceAnchor(sourceAnchor).path
   const separator = path.indexOf('/')
-  return separator < 0 ? 'repository-root' : path.slice(0, separator)
+  const component = separator < 0 ? 'repository-root' : path.slice(0, separator)
+  // Analyzer paths are untrusted.  Preserve ordinary logical components, but
+  // replace absolute/portable-invalid segments with a deterministic opaque ID
+  // so one malformed path cannot make the entire Finding page unservable.
+  return /^[a-z0-9][a-z0-9._/-]{0,127}$/iu.test(component)
+    ? component
+    : `component-${sha256Hex(component).slice(0, 32)}`
 }
 
 function sortedDimensions(

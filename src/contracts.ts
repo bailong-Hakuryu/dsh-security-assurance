@@ -11,7 +11,7 @@ export {
 
 /** Public product identity of this v0.1 release candidate. */
 export const SECURITY_ASSURANCE_PRODUCT_NAME = 'dsh-security-assurance' as const
-export const SECURITY_ASSURANCE_PRODUCT_VERSION = '0.1.0-rc.7' as const
+export const SECURITY_ASSURANCE_PRODUCT_VERSION = '0.1.0-rc.8' as const
 export const TARGET_HARNESS_VERSION = '0.1.2-alpha.1' as const
 export const REQUIRED_NODE_RANGE = '^22.19.0 || >=24.0.0' as const
 
@@ -2807,6 +2807,7 @@ export type EvidenceViewRedactionReasonV1 =
   | 'PROFILE_METADATA_ONLY'
   | 'DISCLOSURE_NOT_AUTHORIZED'
   | 'PURPOSE_NOT_AUTHORIZED'
+  | 'EVIDENCE_NOT_ELIGIBLE'
   | 'PROTECTION_UNAVAILABLE'
   | 'SCHEMA_NOT_DISCLOSABLE'
   | 'PROFILE_BYTE_LIMIT'
@@ -2886,6 +2887,7 @@ const evidenceViewContentV1Schema: z.ZodType<EvidenceViewContentV1> = z.discrimi
       'PROFILE_METADATA_ONLY',
       'DISCLOSURE_NOT_AUTHORIZED',
       'PURPOSE_NOT_AUTHORIZED',
+      'EVIDENCE_NOT_ELIGIBLE',
       'PROTECTION_UNAVAILABLE',
       'SCHEMA_NOT_DISCLOSABLE',
       'PROFILE_BYTE_LIMIT',

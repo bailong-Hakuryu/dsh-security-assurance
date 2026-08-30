@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.0-rc.8] - 2026-08-30
+
+- Re-derive coverage digests and Policy bindings at the seal-readiness seam.
+- Bound private evidence and sealed-artifact reads through regular-file handles.
+- Reap abandoned Subject staging trees and retry transient Windows publication
+  locks without misclassifying them as collisions.
+- Enforce evidence-link eligibility and expiry before bounded disclosure.
+- Harden evaluation identity/uncertainty bounds, risk-acceptance expiry at the
+  actual seal-finalization instant, SQLite schema constraints, and duplicate
+  lifecycle-key parsing.
+
 ## [0.1.0-rc.7] - 2026-08-30
 
 - Bind Control Plane Assessment start idempotency to the configured Repository

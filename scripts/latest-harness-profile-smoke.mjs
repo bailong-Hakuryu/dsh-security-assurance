@@ -208,7 +208,7 @@ try {
   const dump = await runHarness(['--profile', 'web', '--dump-config'])
   assert.match(dump.stdout, /# == dsh-engineering-control-plane/u)
   assert.match(dump.stdout, /name: dsh-engineering-control-plane\/tools/u)
-  assert.match(dump.stdout, /providerVersion: 0\.1\.0-rc\.7/u)
+  assert.match(dump.stdout, /providerVersion: 0\.1\.0-rc\.8/u)
   assert.match(dump.stdout, /repositoryBindingId: current-workspace/u)
   assert.match(dump.stdout, /# == dsh-security-assurance/u)
   assert.match(dump.stdout, /name: dsh-security-assurance\/tools/u)

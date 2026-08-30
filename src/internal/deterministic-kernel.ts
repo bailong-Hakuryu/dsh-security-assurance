@@ -681,6 +681,26 @@ export function checkSealReadiness(
   publishedEvidence: readonly EvidencePublicationReceiptV1[] = [],
 ): { readonly ready: true } | { readonly ready: false; readonly violations: readonly string[] } {
   const violations: string[] = []
+  // Re-derive the coverage attestation at the sealing seam.  Evaluator output
+  // is a caller-provided value at this boundary, so equality with the frozen
+  // target and the complete coverage core must be checked independently.
+  try {
+    const { digest: observedDigest, ...coverageValue } = outcome.coverage
+    const recomputedDigest = coverageSnapshot(contract.targetDigest, coverageValue).digest
+    if (canonicalJson(observedDigest) !== canonicalJson(recomputedDigest)) {
+      violations.push('coverage_digest_mismatch')
+    }
+  } catch {
+    violations.push('coverage_digest_unverifiable')
+  }
+  const trace = outcome.evaluationTrace as unknown as Record<string, unknown>
+  try {
+    if (canonicalJson(trace.policyDigest) !== canonicalJson(contract.policy.digest)) {
+      violations.push('evaluation_trace_policy_mismatch')
+    }
+  } catch {
+    violations.push('evaluation_trace_policy_unverifiable')
+  }
   const blockingFindings = outcome.findings.filter(finding => (
     typeof finding === 'object'
     && finding !== null

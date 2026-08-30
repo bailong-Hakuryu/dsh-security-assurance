@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import {
   chmod,
+  open,
   lstat,
   mkdir,
-  readFile,
   rename,
   rm,
   writeFile,
@@ -46,6 +46,22 @@ const evidenceEnvelopeV1Schema = z.strictObject({
   value: securitySubmissionJsonV1Schema,
 })
 
+const MAX_EVIDENCE_BYTES = 4 * 1024 * 1024
+
+async function readUtf8Bounded(handle: Awaited<ReturnType<typeof open>>, maxBytes: number): Promise<string> {
+  const chunks: Buffer[] = []
+  let total = 0
+  while (total <= maxBytes) {
+    const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1 - total))
+    const result = await handle.read(chunk, 0, chunk.byteLength, null)
+    if (result.bytesRead === 0) break
+    chunks.push(chunk.subarray(0, result.bytesRead))
+    total += result.bytesRead
+    if (total > maxBytes) throw new Error('Evidence object exceeds the bounded byte limit')
+  }
+  return Buffer.concat(chunks, total).toString('utf8')
+}
+
 function evidenceEnvelope(input: {
   readonly assessmentId: AssessmentId
   readonly subjectDigest: DigestEnvelopeV1
@@ -71,9 +87,29 @@ function evidenceEnvelope(input: {
 }
 
 async function verifyRegularCanonicalFile(path: string, expected: string): Promise<void> {
-  const status = await lstat(path)
-  if (!status.isFile() || status.isSymbolicLink()) throw new Error('Evidence object is not a regular file')
-  if (await readFile(path, 'utf8') !== expected) throw new Error('Evidence object failed canonical verification')
+  const handle = await open(path, 'r')
+  try {
+    const status = await handle.stat()
+    if (!status.isFile() || status.isSymbolicLink() || status.size > MAX_EVIDENCE_BYTES) {
+      throw new Error('Evidence object is not a bounded regular file')
+    }
+    const bytes = await readUtf8Bounded(handle, MAX_EVIDENCE_BYTES)
+    if (bytes !== expected) throw new Error('Evidence object failed canonical verification')
+  } finally {
+    await handle.close()
+  }
+}
+
+function assertEvidencePathSegments(
+  assessmentId: string,
+  artifactId: string,
+  digestValue: string,
+): void {
+  assessmentIdSchema.parse(assessmentId)
+  if (!/^[a-z0-9][a-z0-9-]{0,127}$/u.test(artifactId)
+    || !/^[0-9a-f]{64}$/u.test(digestValue)) {
+    throw new TypeError('Evidence path identity is invalid')
+  }
 }
 
 /**
@@ -87,6 +123,7 @@ export async function publishEvidenceSet(
   records: readonly EvidencePublicationInputV1[],
 ): Promise<readonly EvidencePublicationReceiptV1[]> {
   if (records.length > 128) throw new Error('Evidence publication count exceeds the v1 limit')
+  assessmentIdSchema.parse(assessmentId)
   const evidenceRoot = join(securityRoot, 'evidence')
   const stagingRoot = join(securityRoot, 'staging')
   await Promise.all([
@@ -99,6 +136,7 @@ export async function publishEvidenceSet(
       throw new Error('Evidence artifact identity is invalid')
     }
     const envelope = evidenceEnvelope({ assessmentId, subjectDigest, record })
+    assertEvidencePathSegments(assessmentId, record.artifactId, envelope.digest.value)
     const bytes = canonicalJson(envelope)
     if (Buffer.byteLength(bytes, 'utf8') > 4 * 1024 * 1024) {
       throw new Error('Evidence object exceeds the v1 byte limit')
@@ -147,6 +185,7 @@ export async function readPublishedEvidenceSet(
 ): Promise<readonly EvidencePublicationInputV1[]> {
   const records: EvidencePublicationInputV1[] = []
   for (const receipt of receipts) {
+    assertEvidencePathSegments(assessmentId, receipt.artifactId, receipt.digest.value)
     const path = join(
       securityRoot,
       'evidence',
@@ -159,7 +198,17 @@ export async function readPublishedEvidenceSet(
     if (!status.isFile() || status.isSymbolicLink()) {
       throw new Error('Evidence object is not a regular file')
     }
-    const bytes = await readFile(path, 'utf8')
+    const handle = await open(path, 'r')
+    let bytes: string
+    try {
+      const metadata = await handle.stat()
+      if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > MAX_EVIDENCE_BYTES) {
+        throw new Error('Evidence object is not a bounded regular file')
+      }
+      bytes = await readUtf8Bounded(handle, MAX_EVIDENCE_BYTES)
+    } finally {
+      await handle.close()
+    }
     const envelope = evidenceEnvelopeV1Schema.parse(JSON.parse(bytes))
     if (
       bytes !== canonicalJson(envelope)

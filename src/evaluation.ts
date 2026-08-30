@@ -4,7 +4,10 @@ import { digestEnvelopeV1Schema } from './digest-envelope.ts'
 export const EFFECTIVENESS_METRICS_ENGINE_ID = 'security/effectiveness-metrics/v1' as const
 
 const boundedEvaluationIdSchema = z.string()
-  .regex(/^[a-z0-9][a-z0-9._:/-]{0,127}$/i)
+  // Evaluation identities are canonical lower-case tokens.  Keeping the
+  // schema and all Set/Map comparisons in the same namespace prevents
+  // `case-a` and `CASE-A` from becoming two identities.
+  .regex(/^[a-z0-9][a-z0-9._:/-]{0,127}$/u)
 
 export const evaluationSeveritySchema = z.enum([
   'CRITICAL',
@@ -108,7 +111,7 @@ export const benchmarkStratumDefinitionV1Schema = z.strictObject({
   stratumId: boundedEvaluationIdSchema,
   selector: benchmarkStratumSelectorV1Schema,
   minimumSamples: z.number().int().positive().max(1_000_000),
-  maximumValidatedRecallIntervalWidth: z.number().positive().max(1).optional(),
+  maximumValidatedRecallIntervalWidth: z.number().positive().lt(1).optional(),
 })
 
 export type BenchmarkStratumDefinitionV1 = z.infer<
@@ -120,7 +123,7 @@ export const benchmarkRepetitionPlanV1Schema = z.strictObject({
   repetitionIds: z.array(boundedEvaluationIdSchema).min(2).max(1_000),
   benchmarkCaseIds: z.array(boundedEvaluationIdSchema).min(1).max(10_000),
   confidenceLevel: z.number().gt(0.5).lt(1),
-  maximumConfidenceIntervalWidth: z.number().positive().max(1),
+  maximumConfidenceIntervalWidth: z.number().positive().lt(1),
 })
 
 export type BenchmarkRepetitionPlanV1 = z.infer<
@@ -1320,7 +1323,9 @@ function parseRequest(input: unknown): EffectivenessMetricsRequestV1 {
 
 function ratio(numerator: number, denominator: number): EffectivenessRatioMetricV1 {
   if (denominator === 0) {
-    if (numerator !== 0) throw new Error('Effectiveness metric numerator cannot exceed a zero denominator')
+    // This is unreachable for schema-valid evidence, but retain the public
+    // typed failure envelope if a future metric path violates that invariant.
+    if (numerator !== 0) return invalidEvidence()
     return { status: 'INCONCLUSIVE', numerator: 0, denominator: 0, value: null }
   }
   return { status: 'MEASURED', numerator, denominator, value: numerator / denominator }
@@ -1330,9 +1335,11 @@ function incrementCount(counts: Map<string, number>, key: string): void {
   counts.set(key, (counts.get(key) ?? 0) + 1)
 }
 
-function deepFreeze<T>(value: T): T {
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
   if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value
-  for (const nested of Object.values(value)) deepFreeze(nested)
+  if (seen.has(value)) return value
+  seen.add(value)
+  for (const nested of Object.values(value)) deepFreeze(nested, seen)
   return Object.freeze(value)
 }
 

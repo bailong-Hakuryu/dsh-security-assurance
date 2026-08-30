@@ -86,7 +86,8 @@ export class RiskDecisionModule {
       && finding.riskDecision.authorizationMode === 'CRITICAL_DUAL_AUTHORITY'
       && attestations.length === 1
       && attestations.every(
-        attestation => attestation.decisionMaker.principalId !== authority.principalId,
+        attestation => attestation.decisionMaker.principalId.toLocaleLowerCase('en-US')
+          !== authority.principalId.toLocaleLowerCase('en-US'),
       )
       && finding.riskDecision.expiresAt !== null
       && Date.parse(finding.riskDecision.expiresAt) > Date.parse(evaluationInstant)
@@ -171,6 +172,7 @@ export class RiskDecisionModule {
   finalizedOutcome(
     assessment: InternalAssessmentRecordV1,
     evidence: readonly EvidencePublicationInputV1[],
+    finalizationInstant: string,
   ): DeterministicAssessmentOutcomeV1 {
     const window = assessment.riskDecisionWindow
     if (
@@ -193,10 +195,21 @@ export class RiskDecisionModule {
     if (typeof trace !== 'object' || trace === null || Array.isArray(trace)) {
       throw new RiskDecisionPolicyError('Risk Decision Window Evaluation Trace is invalid')
     }
+    const finalizationEpochMs = Date.parse(finalizationInstant)
+    if (!Number.isFinite(finalizationEpochMs)) {
+      throw new RiskDecisionPolicyError('Risk Decision finalization instant is invalid')
+    }
     const hasDeniedRisk = assessment.riskDecisions.some(decision => decision.decision === 'DENY')
+    const hasExpiredAcceptance = assessment.riskDecisions.some(decision => (
+      decision.decision === 'ACCEPT'
+      && decision.expiresAt !== null
+      && Date.parse(decision.expiresAt) <= finalizationEpochMs
+    ))
     const verdict = hasDeniedRisk
       ? window.proposedVerdict
-      : assessment.coverage.status === 'COMPLETE'
+      : hasExpiredAcceptance
+        ? window.proposedVerdict
+        : assessment.coverage.status === 'COMPLETE'
         ? 'SATISFIED'
         : 'INDETERMINATE'
     const findings = assessment.findings.map(finding => {
@@ -205,7 +218,11 @@ export class RiskDecisionModule {
       }
       const findingId = finding.findingId
       const decision = typeof findingId === 'string' ? decisions.get(findingId) : undefined
-      if (decision?.decision !== 'ACCEPT') return finding
+      if (
+        decision?.decision !== 'ACCEPT'
+        || decision.expiresAt === null
+        || Date.parse(decision.expiresAt) <= finalizationEpochMs
+      ) return finding
       const accepted = securitySubmissionJsonV1Schema.parse({
         ...finding,
         policySignificance: 'NON_BLOCKING',
@@ -222,7 +239,8 @@ export class RiskDecisionModule {
     })
     const evaluationTrace = securitySubmissionJsonV1Schema.parse({
       ...trace,
-      evaluationInstant: window.resolvedAt,
+      evaluationInstant: finalizationInstant,
+      riskDecisionResolvedAt: window.resolvedAt,
       preDecisionEvaluationInstant: window.evaluationInstant,
       riskDecisions: assessment.riskDecisions,
       riskDecisionRule: {

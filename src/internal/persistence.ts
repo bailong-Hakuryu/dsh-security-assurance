@@ -256,9 +256,71 @@ function verifySchema(db: DatabaseSync): void {
   for (const [table, columns] of expected) {
     const observed = db.prepare(`PRAGMA table_info('${table}')`).all() as unknown as readonly {
       readonly name: string
+      readonly notnull: number
+      readonly pk: number
     }[]
     if (canonicalJson(observed.map(row => row.name)) !== canonicalJson(columns)) {
       throw new SecurityPersistenceError('corrupt_database', `SQLite table ${table} has invalid columns`)
+    }
+    if (observed.some(row => row.notnull !== 1)) {
+      throw new SecurityPersistenceError('corrupt_database', `SQLite table ${table} has nullable columns`)
+    }
+  }
+
+  const tableList = db.prepare(`
+    SELECT name, strict FROM pragma_table_list
+    WHERE name NOT LIKE 'sqlite_%'
+  `).all() as unknown as readonly { readonly name: string; readonly strict: number }[]
+  if (tableList.some(row => row.strict !== 1)) {
+    throw new SecurityPersistenceError('corrupt_database', 'SQLite tables are not STRICT')
+  }
+  const primaryKeys = new Map<string, readonly string[]>([
+    ['repositories', ['repository_id']],
+    ['repository_revisions', ['repository_id', 'repository_revision']],
+    ['idempotency_records', ['principal_id', 'authority_kind', 'operation', 'target_key', 'idempotency_key']],
+    ['assessments', ['assessment_id']],
+    ['assessment_revisions', ['assessment_id', 'assessment_revision']],
+  ])
+  for (const [table, columns] of primaryKeys) {
+    const observed = db.prepare(`PRAGMA table_info('${table}')`).all() as unknown as readonly {
+      readonly name: string
+      readonly pk: number
+    }[]
+    const actual = [...observed]
+      .filter(row => row.pk > 0)
+      .sort((left, right) => left.pk - right.pk)
+      .map(row => row.name)
+    if (canonicalJson(actual) !== canonicalJson(columns)) {
+      throw new SecurityPersistenceError('corrupt_database', `SQLite table ${table} has invalid primary key`)
+    }
+  }
+  const repositoryIndexes = db.prepare("PRAGMA index_list('repositories')").all() as unknown as readonly {
+    readonly name: string
+    readonly unique: number
+  }[]
+  const hasCanonicalRootUnique = repositoryIndexes
+    .filter(index => index.unique === 1)
+    .some(index => {
+      const columns = db.prepare(`PRAGMA index_info('${index.name}')`).all() as unknown as readonly { readonly name: string }[]
+      return columns.length === 1 && columns[0]?.name === 'canonical_root'
+    })
+  if (!hasCanonicalRootUnique) {
+    throw new SecurityPersistenceError('corrupt_database', 'Repository canonical_root uniqueness constraint is missing')
+  }
+  const foreignKeys = new Map<string, readonly [string, string, string][]>([
+    ['repository_revisions', [['repository_id', 'repositories', 'repository_id']]],
+    ['assessments', [['repository_id', 'repositories', 'repository_id']]],
+    ['assessment_revisions', [['assessment_id', 'assessments', 'assessment_id']]],
+  ])
+  for (const [table, expectedForeignKeys] of foreignKeys) {
+    const observed = db.prepare(`PRAGMA foreign_key_list('${table}')`).all() as unknown as readonly {
+      readonly from: string
+      readonly table: string
+      readonly to: string
+    }[]
+    const actual = observed.map(row => [row.from, row.table, row.to] as const)
+    if (canonicalJson(actual) !== canonicalJson(expectedForeignKeys)) {
+      throw new SecurityPersistenceError('corrupt_database', `SQLite table ${table} has invalid foreign keys`)
     }
   }
 }
@@ -1318,7 +1380,8 @@ export class SecurityPersistence {
             if (
               existing.decision !== 'ACCEPT'
               || request.decision !== 'ACCEPT'
-              || existing.decisionMaker.principalId === input.principalId
+              || existing.decisionMaker.principalId.toLocaleLowerCase('en-US')
+                === input.principalId.toLocaleLowerCase('en-US')
               || existing.rationale !== request.rationale
               || canonicalJson(existing.compensatingControls) !== canonicalJson(request.compensatingControls)
               || existing.expiresAt !== request.expiresAt

@@ -3,7 +3,7 @@ import {
   chmod,
   lstat,
   mkdir,
-  readFile,
+  open,
   rename,
   rm,
   writeFile,
@@ -11,6 +11,7 @@ import {
 import { join } from 'node:path'
 import {
   assessmentSealV1Schema,
+  assessmentIdSchema,
   bundleManifestV1Schema,
   digestEnvelopeV1Schema,
   securityAssuranceSubmissionV1Schema,
@@ -33,6 +34,7 @@ import type { DeterministicAssessmentOutcomeV1 } from './deterministic-kernel.ts
 
 const MANIFEST_FILE = 'bundle-manifest.json'
 const SUBMISSION_FILE = 'assurance-submission.json'
+const MAX_SEALED_ARTIFACT_BYTES = 64 * 1024 * 1024
 
 export interface SealIdentityV1 {
   readonly sealId: string
@@ -291,6 +293,11 @@ function publicationDirectory(
   assessmentId: string,
   publicationDigest: DigestEnvelopeV1,
 ): string {
+  assessmentIdSchema.parse(assessmentId)
+  digestEnvelopeV1Schema.parse(publicationDigest)
+  if (!/^[0-9a-f]{64}$/u.test(publicationDigest.value)) {
+    throw new TypeError('publication digest path segment is invalid')
+  }
   return join(securityRoot, 'bundles', assessmentId, publicationDigest.value)
 }
 
@@ -354,9 +361,28 @@ function verifySealedArtifactSemantics(artifacts: SealedArtifactsV1): void {
 }
 
 async function verifyRegularFile(path: string, expected: string): Promise<void> {
-  const status = await lstat(path)
-  if (!status.isFile() || status.isSymbolicLink()) throw new Error('sealed artifact is not a regular file')
-  if (await readFile(path, 'utf8') !== expected) throw new Error('sealed artifact failed canonical verification')
+  const handle = await open(path, 'r')
+  try {
+    const status = await handle.stat()
+    if (!status.isFile() || status.isSymbolicLink() || status.size > MAX_SEALED_ARTIFACT_BYTES) {
+      throw new Error('sealed artifact is not a bounded regular file')
+    }
+    const chunks: Buffer[] = []
+    let total = 0
+    while (total <= MAX_SEALED_ARTIFACT_BYTES) {
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, MAX_SEALED_ARTIFACT_BYTES + 1 - total))
+      const result = await handle.read(chunk, 0, chunk.byteLength, null)
+      if (result.bytesRead === 0) break
+      chunks.push(chunk.subarray(0, result.bytesRead))
+      total += result.bytesRead
+      if (total > MAX_SEALED_ARTIFACT_BYTES) throw new Error('sealed artifact exceeds the bounded byte limit')
+    }
+    if (Buffer.concat(chunks, total).toString('utf8') !== expected) {
+      throw new Error('sealed artifact failed canonical verification')
+    }
+  } finally {
+    await handle.close()
+  }
 }
 
 /** Verify that private published bytes still exactly match their durable values. */

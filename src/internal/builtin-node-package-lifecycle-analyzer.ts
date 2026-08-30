@@ -154,13 +154,43 @@ function jsonObject(text: string): Record<string, unknown> | undefined {
 }
 
 function hasDuplicateSecurityKey(text: string): boolean {
-  const property = /"(?:\\["\\/bfnrt]|\\u[0-9a-f]{4}|[^"\\\p{Cc}])*"\s*:/giu
   const counts = new Map<string, number>()
-  for (const match of text.matchAll(property)) {
-    const token = match[0].replace(/\s*:\s*$/u, '')
-    const key: unknown = JSON.parse(token)
-    if (typeof key !== 'string' || !INSTALL_LIFECYCLE_NAMES.includes(
-      key as (typeof INSTALL_LIFECYCLE_NAMES)[number],
+  // Scan JSON property tokens rather than matching quoted substrings.  This
+  // deliberately skips string values, so text such as `"scripts":` inside a
+  // description cannot manufacture a duplicate-key diagnostic.
+  for (let index = 0; index < text.length;) {
+    if (text[index] !== '"') {
+      index += 1
+      continue
+    }
+    const start = index
+    index += 1
+    let escaped = false
+    while (index < text.length) {
+      const character = text[index]!
+      index += 1
+      if (escaped) {
+        escaped = false
+      } else if (character === '\\') {
+        escaped = true
+      } else if (character === '"') {
+        break
+      }
+    }
+    const token = text.slice(start, index)
+    let cursor = index
+    while (/\s/u.test(text[cursor] ?? '')) cursor += 1
+    if (text[cursor] !== ':') continue
+    let key: unknown
+    try {
+      key = JSON.parse(token)
+    } catch {
+      continue
+    }
+    if (typeof key !== 'string' || (
+      key !== 'scripts' && !INSTALL_LIFECYCLE_NAMES.includes(
+        key as (typeof INSTALL_LIFECYCLE_NAMES)[number],
+      )
     )) continue
     const count = (counts.get(key) ?? 0) + 1
     if (count > 1) return true

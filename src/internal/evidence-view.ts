@@ -58,6 +58,7 @@ function sameDigest(
 function boundedContent(
   request: GetEvidenceViewRequest,
   artifact: SecuritySubmissionArtifactV1,
+  link: FindingDetailViewV1['evidenceLinks'][number],
   classification: 'INTERNAL' | 'CONTROL_PLANE',
   authority: EvidenceViewAuthority,
   protectionAvailable: boolean,
@@ -75,12 +76,19 @@ function boundedContent(
   if (!protectionAvailable) {
     return { kind: 'REDACTED', reason: 'PROTECTION_UNAVAILABLE' }
   }
+  const expiryEpochMs = Date.parse(expiresAt)
+  if (!Number.isFinite(expiryEpochMs) || expiryEpochMs <= Date.now()) {
+    return { kind: 'REDACTED', reason: 'PURPOSE_NOT_AUTHORIZED' }
+  }
   if (classification !== 'CONTROL_PLANE' || !boundedJsonSchemas.has(artifact.schemaId)) {
     return { kind: 'REDACTED', reason: 'SCHEMA_NOT_DISCLOSABLE' }
   }
   const byteLength = Buffer.byteLength(canonicalJson(artifact.value), 'utf8')
   if (byteLength > BOUNDED_JSON_BYTE_LIMIT) {
     return { kind: 'REDACTED', reason: 'PROFILE_BYTE_LIMIT' }
+  }
+  if (link.purpose !== 'VALIDATION_EVIDENCE' || link.eligibilityDecision !== 'ELIGIBLE') {
+    return { kind: 'REDACTED', reason: 'EVIDENCE_NOT_ELIGIBLE' }
   }
   return {
     kind: 'BOUNDED_JSON',
@@ -200,6 +208,7 @@ export class EvidenceViewModule {
       content: boundedContent(
         request,
         artifact,
+        link,
         descriptor.classification,
         authority,
         protectionAvailable,

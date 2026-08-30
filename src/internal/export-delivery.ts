@@ -6,6 +6,8 @@ import {
   open,
   readFile,
   readdir,
+  lstat,
+  realpath,
   rename,
   rm,
   writeFile,
@@ -208,6 +210,7 @@ export function buildExportPreview(input: {
 }
 
 function recordDirectory(root: string, exportId: ExportId): string {
+  exportIdSchema.parse(exportId)
   return join(root, 'exports', exportId)
 }
 
@@ -216,7 +219,22 @@ function recordPath(root: string, exportId: ExportId): string {
 }
 
 function artifactPath(root: string, exportId: ExportId): string {
+  exportIdSchema.parse(exportId)
   return join(root, 'destinations', 'local-audit', `${exportId}.json`)
+}
+
+async function assertLocalAuditDirectory(root: string): Promise<string> {
+  const directory = join(root, 'destinations', 'local-audit')
+  const status = await lstat(directory)
+  if (!status.isDirectory() || status.isSymbolicLink()) {
+    throw new Error('local audit destination is not a regular directory')
+  }
+  const resolved = await realpath(directory)
+  if ((process.platform === 'win32' ? resolved.toLocaleLowerCase('en-US') : resolved)
+    !== (process.platform === 'win32' ? directory.toLocaleLowerCase('en-US') : directory)) {
+    throw new Error('local audit destination path is not canonical')
+  }
+  return directory
 }
 
 async function readBoundedArtifact(path: string, expectedByteLength: number): Promise<Buffer> {
@@ -564,6 +582,7 @@ export class ExportDeliveryModule {
       }
       if (record.view.retention.status !== 'PURGE_PENDING') return record.view
       try {
+        await assertLocalAuditDirectory(this.root)
         await rm(artifactPath(this.root, exportId), { force: true })
       } catch {
         return record.view
@@ -608,6 +627,7 @@ export class ExportDeliveryModule {
     const destination = artifactPath(this.root, record.receipt.exportId)
     try {
       await mkdir(destinationDirectory, { recursive: true, mode: 0o700 })
+      await assertLocalAuditDirectory(this.root)
       await chmod(destinationDirectory, 0o700)
       try {
         await writeFile(destination, bytes, { flag: 'wx', mode: 0o600 })
@@ -615,6 +635,10 @@ export class ExportDeliveryModule {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
         const existing = await readFile(destination)
         if (!existing.equals(bytes)) {
+          // A conflicting pre-existing artifact is unusable.  Remove only the
+          // exact file beneath the verified local-audit directory so failed
+          // records do not accumulate foreign bytes indefinitely.
+          await rm(destination, { force: true })
           return this.failAttempt(record, 'ARTIFACT_INTEGRITY_CONFLICT', false)
         }
       }

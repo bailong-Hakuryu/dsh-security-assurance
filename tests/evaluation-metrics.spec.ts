@@ -84,7 +84,7 @@ const sufficientStratumDefinitions = [
 
 const repetitionStratumDefinitions = sufficientStratumDefinitions.map(definition => ({
   ...definition,
-  maximumValidatedRecallIntervalWidth: 1,
+  maximumValidatedRecallIntervalWidth: 0.99,
 }))
 
 function request(
@@ -389,7 +389,7 @@ describe('Effectiveness Metrics Engine v1', () => {
       repetitionIds: ['rep-a', 'rep-b'],
       benchmarkCaseIds: ['case-valid'],
       confidenceLevel: 0.95,
-      maximumConfidenceIntervalWidth: 1,
+      maximumConfidenceIntervalWidth: 0.99,
     }
     const repeatedValidCase = { ...validCase, repetitionId: 'rep-a' }
     const invalid = [
@@ -699,7 +699,7 @@ describe('Effectiveness Metrics Engine v1', () => {
       repetitionIds: ['rep-a', 'rep-b'],
       benchmarkCaseIds: ['case-shared'],
       confidenceLevel: 0.95,
-      maximumConfidenceIntervalWidth: 1,
+      maximumConfidenceIntervalWidth: 0.99,
     }
     const result = calculateEffectivenessMetricsV1(request(
       repeatedCases,
@@ -721,25 +721,25 @@ describe('Effectiveness Metrics Engine v1', () => {
         upper: 1,
         width: 1,
       },
-      uncertaintyStatus: 'SUFFICIENT',
-      reasonCodes: [],
+      uncertaintyStatus: 'INCONCLUSIVE',
+      reasonCodes: ['CONFIDENCE_INTERVAL_TOO_WIDE'],
     }
     expect(effectivenessMetricsV1Schema.parse(result)).toEqual(result)
-    expect(result.conclusion).toBe('MEASURED')
+    expect(result.conclusion).toBe('INCONCLUSIVE')
     expect(result.counts).toMatchObject({
       includedCases: 2,
-      sufficientStrata: 5,
-      inconclusiveStrata: 0,
+      sufficientStrata: 0,
+      inconclusiveStrata: 5,
     })
     expect(result.strata.map(item => item.observedSamples)).toEqual([1, 1, 1, 1, 2])
     expect(result.repetitionAnalysis).toEqual({
       method: 'HOEFFDING_TWO_SIDED_V1',
       confidenceLevel: 0.95,
-      maximumConfidenceIntervalWidth: 1,
+      maximumConfidenceIntervalWidth: 0.99,
       plannedIndependentRepetitions: 2,
       observedIndependentRepetitions: 2,
-      status: 'SUFFICIENT',
-      reasonCodes: [],
+      status: 'INCONCLUSIVE',
+      reasonCodes: ['EXCESSIVE_CONFIDENCE_INTERVAL_WIDTH'],
       metrics: {
         criticalHighValidatedRecall: measuredMinimumDistribution,
         severityWeightedValidatedRecall: measuredMinimumDistribution,
@@ -884,14 +884,20 @@ describe('Effectiveness Metrics Engine v1', () => {
         repetitionIds: ['rep-a', 'rep-b'],
         benchmarkCaseIds: ['case-shared'],
         confidenceLevel: 0.95,
-        maximumConfidenceIntervalWidth: 1,
+        maximumConfidenceIntervalWidth: 0.99,
       },
     ))
 
     expect(result.conclusion).toBe('INCONCLUSIVE')
-    expect(result.reasonCodes).toEqual(['INSUFFICIENT_BENCHMARK_STRATA'])
-    expect(result.repetitionAnalysis?.status).toBe('SUFFICIENT')
-    expect(result.counts).toMatchObject({ sufficientStrata: 4, inconclusiveStrata: 1 })
+    expect(result.reasonCodes).toEqual([
+      'INSUFFICIENT_BENCHMARK_STRATA',
+      'EXCESSIVE_REPETITION_UNCERTAINTY',
+    ])
+    expect(result.repetitionAnalysis?.status).toBe('INCONCLUSIVE')
+    expect(result.repetitionAnalysis?.reasonCodes).toEqual([
+      'EXCESSIVE_CONFIDENCE_INTERVAL_WIDTH',
+    ])
+    expect(result.counts).toMatchObject({ sufficientStrata: 0, inconclusiveStrata: 5 })
     expect(result.strata.find(item => item.stratumId === 'severity-high')).toMatchObject({
       status: 'INCONCLUSIVE',
       reasonCodes: ['EXCESSIVE_CONFIDENCE_INTERVAL_WIDTH'],
@@ -1745,7 +1751,7 @@ describe('Paired Arm Comparison Engine v1', () => {
         repetitionIds: independentRepetitionIds,
         benchmarkCaseIds: ['case-shared'],
         confidenceLevel: 0.95,
-        maximumConfidenceIntervalWidth: 1,
+        maximumConfidenceIntervalWidth: 0.99,
       },
     )
   }
