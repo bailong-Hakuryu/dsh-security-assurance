@@ -819,7 +819,9 @@ export const pairedArmEvidenceV1Schema = z.strictObject({
 
 export type PairedArmEvidenceV1 = z.infer<typeof pairedArmEvidenceV1Schema>
 
-const nonInferiorityMarginV1Schema = z.number().min(0).max(1)
+// A margin of exactly 1.0 makes every bounded [-1, 1] delta pass and therefore
+// disables the non-inferiority gate. Keep the upper bound exclusive.
+const nonInferiorityMarginV1Schema = z.number().min(0).lt(1)
 
 export const nonInferiorityPlanV1Schema = z.strictObject({
   planId: boundedEvaluationIdSchema,
@@ -2820,6 +2822,7 @@ export const releaseConstitutionEvaluationRequestV1Schema = z.strictObject({
     proposedPromotionArtifactDigest: digestEnvelopeV1Schema,
     hardSafetyEvidence: releaseHardSafetyEvidenceV1Schema,
     platformProofs: z.array(releasePlatformProofV1Schema).max(3),
+    pairedComparisonRequest: pairedArmComparisonRequestV1Schema,
     pairedComparison: pairedArmComparisonV1Schema,
   }),
 }).superRefine((value, context) => {
@@ -2999,6 +3002,15 @@ export function evaluateReleaseConstitutionV1(
   if (!parsed.success) throw new ReleaseConstitutionInputError()
   const request = parsed.data
   const { constitution, candidate } = request
+  let recomputedPairedComparison: PairedArmComparisonV1
+  try {
+    recomputedPairedComparison = calculatePairedArmComparisonV1(candidate.pairedComparisonRequest)
+  } catch {
+    throw new ReleaseConstitutionInputError()
+  }
+  if (JSON.stringify(recomputedPairedComparison) !== JSON.stringify(candidate.pairedComparison)) {
+    throw new ReleaseConstitutionInputError()
+  }
   const statuses = new Map<ReleaseConstitutionCheckId, ReleaseCheckStatusV1>(
     RELEASE_CONSTITUTION_CHECK_IDS.map(checkId => [checkId, 'INCONCLUSIVE']),
   )
@@ -3124,9 +3136,14 @@ export function evaluateReleaseConstitutionV1(
         : 'INCONCLUSIVE',
   )
   const nonInferiority = paired.nonInferiority
+  const registeredNonInferiorityPlan = candidate.pairedComparisonRequest.nonInferiorityPlan
+  const planPreRegistered = registeredNonInferiorityPlan !== undefined
+    && registeredNonInferiorityPlan.registeredAtEpochMs < candidate.holdoutStartedAtEpochMs
   set(
     'MANDATORY_STRATA_NON_INFERIOR',
-    nonInferiority === null || nonInferiority.status === 'INCONCLUSIVE'
+    !planPreRegistered
+      ? 'FAILED'
+      : nonInferiority === null || nonInferiority.status === 'INCONCLUSIVE'
       ? 'INCONCLUSIVE'
       : nonInferiority.planId !== constitution.requiredNonInferiorityPlanId
         || nonInferiority.status === 'FAILED'

@@ -9,7 +9,7 @@ describe('ADR 0246: Public DTOs are versioned, JSON-safe, and runtime-validated'
         schemaVersion: 1,
         product: {
           name: 'dsh-security-assurance',
-          version: '0.1.0-rc.4',
+          version: '0.1.0-rc.5',
         },
         compatibility: {
           targetHarnessVersion: '0.1.2-alpha.1',
@@ -117,7 +117,7 @@ describe('ADR 0246: Public DTOs are versioned, JSON-safe, and runtime-validated'
         schemaVersion: 1,
         product: {
           name: 'dsh-security-assurance',
-          version: '0.1.0-rc.4',
+          version: '0.1.0-rc.5',
         },
         compatibility: {
           targetHarnessVersion: '0.1.2-alpha.1',
@@ -205,7 +205,7 @@ describe('ADR 0246: Public DTOs are versioned, JSON-safe, and runtime-validated'
         schemaVersion: 1,
         product: {
           name: 'dsh-security-assurance',
-          version: '0.1.0-rc.4',
+          version: '0.1.0-rc.5',
         },
         compatibility: {
           targetHarnessVersion: '0.1.2-alpha.1',
@@ -230,7 +230,7 @@ describe('ADR 0246: Public DTOs are versioned, JSON-safe, and runtime-validated'
       const invalid = {
         schemaVersion: 1,
         productName: 'dsh-security-assurance',
-        productVersion: '0.1.0-rc.4',
+        productVersion: '0.1.0-rc.5',
         harnessTargetVersion: '0.1.2-alpha.1',
         state: 'INVALID_STATE',
         checks: {},

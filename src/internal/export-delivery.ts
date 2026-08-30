@@ -619,7 +619,7 @@ export class ExportDeliveryModule {
         }
       }
       await chmod(destination, 0o600)
-    } catch (error) {
+    } catch {
       return this.failAttempt(record, 'ARTIFACT_IO_ERROR', true)
     }
     const updatedAt = this.now()

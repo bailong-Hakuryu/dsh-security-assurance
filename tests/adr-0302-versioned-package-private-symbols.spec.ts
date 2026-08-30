@@ -2,7 +2,11 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { REGISTER_ANALYZER_QUALIFICATION } from '../src/internal/analyzer-qualification-registration.ts'
-import { RESOLVE_TRUSTED_INVOCATION } from '../src/internal/authority.ts'
+import {
+  createTrustedCallerChannel,
+  RESOLVE_TRUSTED_INVOCATION,
+  SecurityAuthorityResolver,
+} from '../src/internal/authority.ts'
 import { LOOKUP_CONTROL_PLANE_ASSESSMENT } from '../src/internal/control-plane-assessment.ts'
 import { EXECUTE_CONTROL_PLANE_PROVIDER_OPERATION } from '../src/internal/control-plane-provider-operation.ts'
 import { VERIFY_CONTROL_PLANE_REPOSITORY_BINDING } from '../src/internal/control-plane-repository-binding.ts'
@@ -44,5 +48,23 @@ describe('ADR 0302 package-private protocol Symbols have versioned process ident
     for (const symbol of protocolSymbols) {
       expect(Reflect.get(emptyOwner, symbol)).toBeUndefined()
     }
+  })
+
+  it('rejects a structurally forged caller channel even when the resolver slot is discovered', () => {
+    const resolver = new SecurityAuthorityResolver()
+    expect(() => resolver.resolve({
+      kind: 'host-operator',
+      principalId: 'forged-operator',
+      permissions: ['risk:break-glass'],
+    })).toThrow('not issued by a package-owned adapter')
+
+    const channel = createTrustedCallerChannel({
+      kind: 'host-operator',
+      principalId: 'real-operator',
+      permissions: ['risk:break-glass'],
+    })
+    const invocation = resolver.resolve(channel)
+    expect(resolver.authorizes(invocation, 'risk:break-glass')).toBe(true)
+    expect(() => resolver.resolve({ ...channel })).toThrow('not issued by a package-owned adapter')
   })
 })

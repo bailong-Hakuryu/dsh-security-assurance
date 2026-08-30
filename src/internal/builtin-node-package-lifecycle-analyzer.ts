@@ -154,7 +154,7 @@ function jsonObject(text: string): Record<string, unknown> | undefined {
 }
 
 function hasDuplicateSecurityKey(text: string): boolean {
-  const property = /"(?:\\["\\/bfnrt]|\\u[0-9a-f]{4}|[^"\\\u0000-\u001f])*"\s*:/giu
+  const property = /"(?:\\["\\/bfnrt]|\\u[0-9a-f]{4}|[^"\\\p{Cc}])*"\s*:/giu
   const counts = new Map<string, number>()
   for (const match of text.matchAll(property)) {
     const token = match[0].replace(/\s*:\s*$/u, '')

@@ -2265,7 +2265,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
 
   private publish(state: SecurityAssuranceWorkbenchStateV1): void {
     this.state = state
-    for (const listener of [...this.listeners]) this.notify(listener, state)
+    for (const listener of Array.from(this.listeners)) this.notify(listener, state)
   }
 
   private notify(

@@ -14,6 +14,7 @@ import {
   DETERMINISTIC_FAILURE_HISTORY_ENGINE_ID,
   DETERMINISTIC_RELEASE_PROOF_KINDS,
   type DeterministicFailureHistoryRequestV1,
+  type NonInferiorityPlanV1,
   evaluateDeterministicFailureHistoryV1,
   EFFECTIVENESS_METRICS_ENGINE_ID,
   effectivenessMetricsRequestV1Schema,
@@ -21,6 +22,7 @@ import {
   EvaluationMetricsInputError,
   evaluateReleaseConstitutionV1,
   PAIRED_ARM_COMPARISON_ENGINE_ID,
+  type PairedArmComparisonRequestV1,
   pairedArmComparisonV1Schema,
   PairedArmComparisonInputError,
   PUBLIC_SECURITY_SCORECARD_ENGINE_ID,
@@ -30,6 +32,7 @@ import {
   RELEASE_EVIDENCE_MANIFEST_ENGINE_ID,
   RELEASE_EVIDENCE_PROOF_KINDS,
   type ReleaseEvidenceManifestRequestV1,
+  type UtilityEvidenceV1,
   releaseEvidenceManifestV1Schema,
   ReleaseEvidenceManifestInputError,
   RELEASE_CONSTITUTION_CHECK_IDS,
@@ -1607,7 +1610,7 @@ describe('Paired Arm Comparison Engine v1', () => {
     )
   }
 
-  function nonInferiorityPlan(margin: number) {
+  function nonInferiorityPlan(margin: number): NonInferiorityPlanV1 {
     return {
       planId: 'release-ni-plan',
       registrationRecordId: 'qualification-registry/ni-plan',
@@ -1628,7 +1631,7 @@ describe('Paired Arm Comparison Engine v1', () => {
     }
   }
 
-  function productUtilityEvidence(improved: boolean) {
+  function productUtilityEvidence(improved: boolean): UtilityEvidenceV1 {
     return {
       executionCostMicrounits: improved ? 500_000 : 1_000_000,
       firstValidatedFindingMs: improved ? 10_000 : 20_000,
@@ -1890,12 +1893,15 @@ describe('Paired Arm Comparison Engine v1', () => {
       }
     }
 
-    function releasePairedComparison() {
+    function releasePairedComparisonRequest(): PairedArmComparisonRequestV1 {
       const paired = comparisonRequest('MATCHED_BUDGET')
       paired.baseline.metricsRequest = repeatedArmMetrics(true)
       paired.candidate.metricsRequest = repeatedArmMetrics(true)
       paired.candidate.budget = budget({ wallTimeMs: 15_000, modelTokens: 4_000 })
-      return calculatePairedArmComparisonV1({
+      const plan = nonInferiorityPlan(0.5)
+      plan.registeredAtEpochMs = 100
+      plan.evidenceCollectionStartedAtEpochMs = 150
+      return {
         ...paired,
         baseline: {
           ...paired.baseline,
@@ -1905,8 +1911,12 @@ describe('Paired Arm Comparison Engine v1', () => {
           ...paired.candidate,
           utilityEvidence: productUtilityEvidence(true),
         },
-        nonInferiorityPlan: nonInferiorityPlan(1),
-      })
+        nonInferiorityPlan: plan,
+      } as PairedArmComparisonRequestV1
+    }
+
+    function releasePairedComparison() {
+      return calculatePairedArmComparisonV1(releasePairedComparisonRequest())
     }
 
     function releaseDeterministicHistoryRequest(
@@ -2037,6 +2047,7 @@ describe('Paired Arm Comparison Engine v1', () => {
               packedArtifactDigest: artifactDigest,
             },
           ],
+          pairedComparisonRequest: releasePairedComparisonRequest(),
           pairedComparison: releasePairedComparison(),
         },
       }
@@ -2085,6 +2096,24 @@ describe('Paired Arm Comparison Engine v1', () => {
       expect(() => evaluateReleaseConstitutionV1(request)).toThrow(
         ReleaseConstitutionInputError,
       )
+    })
+
+    it('rejects a paired comparison that disagrees with its raw arm evidence', () => {
+      const request = baseReleaseRequest() as unknown as {
+        candidate: { pairedComparison: Record<string, unknown> }
+      }
+      const forged = structuredClone(request.candidate.pairedComparison)
+      forged.conclusion = 'INCONCLUSIVE'
+      request.candidate.pairedComparison = forged
+
+      expect(() => evaluateReleaseConstitutionV1(request)).toThrow(ReleaseConstitutionInputError)
+    })
+
+    it('rejects a maximum non-inferiority margin instead of disabling the gate', () => {
+      expect(() => calculatePairedArmComparisonV1({
+        ...releasePairedComparisonRequest(),
+        nonInferiorityPlan: nonInferiorityPlan(1),
+      })).toThrow(PairedArmComparisonInputError)
     })
 
     it('keeps missing deterministic qualification evidence inconclusive at release', () => {

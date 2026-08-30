@@ -6,6 +6,11 @@ import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
 import { InvariantRegistry } from '@deepseek-ai/dsh-invariants'
 import { SecurityAssuranceService } from '../src/index.ts'
 import * as invariantEntry from '../src/invariant.ts'
+import {
+  HARNESS_VERIFICATION_AUTHORITY,
+  RECEIVE_HARNESS_VERIFICATION,
+  type HarnessVerificationReceiver,
+} from '../src/internal/harness-verification.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
 const PUBLIC_METHODS = [
@@ -263,6 +268,19 @@ describe('Invariant Entry', () => {
     })))
   })
 
+  it('rejects a discovered verification slot when the contribution owner is unbranded', async () => {
+    await activateInvariantComposition()
+    const receiver = Reflect.get(ctx.securityAssurance, RECEIVE_HARNESS_VERIFICATION) as HarnessVerificationReceiver
+    const accepted = receiver(
+      HARNESS_VERIFICATION_AUTHORITY,
+      Object.freeze(Object.create(null) as object),
+      { result: 'FAIL', checks: [] },
+    )
+
+    expect(accepted).toBe(false)
+    expect((await health()).compatibility.harnessVerification).toBe('PASS')
+  })
+
   it('does not close mutation admission before direct-use Host repository bootstrap settles', async () => {
     let releaseHostRepository!: () => void
     const hostRepositoryReady = new Promise<void>(resolve => {
@@ -280,6 +298,27 @@ describe('Invariant Entry', () => {
     releaseHostRepository()
     await activation
     expect((await health()).compatibility.harnessVerification).toBe('PASS')
+  })
+
+  it('fails closed when direct-use Host repository bootstrap rejects', async () => {
+    let rejectReady!: (error: Error) => void
+    const hostRepositoryReady = new Promise<void>((_, reject) => {
+      rejectReady = reject
+    })
+    void hostRepositoryReady.catch(() => {})
+    const activation = activateInvariantComposition({ hostRepositoryReady })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    rejectReady(new Error('host bootstrap credentials unavailable'))
+    await activation
+
+    const snapshot = await health()
+    expect(snapshot.compatibility.harnessVerification).toBe('FAIL')
+    expect(snapshot.state).toBe('READ_ONLY_SAFE')
+    expect(snapshot.checks).toContainEqual(expect.objectContaining({
+      id: 'composition.host-repository-bootstrap',
+      status: 'FAIL',
+      required: true,
+    }))
   })
 
   it('fails closed when a required composition check cannot be evaluated', async () => {

@@ -27,6 +27,7 @@ import {
 } from './contracts.ts'
 import type { SecurityAssuranceService } from './index.ts'
 import {
+  createTrustedCallerChannel,
   resolveTrustedInvocation,
   type SecurityPermission,
 } from './internal/authority.ts'
@@ -524,11 +525,11 @@ function harnessSessionInvocation(
   exec: ToolRunContext,
   permission: SecurityPermission,
 ): SecurityInvocation {
-  return resolveTrustedInvocation(ctx.securityAssurance as SecurityAssuranceService, {
+  return resolveTrustedInvocation(ctx.securityAssurance as SecurityAssuranceService, createTrustedCallerChannel({
     kind: 'harness-session',
     principalId: requireHarnessSession(ctx, exec),
     permissions: [permission],
-  })
+  }))
 }
 
 function startReceiptValue(receipt: AssessmentReceiptV1): SecurityAssessmentStartReceiptV1 {

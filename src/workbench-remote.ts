@@ -43,8 +43,7 @@ import type {
   AssessmentReceiptV1,
   WaitForAssessmentRevisionRequest,
 } from './contracts.ts'
-import type { SecurityAssuranceService } from './index.ts'
-import { resolveTrustedInvocation } from './internal/authority.ts'
+import { createTrustedCallerChannel, resolveTrustedInvocation } from './internal/authority.ts'
 
 declare const workbenchAuthorityContextIdBrand: unique symbol
 
@@ -273,11 +272,11 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
         if (!WORKBENCH_AUTHORITY_CONTEXT_PATTERN.test(contextId)) return undefined
         const operator = await resolver.resolveAuthorityContext(contextId)
         if (operator === undefined) return undefined
-        return resolveTrustedInvocation(ctx.securityAssurance, {
+        return resolveTrustedInvocation(ctx.securityAssurance, createTrustedCallerChannel({
           kind: 'host-operator',
           principalId: operator.principalId,
           permissions: operator.permissions,
-        })
+        }))
       },
     })
   }

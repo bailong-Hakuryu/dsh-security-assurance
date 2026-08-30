@@ -858,7 +858,7 @@ export class SecurityPersistence {
       if (current === undefined) {
         throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
       }
-      if (current.state !== 'CREATED') {
+      if (current.state !== 'CREATED' || current.pendingCancellation !== null) {
         this.db.exec('COMMIT')
         return undefined
       }
@@ -916,6 +916,7 @@ export class SecurityPersistence {
         current.state !== 'BLOCKED'
         || current.assessmentRevision !== input.expectedAssessmentRevision
         || current.riskDecisionWindow !== null
+        || current.pendingCancellation !== null
       ) {
         throw new SecurityPersistenceError('revision_conflict', 'Assessment is not resumable at this revision')
       }
@@ -1086,7 +1087,7 @@ export class SecurityPersistence {
         return current
       }
       if (
-        current.assessmentRevision !== requestRevision
+        current.assessmentRevision < requestRevision
         || current.pendingCancellation?.requestRevision !== requestRevision
         || current.state === 'SEALED'
         || current.state === 'CANCELED'
@@ -1134,6 +1135,7 @@ export class SecurityPersistence {
           && !(current.state === 'BLOCKED' && current.riskDecisionWindow?.state === 'RESOLVED')
         )
         || current.assessmentRevision !== input.expectedAssessmentRevision
+        || current.pendingCancellation !== null
       ) {
         throw new SecurityPersistenceError('revision_conflict', 'Assessment is not sealable at this revision')
       }
@@ -1178,6 +1180,7 @@ export class SecurityPersistence {
         current.state !== 'RUNNING'
         || current.assessmentRevision !== input.expectedAssessmentRevision
         || current.riskDecisionWindow !== null
+        || current.pendingCancellation !== null
       ) {
         throw new SecurityPersistenceError('revision_conflict', 'Assessment cannot open a Risk Decision Window')
       }
@@ -1290,6 +1293,7 @@ export class SecurityPersistence {
         || window === undefined
         || window === null
         || window.state !== 'OPEN'
+        || current.pendingCancellation !== null
         || !window.findingRecordIds.includes(request.finding.recordId)
         || request.finding.recordRevision !== 1
         || (existing !== undefined && !completingCriticalDualAuthority)
@@ -1445,6 +1449,7 @@ export class SecurityPersistence {
         current === undefined
         || current.state !== 'RUNNING'
         || current.assessmentRevision !== expectedAssessmentRevision
+        || current.pendingCancellation !== null
       ) {
         this.db.exec('COMMIT')
         return undefined

@@ -16,7 +16,7 @@ describe('ADR 0301 Host Repository Provider is a trusted composition Adapter', (
 
     expect(packageJson.exports).toHaveProperty('./host-repository-provider')
     expect(SecurityAssuranceHostRepositoryProvider.inject).toEqual(['securityAssurance'])
-    expect(source).toContain('resolveTrustedInvocation(service, {')
+    expect(source).toContain('resolveTrustedInvocation(service, createTrustedCallerChannel({')
     expect(source).toContain("permissions: ['repository:admin']")
     expect(source).toContain('await service.registerRepository(invocation, {')
     expect(source).not.toMatch(/openSecurityPersistence|SecurityPersistence|security-assurance\.sqlite/u)

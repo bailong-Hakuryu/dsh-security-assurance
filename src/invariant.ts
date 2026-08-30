@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'
 import { TARGET_HARNESS_VERSION } from './contracts.ts'
 import {
+  createHarnessVerificationOwner,
   HARNESS_VERIFICATION_AUTHORITY,
   RECEIVE_HARNESS_VERIFICATION,
   type HarnessVerificationCheck,
@@ -303,22 +304,51 @@ function verificationReceiver(ctx: Context): HarnessVerificationReceiver | undef
 export const name = 'security-assurance-invariant'
 export const inject = ['invariants']
 
-const install: InvariantInstaller = Object.assign((ctx: Context) => {
-  const owner = Object.freeze(Object.create(null) as object)
+function installVerification(ctx: Context, hostBootstrapFailure?: unknown): void {
+  const owner = createHarnessVerificationOwner()
   const receiver = verificationReceiver(ctx)
   if (receiver === undefined) return
-  receiver(HARNESS_VERIFICATION_AUTHORITY, owner, performVerification(ctx))
+  const verification = performVerification(ctx)
+  const checks = hostBootstrapFailure === undefined
+    ? verification.checks
+    : Object.freeze([
+        ...verification.checks,
+        {
+          id: 'composition.host-repository-bootstrap',
+          status: 'FAIL' as const,
+          required: true,
+          message: `Host Repository bootstrap unavailable: ${sanitizeErrorMessage(hostBootstrapFailure)}.`,
+        },
+      ])
+  receiver(HARNESS_VERIFICATION_AUTHORITY, owner, {
+    result: hostBootstrapFailure === undefined ? verification.result : 'FAIL',
+    checks,
+  })
   ctx.effect(() => () => {
     receiver(HARNESS_VERIFICATION_AUTHORITY, owner, undefined)
   })
+}
+
+const install: InvariantInstaller = Object.assign((ctx: Context) => {
+  installVerification(ctx)
 }, { inject: [SERVICE_KEY] })
 
 /** Register the dormant package-owned check after direct-use Host bootstrap settles. */
 export async function apply(ctx: Context): Promise<() => void> {
   const hostRepositories = serviceFromContext(ctx, 'securityAssuranceHostRepositories') as
     Partial<HostRepositoryProviderLike> | undefined
+  let hostBootstrapFailure: unknown
   if (typeof hostRepositories?.whenReady === 'function') {
-    await hostRepositories.whenReady()
+    try {
+      await hostRepositories.whenReady()
+    } catch (error) {
+      hostBootstrapFailure = error
+    }
   }
-  return Promise.resolve(ctx.invariants.register(PACKAGE_NAME, install))
+  const installer = hostBootstrapFailure === undefined
+    ? install
+    : Object.assign((installerCtx: Context) => {
+        installVerification(installerCtx, hostBootstrapFailure)
+      }, { inject: [SERVICE_KEY] }) satisfies InvariantInstaller
+  return Promise.resolve(ctx.invariants.register(PACKAGE_NAME, installer))
 }

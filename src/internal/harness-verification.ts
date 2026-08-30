@@ -14,6 +14,21 @@ export interface HarnessVerificationContribution {
 
 export type HarnessVerificationOwner = object
 
+const verificationOwners = new WeakSet<object>()
+
+/** Create the opaque owner held by the package's invariant companion. */
+export function createHarnessVerificationOwner(): HarnessVerificationOwner {
+  const owner = Object.freeze(Object.create(null) as object)
+  verificationOwners.add(owner)
+  return owner
+}
+
+export function isHarnessVerificationOwner(value: unknown): value is HarnessVerificationOwner {
+  return (typeof value === 'object' && value !== null) || typeof value === 'function'
+    ? verificationOwners.has(value)
+    : false
+}
+
 export type HarnessVerificationReceiver = (
   authority: object,
   owner: HarnessVerificationOwner,

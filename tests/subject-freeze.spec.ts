@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -312,6 +312,71 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
         code: 'ENOENT',
       })
       expect(manifestText).not.toContain('must-not-enter-subject')
+    } finally {
+      await fiber.dispose()
+    }
+  })
+
+  it('rejects a Workspace Snapshot whose tracked file traverses an ancestor link', async () => {
+    const repository = await repositoryFixture()
+    const outside = await mkdtemp(join(tmpdir(), 'dsh-security-subject-victim-'))
+    temporaryRoots.push(outside)
+    await writeFile(
+      join(outside, 'package.json'),
+      '{"name":"victim-secret","marker":"host-file-exfiltrated"}\n',
+      'utf8',
+    )
+    const placeholder = join(repository, 'index-placeholder.txt')
+    await writeFile(placeholder, '{"name":"tracked-placeholder"}\n', 'utf8')
+    const blob = (await run('git', ['hash-object', '-w', 'index-placeholder.txt'], { cwd: repository })).stdout.trim()
+    await rm(placeholder)
+    await run('git', ['update-index', '--add', '--cacheinfo', '100644', blob, 'data/package.json'], {
+      cwd: repository,
+    })
+    await symlink(outside, join(repository, 'data'), process.platform === 'win32' ? 'junction' : 'dir')
+
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-subject-home-'))
+    temporaryRoots.push(dshHome)
+    const ctx = new Context()
+    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+
+    try {
+      const invocation = referenceHostInvocation(ctx.securityAssurance)
+      const registered = await ctx.securityAssurance.registerRepository(invocation, {
+        schemaVersion: 1,
+        contractVersion: 1,
+        idempotencyKey: 'subject-ancestor-link-register-1',
+        root: repository,
+        displayName: 'Ancestor link fixture',
+        bindings: {
+          policyId: 'security/default',
+          assessmentProfileId: 'security/standard',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform,
+          deliveryDestinationIds: [],
+        },
+      })
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+
+      const started = await ctx.securityAssurance.startAssessment(invocation, {
+        schemaVersion: 1,
+        contractVersion: 1,
+        idempotencyKey: 'assessment-ancestor-link-start-1',
+        repositoryId: registered.value.repositoryId,
+        subject: { kind: 'workspace_snapshot' },
+        assessmentMode: 'REPOSITORY',
+        assessmentProfileId: 'security/standard',
+        target: { kind: 'repository' },
+        requestedStrongerControlIds: [],
+      })
+
+      expect(started).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+      expect(JSON.stringify(started)).not.toContain('host-file-exfiltrated')
     } finally {
       await fiber.dispose()
     }

@@ -8,9 +8,11 @@ import {
   readFile,
   readlink,
   readdir,
+  realpath,
   rename,
   rm,
   writeFile,
+  type FileHandle,
 } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import type { BigIntStats } from 'node:fs'
@@ -218,7 +220,7 @@ function validateRelativePath(path: string, seen: Set<string>): string {
     || canonical.startsWith('/')
     || canonical.includes('\\')
     || canonical.includes('\0')
-    || /[\u0000-\u001f]/u.test(canonical)
+    || Array.from(canonical).some(character => (character.codePointAt(0) ?? 0) <= 0x1f)
     || segments.some(segment => (
       segment.length === 0
       || segment === '.'
@@ -343,16 +345,41 @@ function statSignature(stat: BigIntStats): string {
   return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].map(String).join(':')
 }
 
+async function readBounded(handle: FileHandle, maxBytes: number): Promise<Buffer> {
+  const chunks: Buffer[] = []
+  let totalBytes = 0
+  while (totalBytes <= maxBytes) {
+    const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1 - totalBytes))
+    const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, null)
+    if (bytesRead === 0) break
+    chunks.push(chunk.subarray(0, bytesRead))
+    totalBytes += bytesRead
+    if (totalBytes > maxBytes) {
+      throw new SubjectFreezeError('resource_limit', 'Workspace file exceeds the Subject byte limit')
+    }
+  }
+  return Buffer.concat(chunks, totalBytes)
+}
+
 async function stableFile(path: string): Promise<StableFile> {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  const entry = await lstat(path)
+  if (!entry.isFile()) throw new SubjectFreezeError('invalid_subject', 'Workspace entry is not a regular file')
+  if (entry.size > MAX_SUBJECT_BYTES) {
+    throw new SubjectFreezeError('resource_limit', 'Workspace file exceeds the Subject byte limit')
+  }
+  const nonBlocking = process.platform === 'win32' ? 0 : constants.O_NONBLOCK
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | nonBlocking)
   try {
     const before = await handle.stat({ bigint: true })
     if (!before.isFile()) throw new SubjectFreezeError('invalid_subject', 'Workspace entry is not a regular file')
     if (before.size > BigInt(MAX_SUBJECT_BYTES)) {
       throw new SubjectFreezeError('resource_limit', 'Workspace file exceeds the Subject byte limit')
     }
-    const bytes = await handle.readFile()
+    const bytes = await readBounded(handle, MAX_SUBJECT_BYTES)
     const after = await handle.stat({ bigint: true })
+    if (after.size > BigInt(MAX_SUBJECT_BYTES)) {
+      throw new SubjectFreezeError('resource_limit', 'Workspace file exceeds the Subject byte limit')
+    }
     if (statSignature(before) !== statSignature(after) || BigInt(bytes.byteLength) !== after.size) {
       throw new SubjectFreezeError('unstable_subject', 'Workspace file changed during Subject Freeze')
     }
@@ -360,6 +387,24 @@ async function stableFile(path: string): Promise<StableFile> {
   } finally {
     await handle.close()
   }
+}
+
+function assertPathWithinRoot(root: string, candidate: string): void {
+  const candidateRelative = relative(root, candidate)
+  if (
+    candidateRelative === '..'
+    || candidateRelative.startsWith(`..${sep}`)
+    || isAbsolute(candidateRelative)
+  ) {
+    throw new SubjectFreezeError('invalid_subject', 'Workspace entry resolves outside the repository')
+  }
+}
+
+/** Reject parent-directory links before a workspace file can be opened. */
+async function assertWorkspacePathWithinRoot(repositoryRoot: string, sourcePath: string, checkFinalPath: boolean): Promise<void> {
+  const resolvedParent = await realpath(dirname(sourcePath))
+  assertPathWithinRoot(repositoryRoot, resolvedParent)
+  if (checkFinalPath) assertPathWithinRoot(repositoryRoot, await realpath(sourcePath))
 }
 
 function parseIndexModes(bytes: Buffer): ReadonlyMap<string, { readonly mode: string; readonly objectId: string }> {
@@ -386,6 +431,7 @@ async function materializeWorkspace(
   readonly selectionDigest: DigestEnvelopeV1
   readonly exclusions: readonly { readonly kind: 'workspace_deleted'; readonly path: string }[]
 }> {
+  const resolvedRepositoryRoot = await realpath(repositoryRoot)
   const selectionArgs = ['ls-files', '-z', '--cached', '--others', '--exclude-standard'] as const
   const beforeSelection = await runGit(repositoryRoot, selectionArgs, signal)
   const beforeDeleted = await runGit(repositoryRoot, ['ls-files', '-z', '--deleted'], signal)
@@ -437,7 +483,9 @@ async function materializeWorkspace(
       })
       continue
     }
+    await assertWorkspacePathWithinRoot(resolvedRepositoryRoot, sourcePath, true)
     const captured = await stableFile(sourcePath)
+    await assertWorkspacePathWithinRoot(resolvedRepositoryRoot, sourcePath, true)
     totalBytes += captured.bytes.byteLength
     if (totalBytes > MAX_SUBJECT_BYTES) {
       throw new SubjectFreezeError('resource_limit', 'Workspace exceeds the v0.1 byte limit')
@@ -451,7 +499,10 @@ async function materializeWorkspace(
 
   for (const [path, expected] of stableFiles) {
     canceled(signal)
-    const observed = await stableFile(join(repositoryRoot, ...path.split('/')))
+    const sourcePath = join(repositoryRoot, ...path.split('/'))
+    await assertWorkspacePathWithinRoot(resolvedRepositoryRoot, sourcePath, true)
+    const observed = await stableFile(sourcePath)
+    await assertWorkspacePathWithinRoot(resolvedRepositoryRoot, sourcePath, true)
     if (
       observed.signature !== expected.signature
       || binaryDigest('application/octet-stream', observed.bytes).value !== expected.digest.value

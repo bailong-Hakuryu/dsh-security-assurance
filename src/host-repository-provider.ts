@@ -6,7 +6,7 @@ import type {
   RepositoryState,
 } from './contracts.ts'
 import { repositoryBindingsV1Schema } from './contracts.ts'
-import { resolveTrustedInvocation } from './internal/authority.ts'
+import { createTrustedCallerChannel, resolveTrustedInvocation } from './internal/authority.ts'
 import { deepFreeze } from './internal/freeze.ts'
 import type { SecurityAssuranceService } from './index.ts'
 
@@ -105,11 +105,11 @@ export class SecurityAssuranceHostRepositoryProvider extends Service {
       bindingIds.add(registration.bindingId)
     }
 
-    const invocation = resolveTrustedInvocation(service, {
+    const invocation = resolveTrustedInvocation(service, createTrustedCallerChannel({
       kind: 'host-operator',
       principalId: 'security-assurance-host-repository-provider',
       permissions: ['repository:admin'],
-    })
+    }))
     for (const registration of parsed.data.repositories) {
       const result = await service.registerRepository(invocation, {
         schemaVersion: 1,

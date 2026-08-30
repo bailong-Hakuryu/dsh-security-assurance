@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.0-rc.5] - 2026-08-30
+
+- Reject workspace snapshots that traverse ancestor symlinks/junctions and
+  bound file reads to the Subject byte limit.
+- Fence all revision-advancing writes and recovery around pending cancellation.
+- Recompute release paired comparisons, require pre-registered non-inferiority
+  plans, and reject a vacuous margin of `1.0`.
+- Require package-issued authority channels and invariant owners; bootstrap
+  failures now install a required fail-closed health check.
+
 ## [0.1.0-rc.4] - 2026-08-30
 
 - Align the direct-use pair with Engineering Control Plane `0.1.3`, whose

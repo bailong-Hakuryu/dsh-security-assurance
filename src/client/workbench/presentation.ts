@@ -49,6 +49,6 @@ export class WorkbenchPresentation {
   private publish(snapshot: WorkbenchPresentationSnapshotV1): void {
     if (this.snapshot === snapshot) return
     this.snapshot = snapshot
-    for (const listener of [...this.listeners]) listener()
+    for (const listener of Array.from(this.listeners)) listener()
   }
 }

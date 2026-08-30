@@ -107,6 +107,7 @@ import {
 } from './internal/control-plane-assessment.ts'
 import {
   HARNESS_VERIFICATION_AUTHORITY,
+  isHarnessVerificationOwner,
   RECEIVE_HARNESS_VERIFICATION,
   type HarnessVerificationCheck,
   type HarnessVerificationOwner,
@@ -417,7 +418,7 @@ export class SecurityAssuranceService extends Service {
   private disposed = false
   private harnessVerification: HarnessVerificationResult = 'PENDING_INVARIANT'
   private harnessVerificationChecks: readonly HarnessVerificationCheck[] = []
-  private harnessVerificationOwner: HarnessVerificationOwner | undefined
+  #harnessVerificationOwner: HarnessVerificationOwner | undefined
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'securityAssurance')
@@ -512,15 +513,15 @@ export class SecurityAssuranceService extends Service {
       enumerable: false,
       writable: false,
       value: ((authority, owner, contribution) => {
-        if (authority !== HARNESS_VERIFICATION_AUTHORITY) return false
+        if (authority !== HARNESS_VERIFICATION_AUTHORITY || !isHarnessVerificationOwner(owner)) return false
         if (contribution === undefined) {
-          if (this.harnessVerificationOwner !== owner) return false
-          this.harnessVerificationOwner = undefined
+          if (this.#harnessVerificationOwner !== owner) return false
+          this.#harnessVerificationOwner = undefined
           this.harnessVerification = 'PENDING_INVARIANT'
           this.harnessVerificationChecks = []
           return true
         }
-        this.harnessVerificationOwner = owner
+        this.#harnessVerificationOwner = owner
         this.harnessVerification = contribution.result
         this.harnessVerificationChecks = deepFreeze(
           contribution.checks.map(check => ({ ...check })),
@@ -1187,6 +1188,7 @@ export class SecurityAssuranceService extends Service {
         authority.permissions.has('assessment:resume')
         && record.state === 'BLOCKED'
         && record.riskDecisionWindow === null
+        && record.pendingCancellation === null
       ) {
         availableActions.push({
           kind: 'RESUME_ASSESSMENT',

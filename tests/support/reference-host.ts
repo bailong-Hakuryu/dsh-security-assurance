@@ -1,5 +1,6 @@
 import type { SecurityAssuranceService, SecurityInvocation } from '../../src/index.ts'
 import {
+  createTrustedCallerChannel,
   resolveTrustedInvocation,
   type SecurityPermission,
 } from '../../src/internal/authority.ts'
@@ -26,11 +27,11 @@ export function referenceHostInvocationWithPermissions(
   permissions: readonly SecurityPermission[],
   principalId = 'reference-host-operator',
 ): SecurityInvocation {
-  return resolveTrustedInvocation(service, {
+  return resolveTrustedInvocation(service, createTrustedCallerChannel({
     kind: 'host-operator',
     principalId,
     permissions,
-  })
+  }))
 }
 
 /** A production-shaped trusted Host adapter used only to compose public tests. */

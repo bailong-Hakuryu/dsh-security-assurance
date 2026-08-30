@@ -24,12 +24,48 @@ export const RESOLVE_TRUSTED_INVOCATION = Symbol.for(
 
 /**
  * Identity already authenticated by a package-owned trusted channel adapter.
- * This value and the Resolver are deliberately absent from package exports.
+ * The branded value and Resolver are deliberately absent from package exports.
  */
 export interface TrustedCallerChannel {
   readonly kind: SecurityCallerChannelKind
   readonly principalId: string
   readonly permissions: readonly SecurityPermission[]
+}
+
+type TrustedCallerChannelInput = {
+  readonly kind: SecurityCallerChannelKind
+  readonly principalId: string
+  readonly permissions: readonly SecurityPermission[]
+}
+
+// A structural channel object is not sufficient authority. Keep the brand in
+// a process-local shared registry so independently bundled adapter entries
+// still agree on the issued-channel identity.
+const TRUSTED_CHANNEL_REGISTRY_SLOT = Symbol.for(
+  'dsh-security-assurance/internal/trusted-channel-registry/v1',
+)
+const globalProtocol = globalThis as typeof globalThis & {
+  [TRUSTED_CHANNEL_REGISTRY_SLOT]?: WeakSet<object>
+}
+if (globalProtocol[TRUSTED_CHANNEL_REGISTRY_SLOT] === undefined) {
+  Object.defineProperty(globalProtocol, TRUSTED_CHANNEL_REGISTRY_SLOT, {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: new WeakSet<object>(),
+  })
+}
+const trustedChannels = globalProtocol[TRUSTED_CHANNEL_REGISTRY_SLOT]!
+
+/** Create a channel capability for package-owned Host/session adapters. */
+export function createTrustedCallerChannel(input: TrustedCallerChannelInput): TrustedCallerChannel {
+  const channel = Object.freeze({
+    kind: input.kind,
+    principalId: input.principalId,
+    permissions: Object.freeze([...input.permissions]),
+  })
+  trustedChannels.add(channel)
+  return channel
 }
 
 export interface ResolvedSecurityAuthority {
@@ -43,6 +79,13 @@ export class SecurityAuthorityResolver {
   readonly #issued = new WeakMap<object, ResolvedSecurityAuthority>()
 
   resolve(channel: TrustedCallerChannel): SecurityInvocation {
+    if (
+      (typeof channel !== 'object' && typeof channel !== 'function')
+      || channel === null
+      || !trustedChannels.has(channel)
+    ) {
+      throw new TypeError('trusted caller channel was not issued by a package-owned adapter')
+    }
     if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/i.test(channel.principalId)) {
       throw new TypeError('trusted caller channel has an invalid principal identity')
     }

@@ -21,7 +21,7 @@ import {
 } from './contracts.ts'
 import type { SecurityAssuranceService } from './index.ts'
 import type { SecurityAssuranceHostRepositoryProvider } from './host-repository-provider.ts'
-import { resolveTrustedInvocation } from './internal/authority.ts'
+import { createTrustedCallerChannel, resolveTrustedInvocation } from './internal/authority.ts'
 import { canonicalJson } from './internal/canonical.ts'
 import {
   executeControlPlaneProviderOperation,
@@ -268,7 +268,7 @@ const SecurityAssuranceControlPlaneProvider = {
   name: 'dsh-security-assurance-control-plane-provider',
   inject: ['engineeringControlPlane', 'securityAssurance'],
   apply(ctx: Context) {
-    const invocation = resolveTrustedInvocation(ctx.securityAssurance, {
+    const invocation = resolveTrustedInvocation(ctx.securityAssurance, createTrustedCallerChannel({
       kind: 'control-plane',
       principalId: 'engineering-control-plane-assurance-provider',
       permissions: [
@@ -279,7 +279,7 @@ const SecurityAssuranceControlPlaneProvider = {
         'assessment:cancel',
         'assurance-submission:read',
       ],
-    })
+    }))
     return ctx.engineeringControlPlane.registerAssuranceProvider(
       SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
       (descriptor: AssuranceProviderDescriptorV1) => (

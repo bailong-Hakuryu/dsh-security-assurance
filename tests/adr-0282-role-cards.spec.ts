@@ -123,6 +123,6 @@ describe('ADR 0282 governed Role Cards', () => {
       updatedAt: '2026-08-24T00:03:00.000Z',
     }
     expect(assessmentSnapshotV1Schema.parse(base).roleCards).toEqual([roleCard])
-    expect(assessmentSnapshotV1Schema.safeParse({ ...base, roleCards: new Array(129).fill(roleCard) }).success).toBe(false)
+    expect(assessmentSnapshotV1Schema.safeParse({ ...base, roleCards: Array.from({ length: 129 }, () => roleCard) }).success).toBe(false)
   })
 })
