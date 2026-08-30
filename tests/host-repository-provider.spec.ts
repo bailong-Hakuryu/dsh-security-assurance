@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import SecurityAssuranceService from '../src/index.ts'
 import SecurityAssuranceHostRepositoryProvider from '../src/host-repository-provider.ts'
 
@@ -28,6 +28,65 @@ async function cleanRepository(): Promise<string> {
 }
 
 describe('Security Assurance Host Repository Provider', () => {
+  it('does not report plugin activation before Host registration settles', async () => {
+    const repository = await cleanRepository()
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-host-repository-home-'))
+    temporaryRoots.push(dshHome)
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+    const ctx = new Context()
+    const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const originalRegister = ctx.securityAssurance.registerRepository.bind(ctx.securityAssurance)
+    let releaseRegistration!: () => void
+    const registrationGate = new Promise<void>(resolve => {
+      releaseRegistration = resolve
+    })
+    vi.spyOn(ctx.securityAssurance, 'registerRepository').mockImplementation(async (...args) => {
+      await registrationGate
+      return originalRegister(...args)
+    })
+
+    let providerFiber: Awaited<ReturnType<Context['plugin']>> | undefined
+    try {
+      let activated = false
+      const activation = ctx.plugin(SecurityAssuranceHostRepositoryProvider, {
+        repositories: [{
+          schemaVersion: 1,
+          bindingId: 'activation-fence',
+          idempotencyKey: 'host-repository-provider:activation-fence:v1',
+          root: repository,
+          displayName: 'Activation Fence Repository',
+          bindings: {
+            policyId: 'security/node-package-lifecycle',
+            assessmentProfileId: 'security/standard',
+            evidenceProtectionId: 'evidence/local-protected',
+            dataEgressPolicyId: 'egress/deny-by-default',
+            platform,
+            deliveryDestinationIds: [],
+          },
+        }],
+      })
+      void activation.then(() => {
+        activated = true
+      })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      expect(activated).toBe(false)
+
+      releaseRegistration()
+      providerFiber = await activation
+      await expect(ctx.securityAssuranceHostRepositories.resolve('activation-fence')).resolves.toMatchObject({
+        bindingId: 'activation-fence',
+        state: 'ENABLED',
+      })
+    } finally {
+      releaseRegistration()
+      await providerFiber?.dispose()
+      await securityFiber.dispose()
+    }
+  })
+
   it('registers Host configuration and resolves one immutable path-free binding', async () => {
     const repository = await cleanRepository()
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-host-repository-home-'))
@@ -100,20 +159,19 @@ describe('Security Assurance Host Repository Provider', () => {
     }
 
     let providerFiber: Awaited<ReturnType<Context['plugin']>> | undefined
+    let activationFailure = ''
     try {
-      providerFiber = await ctx.plugin(SecurityAssuranceHostRepositoryProvider, {
-        repositories: [registration, {
-          ...registration,
-          idempotencyKey: 'host-repository-provider:duplicated:v2',
-        }],
-      })
-      let registrationFailure = ''
       try {
-        await ctx.securityAssuranceHostRepositories.resolve('duplicated-repository')
+        providerFiber = await ctx.plugin(SecurityAssuranceHostRepositoryProvider, {
+          repositories: [registration, {
+            ...registration,
+            idempotencyKey: 'host-repository-provider:duplicated:v2',
+          }],
+        })
       } catch (error) {
-        registrationFailure = String(error)
+        activationFailure = String(error)
       }
-      expect(registrationFailure).toContain("Host Repository binding 'duplicated-repository' is duplicated")
+      expect(activationFailure).toContain("Host Repository binding 'duplicated-repository' is duplicated")
     } finally {
       await providerFiber?.dispose()
       await securityFiber.dispose()

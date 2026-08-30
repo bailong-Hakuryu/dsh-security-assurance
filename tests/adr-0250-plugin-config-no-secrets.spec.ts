@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import SecurityAssuranceHostRepositoryProvider from '../src/host-repository-provider.ts'
+import type { Config as HostRepositoryProviderConfig } from '../src/host-repository-provider.ts'
 import SecurityAssuranceService from '../src/index.ts'
 import type { Config } from '../src/index.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
@@ -70,7 +71,7 @@ describe('ADR 0250: Plugin config contains no secrets', () => {
           },
           apiToken: secret,
         }],
-      } as unknown as ConstructorParameters<typeof SecurityAssuranceHostRepositoryProvider>[1])
+      } as unknown as HostRepositoryProviderConfig)
       await ctx.securityAssuranceHostRepositories.resolve('secret-bearing-repository')
     } catch (error) {
       activationFailure = error

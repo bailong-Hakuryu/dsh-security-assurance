@@ -95,6 +95,10 @@ interface PackageManifest {
   readonly version?: unknown
 }
 
+interface HostRepositoryProviderLike {
+  whenReady(): Promise<void>
+}
+
 const require = createRequire(import.meta.url)
 
 function pass(id: string, message: string): HarnessVerificationCheck {
@@ -309,6 +313,12 @@ const install: InvariantInstaller = Object.assign((ctx: Context) => {
   })
 }, { inject: [SERVICE_KEY] })
 
-/** Register the dormant package-owned check through the Harness registry. */
-export const apply = (ctx: Context): Promise<() => void> =>
-  Promise.resolve(ctx.invariants.register(PACKAGE_NAME, install))
+/** Register the dormant package-owned check after direct-use Host bootstrap settles. */
+export async function apply(ctx: Context): Promise<() => void> {
+  const hostRepositories = serviceFromContext(ctx, 'securityAssuranceHostRepositories') as
+    Partial<HostRepositoryProviderLike> | undefined
+  if (typeof hostRepositories?.whenReady === 'function') {
+    await hostRepositories.whenReady()
+  }
+  return Promise.resolve(ctx.invariants.register(PACKAGE_NAME, install))
+}

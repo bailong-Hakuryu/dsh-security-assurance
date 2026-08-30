@@ -79,6 +79,11 @@ export class SecurityAssuranceHostRepositoryProvider extends Service {
     }, 'Security Assurance Host Repository Provider teardown')
   }
 
+  /** Settle every configured Host registration before dependent entries become usable. */
+  async whenReady(): Promise<void> {
+    await this.ready
+  }
+
   /** Resolve one configured binding after every Host registration has settled. */
   async resolve(bindingId: string): Promise<HostRepositoryBindingV1 | undefined> {
     if (!bindingIdSchema.safeParse(bindingId).success) {
@@ -128,4 +133,13 @@ export class SecurityAssuranceHostRepositoryProvider extends Service {
   }
 }
 
-export default SecurityAssuranceHostRepositoryProvider
+export const name = 'security-assurance-host-repository-provider'
+export const inject = ['securityAssurance']
+
+/** Mount the Service and fence Loader activation on durable Repository registration. */
+export async function apply(ctx: Context, config: Config): Promise<void> {
+  const provider = new SecurityAssuranceHostRepositoryProvider(ctx, config)
+  await provider.whenReady()
+}
+
+export default { name, inject, apply }

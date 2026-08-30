@@ -22,6 +22,24 @@ describe('ADR 0301 Host Repository Provider is a trusted composition Adapter', (
     expect(source).not.toMatch(/openSecurityPersistence|SecurityPersistence|security-assurance\.sqlite/u)
   })
 
+  it('fences the direct-use invariant on the durable Host Repository binding', async () => {
+    const patch = await readFile(
+      join(import.meta.dirname, '..', 'cordis.patch.yml'),
+      'utf8',
+    )
+    const providerIndex = patch.indexOf('id: dsh-security-assurance-host-repository-provider')
+    const invariantIndex = patch.indexOf('id: dsh-security-assurance-invariant')
+    const invariantBlock = patch.slice(invariantIndex, patch.indexOf('\n    # Requires', invariantIndex))
+
+    expect(providerIndex).toBeGreaterThanOrEqual(0)
+    expect(invariantIndex).toBeGreaterThan(providerIndex)
+    expect(invariantBlock).toContain('securityAssuranceHostRepositories')
+    expect(invariantBlock).toContain('securityAssurance')
+    expect(invariantBlock).toContain('invariants')
+    expect(invariantBlock).toContain('loader')
+    expect(invariantBlock).toContain('typert')
+  })
+
   it('publishes only immutable path-free bindings and preserves Registry history on disposal', async () => {
     const source = await readFile(
       join(import.meta.dirname, '..', 'src', 'host-repository-provider.ts'),

@@ -3,7 +3,7 @@
 ## Candidate
 
 - Package: `dsh-security-assurance`
-- Candidate version: `0.1.0-rc.2`
+- Candidate version: `0.1.0-rc.3`
 - Qualified Harness target: `0.1.2-alpha.1`
 - Node.js: `^22.19.0 || >=24.0.0`
 - License: MIT

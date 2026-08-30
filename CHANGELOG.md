@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-rc.3] - 2026-08-30
+
+- Fence direct-use invariant activation on durable Host repository bootstrap.
+- Make the Host Repository Provider activation promise reflect registration
+  success or failure instead of reporting an active Loader row prematurely.
+- Extend the packed Web-profile smoke gate to require one enabled
+  `current-workspace` Repository in the real Security persistence store.
+
 ## [0.1.0-rc.2] - 2026-08-30
 
 - Add a direct-use Harness bundle for the launcher cwd and enable the Host,

@@ -96,6 +96,20 @@ class TypertFixture extends Service {
   }
 }
 
+interface HostRepositoryProviderFixtureConfig {
+  readonly ready: Promise<void>
+}
+
+class HostRepositoryProviderFixture extends Service {
+  constructor(ctx: Context, private readonly config: HostRepositoryProviderFixtureConfig) {
+    super(ctx, 'securityAssuranceHostRepositories')
+  }
+
+  async whenReady(): Promise<void> {
+    await this.config.ready
+  }
+}
+
 function validEntries(): readonly LoaderEntryFixture[] {
   return [
     {
@@ -172,6 +186,7 @@ describe('Invariant Entry', () => {
     readonly typertRecord?: TypertRecordFixture
     readonly typertFailureMessage?: string
     readonly omitTypert?: boolean
+    readonly hostRepositoryReady?: Promise<void>
   } = {}): Promise<Fiber> {
     const registryFiber = ctx.plugin(InvariantRegistry)
     fibers.push(registryFiber)
@@ -195,6 +210,13 @@ describe('Invariant Entry', () => {
     }
 
     await activateService()
+    if (options.hostRepositoryReady !== undefined) {
+      const hostRepositoryFiber = ctx.plugin(HostRepositoryProviderFixture, {
+        ready: options.hostRepositoryReady,
+      })
+      fibers.push(hostRepositoryFiber)
+      await hostRepositoryFiber
+    }
     const invariantFiber = ctx.plugin(invariantEntry)
     fibers.push(invariantFiber)
     await invariantFiber
@@ -239,6 +261,25 @@ describe('Invariant Entry', () => {
       status: 'PASS',
       required: true,
     })))
+  })
+
+  it('does not close mutation admission before direct-use Host repository bootstrap settles', async () => {
+    let releaseHostRepository!: () => void
+    const hostRepositoryReady = new Promise<void>(resolve => {
+      releaseHostRepository = resolve
+    })
+    let activated = false
+    const activation = activateInvariantComposition({ hostRepositoryReady }).then(fiber => {
+      activated = true
+      return fiber
+    })
+
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(activated).toBe(false)
+
+    releaseHostRepository()
+    await activation
+    expect((await health()).compatibility.harnessVerification).toBe('PASS')
   })
 
   it('fails closed when a required composition check cannot be evaluated', async () => {

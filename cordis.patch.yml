@@ -3,8 +3,6 @@
 - insert:
     - id: dsh-security-assurance
       name: dsh-security-assurance
-    - id: dsh-security-assurance-invariant
-      name: dsh-security-assurance/invariant
     - id: dsh-security-assurance-tools
       name: dsh-security-assurance/tools
     - id: dsh-security-assurance-control-plane-provider
@@ -27,6 +25,18 @@
               dataEgressPolicyId: egress/deny-by-default
               platform: !!js process.platform
               deliveryDestinationIds: []
+    # The invariant observes the final direct-use composition. Hold it until
+    # the Host repository has been durably registered and its supporting
+    # runtime services are present; otherwise its fail-closed admission gate
+    # can race the bootstrap command that creates current-workspace.
+    - id: dsh-security-assurance-invariant
+      name: dsh-security-assurance/invariant
+      inject:
+        - invariants
+        - loader
+        - securityAssurance
+        - securityAssuranceHostRepositories
+        - typert
     # Requires a Host-authenticated Workbench authority resolver supplied by
     # the deployment composition; never enable as an anonymous LAN Remote.
     - id: dsh-security-assurance-workbench-remote

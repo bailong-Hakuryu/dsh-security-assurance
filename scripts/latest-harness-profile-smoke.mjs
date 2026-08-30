@@ -3,6 +3,7 @@ import { execFile, spawn } from 'node:child_process'
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
@@ -91,7 +92,7 @@ async function bootAndProbeWeb() {
     await new Promise((resolveReady, rejectReady) => {
       const timer = setTimeout(() => {
         stop()
-        rejectReady(new Error(`Harness Web did not become ready:\n${output.slice(-12_000)}`))
+        rejectReady(new Error(`Harness Web did not become ready:\n${output.slice(-64_000)}`))
       }, 90_000)
 
       const inspect = async (chunk) => {
@@ -119,6 +120,18 @@ async function bootAndProbeWeb() {
           assert.equal(response.ok, true, `Harness Web returned HTTP ${response.status}`)
           const body = await response.text()
           assert.match(body, /<html|<!doctype html/iu)
+          const database = new DatabaseSync(
+            join(dshHome, 'security-assurance', 'security-assurance.sqlite'),
+            { readOnly: true },
+          )
+          try {
+            const row = database.prepare(
+              "SELECT COUNT(*) AS count FROM repositories WHERE json_extract(snapshot_json, '$.state') = ? AND json_extract(snapshot_json, '$.displayName') = ?",
+            ).get('ENABLED', 'Current workspace')
+            assert.equal(row?.count, 1, 'current-workspace was not registered as an enabled Repository')
+          } finally {
+            database.close()
+          }
           clearTimeout(timer)
           resolveReady()
         } catch (error) {
@@ -137,7 +150,7 @@ async function bootAndProbeWeb() {
         if (settled) return
         clearTimeout(timer)
         rejectReady(new Error(
-          `Harness Web exited before readiness (code=${code}, signal=${signal}):\n${output.slice(-12_000)}`,
+          `Harness Web exited before readiness (code=${code}, signal=${signal}):\n${output.slice(-64_000)}`,
         ))
       })
     })
@@ -195,7 +208,7 @@ try {
   const dump = await runHarness(['--profile', 'web', '--dump-config'])
   assert.match(dump.stdout, /# == dsh-engineering-control-plane/u)
   assert.match(dump.stdout, /name: dsh-engineering-control-plane\/tools/u)
-  assert.match(dump.stdout, /providerVersion: 0\.1\.0-rc\.2/u)
+  assert.match(dump.stdout, /providerVersion: 0\.1\.0-rc\.3/u)
   assert.match(dump.stdout, /repositoryBindingId: current-workspace/u)
   assert.match(dump.stdout, /# == dsh-security-assurance/u)
   assert.match(dump.stdout, /name: dsh-security-assurance\/tools/u)
