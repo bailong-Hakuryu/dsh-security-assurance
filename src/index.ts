@@ -158,6 +158,13 @@ import {
 } from './internal/assessment-list-query.ts'
 import { analyzeNodePackageInstallLifecycle } from './internal/builtin-node-package-lifecycle-analyzer.ts'
 import {
+  createNpmAuditAnalyzer,
+  NPM_AUDIT_ANALYZER_ID,
+  NPM_AUDIT_DESCRIPTOR,
+  NPM_AUDIT_QUALIFICATION,
+  NPM_AUDIT_REPORT_BASE_NAME,
+} from './internal/npm-audit-analyzer.ts'
+import {
   checkSealReadiness,
   evaluateDeterministicAssessment,
   prepareAssessmentContract,
@@ -184,12 +191,29 @@ import {
 import {
   freezeSubject,
   reapSubjectStaging,
+  readVerifiedExternalToolReportSlices,
   readVerifiedNodePackageManifestSlices,
   SubjectFreezeError,
 } from './internal/subject-freeze.ts'
 
 export * from './contracts.ts'
 export * from './analyzer.ts'
+export {
+  analyzeNpmAuditReport,
+  createNpmAuditAnalyzer,
+  escapeJsonPointerSegment,
+  NPM_AUDIT_ANALYZER_ID,
+  NPM_AUDIT_ANALYZER_VERSION,
+  NPM_AUDIT_DESCRIPTOR,
+  NPM_AUDIT_EVIDENCE_SCHEMA_ID,
+  NPM_AUDIT_NORMALIZATION_CONTRACT_ID,
+  NPM_AUDIT_POLICY_ID,
+  NPM_AUDIT_QUALIFICATION,
+  NPM_AUDIT_REPORT_BASE_NAME,
+  NPM_AUDIT_WEAKNESS_ID,
+  npmAuditReportEvidenceV1Schema,
+  npmAuditSeveritySchema,
+} from './internal/npm-audit-analyzer.ts'
 
 const EXPORT_DELIVERY_IDLE_SCAN_MS = 30_000
 const EXPORT_DELIVERY_WORKER_ERROR_RETRY_MS = 1_000
@@ -419,6 +443,12 @@ export class SecurityAssuranceService extends Service {
     if (!parsedConfig.success) throw new TypeError('Security Assurance configuration is invalid')
     this.securityRoot = join(resolveDshHome(parsedConfig.data.dshHome), 'security-assurance')
     this.exportDelivery = new ExportDeliveryModule(this.securityRoot)
+    // Self-register the bundled npm audit normalization Analyzer and its
+    // development Qualification before any Assessment admission closes
+    // startup registration. It only composes for the npm-dependency-audit
+    // Policy, so other Policies never see it in their Analyzer portfolio.
+    this.analyzerRegistry.register(NPM_AUDIT_DESCRIPTOR, createNpmAuditAnalyzer)
+    this.analyzerRegistry.registerQualification(NPM_AUDIT_QUALIFICATION)
     Object.defineProperty(this, RESOLVE_TRUSTED_INVOCATION, {
       configurable: false,
       enumerable: false,
@@ -2020,6 +2050,20 @@ export class SecurityAssuranceService extends Service {
             signal,
           )
         : []
+      const needsNpmAuditSlices = running.contract.analyzerPortfolio.some(entry => (
+        entry.descriptor.analyzerId === NPM_AUDIT_ANALYZER_ID
+      ))
+      const npmAuditSlices = needsNpmAuditSlices
+        ? await readVerifiedExternalToolReportSlices(
+            this.securityRoot,
+            running.subject.digest,
+            [NPM_AUDIT_REPORT_BASE_NAME],
+            signal,
+          )
+        : []
+      const analyzerSlices = npmAuditSlices.length > 0
+        ? [...sourceSlices, ...npmAuditSlices]
+        : sourceSlices
       const analysis = running.contract.policy.policyId === 'security/node-package-lifecycle'
         ? {
             expectedSubjectDigest: running.subject.digest,
@@ -2032,7 +2076,7 @@ export class SecurityAssuranceService extends Service {
       const externalAnalyses = await Promise.all(running.contract.analyzerPortfolio.map(
         async portfolioEntry => ({
           portfolioEntry,
-          subjectSlices: sourceSlices,
+          subjectSlices: analyzerSlices,
           contribution: await this.analyzerRegistry.execute(portfolioEntry.descriptor, {
             schemaVersion: 1,
             assessmentId,
@@ -2040,7 +2084,7 @@ export class SecurityAssuranceService extends Service {
             assessmentMode: running.contract.assessmentMode,
             subject: {
               digest: running.subject.digest,
-              textSlices: sourceSlices.map(slice => ({
+              textSlices: analyzerSlices.map(slice => ({
                 path: slice.path,
                 mediaType: 'application/json',
                 digest: slice.digest,

@@ -17,7 +17,11 @@ import {
   SECURITY_ASSURANCE_PRODUCT_VERSION,
 } from '../contracts.ts'
 import { canonicalJson, sha256Hex, structuredDigest } from './canonical.ts'
-import { validateExternalAnalyzerCandidates } from './candidate-validation.ts'
+import {
+  npmAuditCoverageIsIndependentlyVerified,
+  validateExternalAnalyzerCandidates,
+} from './candidate-validation.ts'
+import { NPM_AUDIT_POLICY_ID } from './npm-audit-analyzer.ts'
 import {
   BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR,
   BUILTIN_NODE_PACKAGE_LIFECYCLE_QUALIFICATION,
@@ -150,11 +154,22 @@ function externalAnalyzerEvidence(
       analysis,
       obligationId,
     )
-    // Protocol v1 has one package-owned conformance verifier. Arbitrary
-    // external Evidence schemas remain advisory even when Host-qualified.
-    const evidenceEligible = contract.policy.policyId === 'security/reference-validation'
+    // Only package-owned independent verifiers can promote contributed
+    // Evidence beyond advisory status. Host Qualification alone is never
+    // sufficient for verdict-bearing Coverage.
+    const conformanceEvidenceEligible = contract.policy.policyId === 'security/reference-validation'
       && analysis.contribution.candidateFindings.length > 0
       && structurallyBoundCoverage
+    const npmAuditEvidenceEligible = contract.policy.policyId === NPM_AUDIT_POLICY_ID
+      && structurallyBoundCoverage
+      && npmAuditCoverageIsIndependentlyVerified({
+        portfolioEntry: analysis.portfolioEntry,
+        contribution: analysis.contribution,
+        subjectSlices: analysis.subjectSlices,
+        policyId: contract.policy.policyId,
+        policyDigest: contract.policy.digest,
+      })
+    const evidenceEligible = conformanceEvidenceEligible || npmAuditEvidenceEligible
     const eligibilityReason = evidenceEligible
       ? null
       : analysis.portfolioEntry.eligibility.reason
@@ -385,14 +400,28 @@ export function evaluateDeterministicAssessment(
         ...externalAnalyzerEvidence(contract, externalAnalyses, obligationId),
         ...candidateValidation.evidence,
       ]
-      // Gate-bearing complete Coverage is reserved for the one package-owned
-      // conformance contract after every contributed Candidate is independently
-      // validated or rejected against the frozen Subject.
-      const completeCoverage = contract.policy.policyId === 'security/reference-validation'
+      // Gate-bearing complete Coverage is reserved for package-owned
+      // validation contracts after every contributed Candidate is
+      // independently validated or rejected against the frozen Subject.
+      // The conformance contract additionally requires at least one
+      // Candidate; the npm audit contract treats a clean report (zero
+      // Candidates) as complete Coverage.
+      const gateBearingPolicy = contract.policy.policyId === 'security/reference-validation'
+        || contract.policy.policyId === NPM_AUDIT_POLICY_ID
+      const completeCoverage = gateBearingPolicy
         && candidateValidation.unresolvedCandidateIds.length === 0
         && externalAnalyses.some(analysis => (
-          analysis.contribution.candidateFindings.length > 0
+          (contract.policy.policyId !== 'security/reference-validation'
+            || analysis.contribution.candidateFindings.length > 0)
           && externalCompleteCoverageClaimIsStructurallyBound(analysis, obligationId)
+          && (contract.policy.policyId !== NPM_AUDIT_POLICY_ID
+            || npmAuditCoverageIsIndependentlyVerified({
+              portfolioEntry: analysis.portfolioEntry,
+              contribution: analysis.contribution,
+              subjectSlices: analysis.subjectSlices,
+              policyId: contract.policy.policyId,
+              policyDigest: contract.policy.digest,
+            }))
         ))
       if (candidateValidation.findings.length > 0) {
         const coverageComplete = completeCoverage

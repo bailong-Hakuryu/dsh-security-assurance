@@ -870,3 +870,61 @@ export async function readVerifiedNodePackageManifestSlices(
   }
   return slices
 }
+
+/**
+ * Reverify one content-addressed Subject Snapshot and return only bounded
+ * external tool reports captured at conventional Subject-relative paths.
+ * Reports are produced outside the Pure boundary (CI or operator), frozen
+ * with the Subject, and digest-verified exactly like source slices.
+ */
+export async function readVerifiedExternalToolReportSlices(
+  securityRoot: string,
+  subjectDigest: DigestEnvelopeV1,
+  reportBaseNames: readonly string[],
+  signal?: AbortSignal,
+): Promise<readonly VerifiedSubjectTextSliceV1[]> {
+  canceled(signal)
+  if (reportBaseNames.length === 0) return []
+  const accepted = new Set(reportBaseNames)
+  if (
+    subjectDigest.algorithm !== 'sha256'
+    || subjectDigest.mediaType !== 'application/vnd.dsh.security.subject-manifest+json'
+    || !/^[0-9a-f]{64}$/u.test(subjectDigest.value)
+  ) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject identity is not a supported Manifest digest')
+  }
+  const publishedRoot = join(securityRoot, 'subjects', subjectDigest.value)
+  const manifest = await verifyPublishedSnapshot(publishedRoot, subjectDigest)
+  if (!Array.isArray(manifest.entries)) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject Manifest entries are invalid')
+  }
+  const reportEntries = manifest.entries.map(recordValue).filter(entry => (
+    entry.kind === 'file'
+    && typeof entry.path === 'string'
+    && accepted.has(entry.path.split('/').at(-1) as string)
+  ))
+  if (reportEntries.length > MAX_ANALYZER_SOURCE_SLICES) {
+    throw new SubjectFreezeError('resource_limit', 'External tool report count exceeds the Analyzer input limit')
+  }
+  let totalBytes = 0
+  const slices: VerifiedSubjectTextSliceV1[] = []
+  for (const entry of reportEntries) {
+    canceled(signal)
+    const path = entry.path as string
+    const digest = digestEnvelopeV1Schema.parse(entry.digest)
+    const captured = await stableFile(join(publishedRoot, 'content', ...path.split('/')))
+    if (captured.bytes.byteLength > MAX_ANALYZER_SLICE_BYTES) {
+      throw new SubjectFreezeError('resource_limit', 'External tool report exceeds the Analyzer slice limit')
+    }
+    totalBytes += captured.bytes.byteLength
+    if (totalBytes > MAX_ANALYZER_SOURCE_BYTES) {
+      throw new SubjectFreezeError('resource_limit', 'External tool reports exceed the Analyzer input budget')
+    }
+    const observed = binaryDigest('application/octet-stream', captured.bytes)
+    if (canonicalJson(digest) !== canonicalJson(observed)) {
+      throw new SubjectFreezeError('integrity_failure', 'External tool report slice failed digest verification')
+    }
+    slices.push({ path, digest: observed, text: decodeUtf8(captured.bytes) })
+  }
+  return slices
+}

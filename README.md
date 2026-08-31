@@ -15,7 +15,7 @@
 
 <code>dsh-security-assurance</code> 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供证据驱动的仓库安全评估。它通过公开的 Harness/Cordis 接口接入，不修改 Harness Core，并把评估过程封装为可查询、可恢复、可审计的版本化结果。
 
-这是一个安全保障插件，不是通用漏洞扫描器。当前内建策略针对 Node 项目的 <code>package.json</code> 安装生命周期键存在性进行检查。
+这是一个安全保障插件，不是通用漏洞扫描器。当前内建能力包括 Node 项目的 <code>package.json</code> 安装生命周期检查，以及对冻结 <code>npm-audit.json</code> 报告的纯归一化与独立验证。
 
 ### 当前版本
 
@@ -33,6 +33,7 @@
 | <code>CHANGE</code> 模式 | 暂不支持 |
 | <code>TARGETED</code> 模式 | 暂不支持 |
 | 默认策略 | <code>security/node-package-lifecycle</code> |
+| 可选 npm audit 策略 | <code>security/npm-dependency-audit</code> |
 | 默认档案 | <code>security/standard</code> |
 | 支持平台 | Windows、Linux、macOS |
 
@@ -79,6 +80,16 @@ dsh web
 /security 检查当前仓库的包安装生命周期
 ~~~
 
+### npm audit 报告适配
+
+npm audit 由 Host、CI 或操作者在评估外部执行；插件不会在 PURE 分析边界内启动 npm、访问 Registry 或读取实时网络状态。先生成 UTF-8 报告，并确保它在评估启动前包含于所选 Subject：
+
+~~~powershell
+npm audit --json | Set-Content -Encoding utf8 npm-audit.json
+~~~
+
+将 Repository 的策略绑定设为 <code>security/npm-dependency-audit</code>。适配器会按冻结字节和摘要读取 <code>npm-audit.json</code>：干净且完整的报告得到 <code>SATISFIED</code>；经独立契约复核的漏洞得到阻塞 Finding 和 <code>FAILED</code>；报告缺失、格式不受支持、Coverage 不完整或 Evidence 被篡改时得到 <code>INDETERMINATE</code>。报告新鲜度仍由生成报告的 Host/CI 负责。
+
 ### 工具工作流
 
 | 顺序 | 工具 | 作用 |
@@ -114,7 +125,7 @@ dsh web
 
 | 入口 | 作用 |
 | --- | --- |
-| <code>dsh-security-assurance</code> | 根 Security Assurance Service |
+| <code>dsh-security-assurance</code> | 根 Security Assurance Service；同时导出 npm audit 归一化契约 |
 | <code>dsh-security-assurance/tools</code> | 八个严格模型工具 |
 | <code>dsh-security-assurance/contracts</code> | 版本化公共契约 |
 | <code>dsh-security-assurance/analyzer</code> | 内建分析器接口 |
@@ -147,7 +158,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-当前 <code>main</code> 分支发布门禁已通过：70 个测试文件、349 个测试，静态检查、类型检查、构建、打包和 Harness Profile smoke 均通过。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针。
+当前 <code>main</code> 分支发布门禁已通过：71 个测试文件、365 个测试，静态检查、类型检查、构建、打包和 Harness Profile smoke 均通过。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针。
 
 完整领域模型见 [CONTEXT.md](CONTEXT.md)，安全政策见 [SECURITY.md](SECURITY.md)，候选版审查见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
@@ -158,7 +169,7 @@ pnpm release:check
 
 <code>dsh-security-assurance</code> is an evidence-backed repository security assessment plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It integrates through public Harness and Cordis seams without modifying Harness Core, and exposes versioned, queryable, recoverable assessment results.
 
-This is an assurance plugin, not a general vulnerability scanner. The built-in policy currently checks the presence of Node package install-lifecycle keys in <code>package.json</code>.
+This is an assurance plugin, not a general vulnerability scanner. Built-in capabilities include the Node <code>package.json</code> install-lifecycle check and pure normalization plus independent validation of a frozen <code>npm-audit.json</code> report.
 
 ## Current release
 
@@ -176,6 +187,7 @@ This is an assurance plugin, not a general vulnerability scanner. The built-in p
 | <code>CHANGE</code> | Not currently supported |
 | <code>TARGETED</code> | Not currently supported |
 | Default policy | <code>security/node-package-lifecycle</code> |
+| Optional npm audit policy | <code>security/npm-dependency-audit</code> |
 | Default profile | <code>security/standard</code> |
 | Platforms | Windows, Linux, macOS |
 
@@ -205,6 +217,16 @@ Natural-language requests are routed through the catalog-first workflow. Users c
 
 The eight tools are <code>security_repositories</code>, <code>security_catalog</code>, <code>security_assessment_start</code>, <code>security_assessment_status</code>, <code>security_assessment_findings</code>, <code>security_assessment_resume</code>, <code>security_assessment_cancel</code>, and <code>security_assessment_export</code>. The normal order is repositories, catalog, start, status, and findings. Mutations require the exact Service revision and a fresh idempotency key.
 
+## npm audit report adapter
+
+The Host, CI job, or operator runs npm audit outside the Assessment. The plugin never starts npm, contacts the Registry, or reads live network state from its PURE Analyzer boundary. Generate a UTF-8 report and make sure it is part of the selected Subject before the Assessment starts:
+
+~~~powershell
+npm audit --json | Set-Content -Encoding utf8 npm-audit.json
+~~~
+
+Bind the Repository to <code>security/npm-dependency-audit</code>. The adapter reads the exact frozen report bytes and digest. A complete clean report yields <code>SATISFIED</code>; independently validated vulnerabilities yield blocking Findings and <code>FAILED</code>; a missing or unsupported report, incomplete Coverage, or tampered Evidence yields <code>INDETERMINATE</code>. Report freshness remains the responsibility of the Host or CI job that produced it.
+
 ## Results and safety
 
 All public operations return a typed <code>SecurityResult&lt;T&gt;</code> envelope. Commands return immutable versioned Receipts; queries return identity- and revision-bound Snapshots. Host authority resolves identity and permissions; model arguments never carry credentials, paths, database handles, or executable objects. Missing authorization, conflicts, timeouts, cancellation, and external failures fail closed.
@@ -228,7 +250,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-The current <code>main</code> branch gate passes with 70 test files and 349 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows.
+The current <code>main</code> branch gate passes with 71 test files and 365 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows.
 
 </details>
 

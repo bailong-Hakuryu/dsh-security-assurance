@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Add a bundled PURE npm audit JSON normalization adapter that consumes
+  digest-verified `npm-audit.json` Subject slices without executing
+  npm or using network authority.
+- Independently re-derive npm audit Candidate fields and Coverage from the
+  frozen report, bind Evidence producer/path/digest/entries, accept verified
+  clean zero-Candidate reports, and fail closed on missing or fabricated input.
 - Add public Linux, macOS, and Windows CI with a fresh packed-profile
   installation and live Web probe, and make linting part of the release gate.
 - Retry transient Windows directory locks while reaping abandoned Subject
