@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { execFile } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -112,7 +113,7 @@ async function runReferenceValidationScenario<Observation = undefined>(
   const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-external-validation-home-'))
   temporaryRoots.push(dshHome)
   const ctx = new Context()
-  let activeFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+  let activeFiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
   let activeService = ctx.securityAssurance
   const descriptor: AnalyzerDescriptorV1 = {
     schemaVersion: 1,
@@ -309,7 +310,7 @@ async function runReferenceValidationScenario<Observation = undefined>(
       disposeRegistrations()
       await activeFiber.dispose()
       const restartedContext = new Context()
-      activeFiber = await restartedContext.plugin(SecurityAssuranceService, { dshHome })
+      activeFiber = await restartedContext.plugin(SecurityAssuranceTestComposition, { dshHome })
       activeService = restartedContext.securityAssurance
       invocation = referenceHostInvocation(activeService)
     }

@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { execFile } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -5,7 +6,6 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import SecurityAssuranceService from '../src/index.ts'
 import { referenceHostInvocation, referenceHostInvocationWithPermissions } from './support/reference-host.ts'
 
 const run = promisify(execFile)
@@ -36,7 +36,7 @@ describe('SecurityAssuranceService Assessment list', () => {
     temporaryRoots.push(dshHome)
     const ctx = new Context()
     contexts.push(ctx)
-    await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     await ctx.securityAssurance.whenReady()
 
     const invocation = referenceHostInvocation(ctx.securityAssurance, 'assessment-list-reviewer')

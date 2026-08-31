@@ -19,10 +19,10 @@
 
 ### 当前版本
 
-- 版本：<code>0.1.0-rc.9</code>
+- 版本：<code>0.1.0-rc.10</code>
 - 状态：Release Candidate（预发布版）
 - 适配：DeepSeek Harness <code>0.1.2-alpha.1</code>
-- GitHub：[v0.1.0-rc.9 Release](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.9)
+- GitHub：[v0.1.0-rc.10 Release](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.10)
 
 ### 支持范围
 
@@ -40,19 +40,21 @@
 
 ### 安装（Harness Web）
 
-要求 Node.js <code>^22.19.0 || >=24.0.0</code> 和 DeepSeek Harness CLI。将终端当前目录设为要评估的 Git 仓库：
+兼容 DeepSeek Harness <code>0.1.2-alpha.1</code>，要求 Node.js <code>^22.19.0 || >=24.0.0</code> 和 Harness CLI。将终端当前目录设为要评估的 Git 仓库，然后直接安装 GitHub Release 中已经构建的包：
 
 ~~~powershell
-dsh plugin --profile web add D:\Downloads\dsh-security-assurance-0.1.0-rc.9.tgz
+dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.10/dsh-security-assurance-0.1.0-rc.10.tgz
 dsh --profile web --dump-config
 dsh web
 ~~~
+
+也可以先在 Release 页面下载 <code>dsh-security-assurance-0.1.0-rc.10.tgz</code>，再把上面 URL 换成本地文件的绝对路径。
 
 如果还要使用工程 Mission 门禁，请先安装 [Engineering Control Plane](https://github.com/bailong-Hakuryu/dsh-engineering-control-plane/releases/tag/v0.1.9)，再安装本插件：
 
 ~~~powershell
 dsh plugin --profile web add D:\Downloads\dsh-engineering-control-plane-0.1.9.tgz
-dsh plugin --profile web add D:\Downloads\dsh-security-assurance-0.1.0-rc.9.tgz
+dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.10/dsh-security-assurance-0.1.0-rc.10.tgz
 dsh --profile web --dump-config
 dsh web
 ~~~
@@ -100,7 +102,7 @@ dsh web
 - 模型参数不接受凭据、数据库句柄、绝对路径或可执行对象；身份和权限由 Host 当前会话解析。
 - Registry、Assessment、Evidence 和导出状态保存在插件私有 SQLite 中，使用幂等键与 revision CAS 防止重复执行。
 - 缺失授权、状态冲突、超时、取消或外部失败会 fail closed，不会伪造满足结论。
-- <code>workspace_snapshot</code> 会读取工作区内容；在未完成本候选版安全审查项前，只应对可信仓库使用。详见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
+- <code>workspace_snapshot</code> 只应对用户明确授权的仓库运行；祖先符号链接/联结会被拒绝，Subject 符号链接只登记不解引用，Git 通过 Harness 受管子进程边界执行。详见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
 ### 与 Engineering Control Plane 联用
 
@@ -144,7 +146,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-当前 <code>v0.1.0-rc.9</code> 发布门禁已通过：69 个测试文件、343 个测试，类型检查、构建、打包和 Harness Profile smoke 均通过。
+当前 <code>v0.1.0-rc.10</code> 发布门禁已通过：70 个测试文件、348 个测试，类型检查、构建、打包和 Harness Profile smoke 均通过。
 
 完整领域模型见 [CONTEXT.md](CONTEXT.md)，安全政策见 [SECURITY.md](SECURITY.md)，候选版审查见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
@@ -159,10 +161,10 @@ This is an assurance plugin, not a general vulnerability scanner. The built-in p
 
 ## Current release
 
-- Version: <code>0.1.0-rc.9</code>
+- Version: <code>0.1.0-rc.10</code>
 - Status: release candidate
 - Target Harness: <code>0.1.2-alpha.1</code>
-- Release: [v0.1.0-rc.9](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.9)
+- Release: [v0.1.0-rc.10](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.10)
 
 ## Support matrix
 
@@ -180,13 +182,15 @@ The Service resolves authorized repositories and catalog choices first. Models m
 
 ## Install in Harness Web
 
-Requires Node.js <code>^22.19.0 || >=24.0.0</code> and the DeepSeek Harness CLI:
+Compatible with DeepSeek Harness <code>0.1.2-alpha.1</code>. Requires Node.js <code>^22.19.0 || >=24.0.0</code> and the Harness CLI. Install the prebuilt GitHub Release package directly:
 
 ~~~powershell
-dsh plugin --profile web add D:\Downloads\dsh-security-assurance-0.1.0-rc.9.tgz
+dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.10/dsh-security-assurance-0.1.0-rc.10.tgz
 dsh --profile web --dump-config
 dsh web
 ~~~
+
+Alternatively, download <code>dsh-security-assurance-0.1.0-rc.10.tgz</code> from the Release page and pass its absolute local path to the same command.
 
 When both plugins are installed, install Engineering Control Plane first because it supplies the shared invariant registry. The launcher working directory is registered as <code>current-workspace</code>.
 
@@ -204,7 +208,7 @@ The eight tools are <code>security_repositories</code>, <code>security_catalog</
 
 All public operations return a typed <code>SecurityResult&lt;T&gt;</code> envelope. Commands return immutable versioned Receipts; queries return identity- and revision-bound Snapshots. Host authority resolves identity and permissions; model arguments never carry credentials, paths, database handles, or executable objects. Missing authorization, conflicts, timeouts, cancellation, and external failures fail closed.
 
-Use <code>workspace_snapshot</code> only with trusted repositories until the candidate review items are addressed. See [SECURITY-REVIEW.md](SECURITY-REVIEW.md).
+Run <code>workspace_snapshot</code> only for repositories the user explicitly authorizes. Ancestor links are rejected, Subject symlinks are inventoried without dereference, and Git runs through the Harness-managed subprocess boundary. See [SECURITY-REVIEW.md](SECURITY-REVIEW.md).
 
 ## Control Plane integration
 
@@ -222,7 +226,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-Release <code>v0.1.0-rc.9</code> passed with 69 test files and 343 tests, including typecheck, build, packaging, and Harness profile smoke.
+Release <code>v0.1.0-rc.10</code> passed with 70 test files and 348 tests, including typecheck, build, packaging, and Harness profile smoke.
 
 </details>
 

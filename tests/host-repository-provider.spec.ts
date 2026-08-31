@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
@@ -6,7 +7,6 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import SecurityAssuranceService from '../src/index.ts'
 import SecurityAssuranceHostRepositoryProvider from '../src/host-repository-provider.ts'
 
 const run = promisify(execFile)
@@ -38,7 +38,7 @@ describe('Security Assurance Host Repository Provider', () => {
       throw new Error(`unsupported test platform: ${platform}`)
     }
     const ctx = new Context()
-    const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const securityFiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const originalRegister = ctx.securityAssurance.registerRepository.bind(ctx.securityAssurance)
     let releaseRegistration!: () => void
     const registrationGate = new Promise<void>(resolve => {
@@ -97,7 +97,7 @@ describe('Security Assurance Host Repository Provider', () => {
       throw new Error(`unsupported test platform: ${platform}`)
     }
     const ctx = new Context()
-    const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const securityFiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const providerFiber = await ctx.plugin(SecurityAssuranceHostRepositoryProvider, {
       repositories: [{
         schemaVersion: 1,
@@ -144,7 +144,7 @@ describe('Security Assurance Host Repository Provider', () => {
       throw new Error(`unsupported test platform: ${platform}`)
     }
     const ctx = new Context()
-    const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const securityFiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const originalRegister = ctx.securityAssurance.registerRepository.bind(ctx.securityAssurance)
     const requests: unknown[] = []
     vi.spyOn(ctx.securityAssurance, 'registerRepository').mockImplementation(async (invocation, request, options) => {
@@ -191,7 +191,7 @@ describe('Security Assurance Host Repository Provider', () => {
       throw new Error(`unsupported test platform: ${platform}`)
     }
     const ctx = new Context()
-    const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const securityFiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const registration = {
       schemaVersion: 1 as const,
       bindingId: 'duplicated-repository',

@@ -1,9 +1,10 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import SecurityAssuranceService, { runtimeHealthSnapshotSchema } from '../src/index.ts'
+import { runtimeHealthSnapshotSchema } from '../src/index.ts'
 import type { GetHealthRequest, SecurityInvocation } from '../src/index.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
@@ -20,7 +21,7 @@ async function harness() {
   temporaryHomes.push(dshHome)
   const ctx = new Context()
   liveContexts.push(ctx)
-  const fiber = ctx.plugin(SecurityAssuranceService, { dshHome })
+  const fiber = ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
   await fiber
   return {
     ctx,
@@ -41,7 +42,7 @@ describe('SecurityAssuranceService health tracer', () => {
       schemaVersion: 1,
       product: {
         name: 'dsh-security-assurance',
-        version: '0.1.0-rc.9',
+        version: '0.1.0-rc.10',
       },
       compatibility: {
         targetHarnessVersion: '0.1.2-alpha.1',

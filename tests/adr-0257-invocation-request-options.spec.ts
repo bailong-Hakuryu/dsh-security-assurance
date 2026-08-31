@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -73,7 +74,7 @@ describe('ADR 0257: Invocation, Request, and local options are separate', () => 
     temporaryRoots.push(dshHome)
     const ctx = new Context()
     contexts.push(ctx)
-    await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     await ctx.securityAssurance.whenReady()
     const invocation = referenceHostInvocation(ctx.securityAssurance, 'adr-0257-principal')
     const controller = new AbortController()
@@ -97,7 +98,7 @@ describe('ADR 0257: Invocation, Request, and local options are separate', () => 
     temporaryRoots.push(dshHome)
     const ctx = new Context()
     contexts.push(ctx)
-    await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     await ctx.securityAssurance.whenReady()
     const invocation = referenceHostInvocation(ctx.securityAssurance, 'adr-0257-principal')
     const controller = new AbortController()

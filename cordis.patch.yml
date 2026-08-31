@@ -3,6 +3,8 @@
 - insert:
     - id: dsh-security-assurance
       name: dsh-security-assurance
+      inject:
+        - subprocess
     - id: dsh-security-assurance-tools
       name: dsh-security-assurance/tools
     - id: dsh-security-assurance-control-plane-provider

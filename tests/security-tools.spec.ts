@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { execFile } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -128,7 +129,7 @@ async function harness() {
   const agentFiber = await ctx.plugin(AgentRegistry)
   const commandFiber = await ctx.plugin(CommandRuntime)
   const toolRuntimeFiber = await ctx.plugin(ToolRuntime)
-  let serviceFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+  let serviceFiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
   await ctx.securityAssurance.whenReady()
   let toolsFiber = await ctx.plugin(SecurityAssuranceTools)
   return {
@@ -137,7 +138,7 @@ async function harness() {
     async restartService() {
       await toolsFiber.dispose()
       await serviceFiber.dispose()
-      serviceFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+      serviceFiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
       toolsFiber = await ctx.plugin(SecurityAssuranceTools)
     },

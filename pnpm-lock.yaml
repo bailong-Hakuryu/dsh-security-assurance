@@ -45,6 +45,9 @@ importers:
       '@deepseek-ai/dsh-subagent':
         specifier: link:../deepseek-harness-latest/packages/subagent/subagent
         version: link:../deepseek-harness-latest/packages/subagent/subagent
+      '@deepseek-ai/dsh-subprocess':
+        specifier: link:../deepseek-harness-latest/packages/subprocess/subprocess
+        version: link:../deepseek-harness-latest/packages/subprocess/subprocess
       '@deepseek-ai/dsh-subprocess-local':
         specifier: link:../deepseek-harness-latest/packages/subprocess/subprocess-local
         version: link:../deepseek-harness-latest/packages/subprocess/subprocess-local

@@ -1,9 +1,10 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import SecurityAssuranceService, {
+import {
   startAssessmentRequestSchema,
   type StartAssessmentRequest,
 } from '../src/index.ts'
@@ -49,7 +50,7 @@ describe('ADR 0262 Start Assessment request boundary', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-adr-0262-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
 
     try {
       const invocation = referenceHostInvocation(ctx.securityAssurance)

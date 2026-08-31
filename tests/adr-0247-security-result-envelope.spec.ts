@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -72,7 +73,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
     temporaryRoots.push(dshHome)
     const ctx = new Context()
     contexts.push(ctx)
-    await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     await ctx.securityAssurance.whenReady()
     const invalidInvocation = {} as SecurityInvocation
 
@@ -99,7 +100,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
     temporaryRoots.push(dshHome)
     const ctx = new Context()
     contexts.push(ctx)
-    await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     await ctx.securityAssurance.whenReady()
     const invocation = referenceHostInvocation(ctx.securityAssurance, 'adr-0247-principal')
     const hostileRequest = new Proxy({}, {
@@ -137,7 +138,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invalidInvocation = {} as any
@@ -157,7 +158,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
@@ -176,7 +177,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
@@ -198,7 +199,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
@@ -224,7 +225,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
@@ -249,7 +250,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invalidInvocation = {} as any
@@ -267,7 +268,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
@@ -285,7 +286,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
@@ -306,7 +307,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
@@ -330,7 +331,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
@@ -345,7 +346,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
@@ -360,7 +361,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
@@ -375,7 +376,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
@@ -392,7 +393,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')
@@ -410,7 +411,7 @@ describe('ADR 0247: Public operations return one typed Security Result envelope'
       temporaryRoots.push(dshHome)
       const ctx = new Context()
       contexts.push(ctx)
-      await ctx.plugin(SecurityAssuranceService, { dshHome })
+      await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
       await ctx.securityAssurance.whenReady()
 
       const invocation = referenceHostInvocation(ctx.securityAssurance, 'test-principal')

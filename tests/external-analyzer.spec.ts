@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { execFile } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -64,7 +65,7 @@ describe('external Analyzer composition', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-analyzer-registration-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const descriptor: AnalyzerDescriptorV1 = {
       schemaVersion: 1,
       analyzerId: 'fixture/versioned-external',
@@ -118,7 +119,7 @@ describe('external Analyzer composition', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-external-analyzer-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const descriptor: AnalyzerDescriptorV1 = {
       schemaVersion: 1 as const,
       analyzerId: 'fixture/reference-external',
@@ -278,7 +279,7 @@ describe('external Analyzer composition', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-qualified-analyzer-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const descriptor: AnalyzerDescriptorV1 = {
       schemaVersion: 1,
       analyzerId: 'fixture/reference-qualified',
@@ -508,7 +509,7 @@ describe('external Analyzer composition', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-expired-qualification-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const descriptor: AnalyzerDescriptorV1 = {
       schemaVersion: 1,
       analyzerId: 'fixture/reference-expired',
@@ -693,7 +694,7 @@ describe('external Analyzer composition', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-external-analyzer-tampered-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const descriptor: AnalyzerDescriptorV1 = {
       schemaVersion: 1,
       analyzerId: 'fixture/tampered-external',

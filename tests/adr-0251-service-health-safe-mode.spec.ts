@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -6,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import SecurityAssuranceService from '../src/index.ts'
+import type SecurityAssuranceService from '../src/index.ts'
 import type { AssessmentId, RepositoryId, SecurityInvocation } from '../src/index.ts'
 import {
   referenceHostInvocation,
@@ -51,7 +52,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-adr-0251-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
 
     try {
       const invocation = referenceHostInvocationWithPermissions(
@@ -72,7 +73,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-adr-0251-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const service = ctx.securityAssurance
     const invocation = referenceHostInvocation(service)
 
@@ -100,7 +101,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
       throw new Error(`unsupported test platform: ${platform}`)
     }
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const service = ctx.securityAssurance
     const invocation = referenceHostInvocation(service)
     let markAnalyzerStarted = () => {}
@@ -231,7 +232,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
     foreign.exec('CREATE TABLE foreign_owner (id INTEGER PRIMARY KEY)')
     foreign.close()
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
 
     try {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
@@ -300,7 +301,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
       value: '23.0.0',
     })
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
 
     try {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
@@ -426,7 +427,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
       throw new Error(`unsupported test platform: ${platform}`)
     }
     const initialContext = new Context()
-    const initialFiber = await initialContext.plugin(SecurityAssuranceService, { dshHome })
+    const initialFiber = await initialContext.plugin(SecurityAssuranceTestComposition, { dshHome })
     let assessmentId: AssessmentId
 
     try {
@@ -472,7 +473,7 @@ describe('ADR 0251: Service health is explicit and Safe Mode remains queryable',
       value: '23.0.0',
     })
     const restartedContext = new Context()
-    const restartedFiber = await restartedContext.plugin(SecurityAssuranceService, { dshHome })
+    const restartedFiber = await restartedContext.plugin(SecurityAssuranceTestComposition, { dshHome })
 
     try {
       const invocation = referenceHostInvocation(restartedContext.securityAssurance)

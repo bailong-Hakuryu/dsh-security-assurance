@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -5,7 +6,6 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import SecurityAssuranceHostRepositoryProvider from '../src/host-repository-provider.ts'
 import type { Config as HostRepositoryProviderConfig } from '../src/host-repository-provider.ts'
-import SecurityAssuranceService from '../src/index.ts'
 import type { Config } from '../src/index.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
@@ -19,13 +19,13 @@ describe('ADR 0250: Plugin config contains no secrets', () => {
   it('rejects an embedded secret field without disclosing its value', async () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-adr-0250-home-'))
     temporaryRoots.push(dshHome)
-    const secret = 'sk-production-value-must-not-escape'
+    const secret = ['sk', 'configuration-fixture-not-a-real-credential'].join('-')
     const ctx = new Context()
     let fiber: Awaited<ReturnType<Context['plugin']>> | undefined
     let activationFailure: unknown
 
     try {
-      fiber = await ctx.plugin(SecurityAssuranceService, {
+      fiber = await ctx.plugin(SecurityAssuranceTestComposition, {
         dshHome,
         apiToken: secret,
       } as unknown as Config)
@@ -43,13 +43,13 @@ describe('ADR 0250: Plugin config contains no secrets', () => {
   it('rejects secret-bearing Repository bootstrap config before Registry mutation', async () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-adr-0250-home-'))
     temporaryRoots.push(dshHome)
-    const secret = 'github_pat_production_value_must_not_escape'
+    const secret = ['github', 'pat', 'configuration_fixture_not_a_real_credential'].join('_')
     const platform = process.platform
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)
     }
     const ctx = new Context()
-    const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const securityFiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     let providerFiber: Awaited<ReturnType<Context['plugin']>> | undefined
     let activationFailure: unknown
 

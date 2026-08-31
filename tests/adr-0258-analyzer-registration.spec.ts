@@ -1,9 +1,9 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import SecurityAssuranceService from '../src/index.ts'
 import SecurityAssuranceControlPlaneProvider from '../src/control-plane-provider.ts'
 import {
   createAnalyzerConformanceFixtureV1,
@@ -32,7 +32,7 @@ describe('ADR 0258: Analyzer registration is local composition and effect-owned'
     temporaryRoots.push(dshHome)
     const ctx = new Context()
     contexts.push(ctx)
-    await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     await ctx.securityAssurance.whenReady()
     const fixture = createAnalyzerConformanceFixtureV1()
     const factory = createReferenceAnalyzerFactoryV1()
@@ -60,7 +60,7 @@ describe('ADR 0258: Analyzer registration is local composition and effect-owned'
     temporaryRoots.push(dshHome)
     const ctx = new Context()
     contexts.push(ctx)
-    await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     await ctx.securityAssurance.whenReady()
     const fixture = createAnalyzerConformanceFixtureV1()
     const factory = createReferenceAnalyzerFactoryV1()

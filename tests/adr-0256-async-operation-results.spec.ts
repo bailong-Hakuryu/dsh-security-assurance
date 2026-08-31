@@ -1,9 +1,9 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import SecurityAssuranceService from '../src/index.ts'
 import type {
   InvocationOptions,
   SecurityInvocation,
@@ -58,7 +58,7 @@ describe('ADR 0256: runtime operations are asynchronous Security Results', () =>
     temporaryRoots.push(dshHome)
     const ctx = new Context()
     contexts.push(ctx)
-    await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     await ctx.securityAssurance.whenReady()
     const invalidInvocation = {} as SecurityInvocation
 
@@ -79,7 +79,7 @@ describe('ADR 0256: runtime operations are asynchronous Security Results', () =>
     temporaryRoots.push(dshHome)
     const ctx = new Context()
     contexts.push(ctx)
-    await ctx.plugin(SecurityAssuranceService, { dshHome })
+    await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     await ctx.securityAssurance.whenReady()
     const fixture = createAnalyzerConformanceFixtureV1()
 

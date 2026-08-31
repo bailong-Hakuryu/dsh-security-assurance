@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { execFile } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,7 +9,7 @@ import TypertGatewayService from '@deepseek-ai/dsh-api-gateway'
 import TypertRegistry, { type TypertContribution } from '@deepseek-ai/dsh-typert-registry'
 import { TYPERT } from 'dsh-security-assurance/typert'
 import { afterEach, describe, expect, it } from 'vitest'
-import SecurityAssuranceService, {
+import {
   RISK_DECISION_WINDOW_CONTROL_ID,
   type AssessmentId,
   type AssessmentSnapshotV1,
@@ -109,7 +110,7 @@ async function harness(strictTypert = false, riskDecisionWindow = true): Promise
   contexts.push(ctx)
   await ctx.plugin(TypertRegistry)
   if (strictTypert) ctx.typert.register(TYPERT as TypertContribution)
-  await ctx.plugin(SecurityAssuranceService, { dshHome })
+  await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
   await ctx.securityAssurance.whenReady()
   const resolvedContextIds: WorkbenchAuthorityContextId[] = []
   const operators = new Map<WorkbenchAuthorityContextId, AuthenticatedWorkbenchOperatorV1>([

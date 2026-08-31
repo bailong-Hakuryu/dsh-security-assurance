@@ -1,9 +1,9 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import SecurityAssuranceService from '../src/index.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
 const temporaryRoots: string[] = []
@@ -22,7 +22,7 @@ describe('ADR 0261 Repository mutation CAS and idempotency', () => {
       throw new Error(`unsupported test platform: ${platform}`)
     }
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
 
     try {
       const invocation = referenceHostInvocation(ctx.securityAssurance)

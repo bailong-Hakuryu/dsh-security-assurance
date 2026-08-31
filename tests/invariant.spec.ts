@@ -1,10 +1,10 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
 import { InvariantRegistry } from '@deepseek-ai/dsh-invariants'
-import { SecurityAssuranceService } from '../src/index.ts'
 import * as invariantEntry from '../src/invariant.ts'
 import {
   HARNESS_VERIFICATION_AUTHORITY,
@@ -180,7 +180,7 @@ describe('Invariant Entry', () => {
   })
 
   async function activateService(): Promise<void> {
-    const fiber = ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     fibers.push(fiber)
     await fiber
     await ctx.securityAssurance.whenReady()
@@ -399,8 +399,8 @@ describe('Invariant Entry', () => {
   })
 
   it('redacts secrets from unavailable-check diagnostics exposed through Health', async () => {
-    const apiKey = '0123456789abcdef0123456789abcdef'
-    const providerToken = 'sk-proj-demo-secret-value'
+    const apiKey = '0123456789abcdef'.repeat(2)
+    const providerToken = ['sk', 'provider-redaction-fixture'].join('-')
     await activateInvariantComposition({
       typertFailureMessage: `credentials api_key=${apiKey} provider=${providerToken}`,
     })

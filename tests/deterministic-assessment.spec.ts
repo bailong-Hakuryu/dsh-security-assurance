@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -88,7 +89,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-deterministic-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    let fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    let fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const platform = process.platform
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)
@@ -598,7 +599,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       )
       await mkdir(recoveryArtifact, { recursive: true })
       const restartedContext = new Context()
-      fiber = await restartedContext.plugin(SecurityAssuranceService, { dshHome })
+      fiber = await restartedContext.plugin(SecurityAssuranceTestComposition, { dshHome })
       const restartedInvocation = referenceHostInvocation(restartedContext.securityAssurance)
       await waitForPersistedExportPurge(deliveredRecord)
       await expect(readFile(deliveredArtifact)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -675,7 +676,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
     }
 
     const firstContext = new Context()
-    const firstFiber = await firstContext.plugin(SecurityAssuranceService, { dshHome })
+    const firstFiber = await firstContext.plugin(SecurityAssuranceTestComposition, { dshHome })
     const firstInvocation = referenceHostInvocation(firstContext.securityAssurance)
     const registered = await firstContext.securityAssurance.registerRepository(firstInvocation, {
       schemaVersion: 1,
@@ -709,7 +710,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
     await firstFiber.dispose()
 
     const restartedContext = new Context()
-    const restartedFiber = await restartedContext.plugin(SecurityAssuranceService, { dshHome })
+    const restartedFiber = await restartedContext.plugin(SecurityAssuranceTestComposition, { dshHome })
     try {
       const invocation = referenceHostInvocation(restartedContext.securityAssurance)
       await restartedContext.securityAssurance.whenReady()
@@ -802,7 +803,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       throw new Error(`unsupported test platform: ${platform}`)
     }
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     try {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
@@ -905,7 +906,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
     }
 
     const firstContext = new Context()
-    const firstFiber = await firstContext.plugin(SecurityAssuranceService, { dshHome })
+    const firstFiber = await firstContext.plugin(SecurityAssuranceTestComposition, { dshHome })
     let assessmentId: AssessmentId
     let repositoryId: RepositoryId
     let originalSubmission: unknown
@@ -945,7 +946,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
     }
 
     const restartedContext = new Context()
-    const restartedFiber = await restartedContext.plugin(SecurityAssuranceService, { dshHome })
+    const restartedFiber = await restartedContext.plugin(SecurityAssuranceTestComposition, { dshHome })
     try {
       const invocation = referenceHostInvocation(restartedContext.securityAssurance)
       await restartedContext.securityAssurance.whenReady()

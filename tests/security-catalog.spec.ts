@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { execFile } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -5,7 +6,6 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import SecurityAssuranceService from '../src/index.ts'
 import type { StartAssessmentSelectionV1 } from '../src/index.ts'
 import {
   referenceHostInvocation,
@@ -36,7 +36,7 @@ describe('Security Catalog and Start Preflight', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-catalog-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     try {
       const invocation = referenceHostInvocation(ctx.securityAssurance)
       const registered = await ctx.securityAssurance.registerRepository(invocation, {
@@ -159,7 +159,7 @@ describe('Security Catalog and Start Preflight', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-catalog-authority-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     try {
       const readOnly = referenceHostInvocationWithPermissions(
         ctx.securityAssurance,

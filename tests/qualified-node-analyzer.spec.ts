@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -101,7 +102,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-qualified-node-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const platform = process.platform
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)
@@ -219,7 +220,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-qualified-node-failed-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const platform = process.platform
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)
@@ -457,7 +458,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-qualified-node-malformed-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const platform = process.platform
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)
@@ -544,7 +545,7 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-qualified-node-duplicate-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const platform = process.platform
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)

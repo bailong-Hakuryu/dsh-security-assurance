@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-rc.10] - 2026-08-31
+
+- Route Subject Freeze Git operations through the Harness-managed subprocess
+  capability, including credential-scrubbed environment inheritance,
+  tree-scoped cancellation, bounded output and quiescent teardown.
+- Preserve configuration and health redaction coverage while constructing
+  explicitly fake credential fixtures at test runtime.
+
 ## [0.1.0-rc.9] - 2026-08-31
 
 - Route explicit top-level security audit requests through the catalog-first

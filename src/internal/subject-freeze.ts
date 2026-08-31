@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { spawn } from 'node:child_process'
 import {
   chmod,
   lstat,
@@ -17,6 +16,7 @@ import {
 import { constants } from 'node:fs'
 import type { BigIntStats } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import type {
   AssessmentSubjectSourceV1,
   AssessmentTargetSelectorV1,
@@ -119,6 +119,7 @@ export interface VerifiedSubjectTextSliceV1 {
 }
 
 export interface FreezeSubjectOptions {
+  readonly subprocess: SubprocessRuntime
   readonly repositoryRoot: string
   readonly securityRoot: string
   readonly source: AssessmentSubjectSourceV1
@@ -157,57 +158,107 @@ function canceled(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new SubjectFreezeError('canceled', 'Subject Freeze was canceled')
 }
 
-function runGit(
+/** @internal Managed Git execution seam; exported only for boundary tests. */
+export async function runGit(
+  subprocess: SubprocessRuntime,
   repositoryRoot: string,
   args: readonly string[],
   signal?: AbortSignal,
 ): Promise<Buffer> {
   canceled(signal)
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn('git', ['--no-replace-objects', '--literal-pathspecs', ...args], {
-      cwd: repositoryRoot,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const stdout: Buffer[] = []
-    const stderr: Buffer[] = []
-    let stdoutBytes = 0
-    let stderrBytes = 0
-    let settled = false
-    const abort = () => child.kill()
-    signal?.addEventListener('abort', abort, { once: true })
+  const gitEnvironment: NodeJS.ProcessEnv = {
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'Never',
+    GIT_OPTIONAL_LOCKS: '0',
+    GIT_CONFIG_COUNT: undefined,
+    GIT_CONFIG_PARAMETERS: undefined,
+    GIT_DIR: undefined,
+    GIT_WORK_TREE: undefined,
+    GIT_INDEX_FILE: undefined,
+    GIT_OBJECT_DIRECTORY: undefined,
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+    GIT_CEILING_DIRECTORIES: undefined,
+  }
+  let executable: string
+  try {
+    executable = await subprocess.resolveExecutable('git', undefined, signal)
+  } catch {
+    if (signal?.aborted) throw new SubjectFreezeError('canceled', 'Subject Freeze was canceled')
+    throw new SubjectFreezeError('invalid_subject', 'Git is unavailable')
+  }
 
-    const finish = (error?: Error, value?: Buffer) => {
-      if (settled) return
-      settled = true
-      signal?.removeEventListener('abort', abort)
-      if (error !== undefined) rejectPromise(error)
-      else resolvePromise(value ?? Buffer.alloc(0))
-    }
-    child.once('error', () => finish(new SubjectFreezeError('invalid_subject', 'Git is unavailable')))
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBytes += chunk.byteLength
-      if (stdoutBytes > MAX_GIT_OUTPUT_BYTES) {
-        child.kill()
-        finish(new SubjectFreezeError('resource_limit', 'Git output exceeded the Subject limit'))
+  let handle: ReturnType<SubprocessRuntime['spawn']>
+  try {
+    handle = subprocess.spawn({
+      argv: [
+        executable,
+        '-c',
+        'core.fsmonitor=false',
+        '--no-replace-objects',
+        '--literal-pathspecs',
+        ...args,
+      ],
+      cwd: repositoryRoot,
+      stdio: {
+        stdin: 'ignore',
+        stdout: 'pipe',
+        stderr: { maxBytes: 8_192 },
+      },
+      graceMs: 1_000,
+      signal,
+      env: gitEnvironment,
+    })
+  } catch {
+    if (signal?.aborted) throw new SubjectFreezeError('canceled', 'Subject Freeze was canceled')
+    throw new SubjectFreezeError('invalid_subject', 'Git is unavailable')
+  }
+  const stdout = handle.stdout
+  if (stdout === undefined) {
+    handle.terminate()
+    await handle.waitForExit()
+    throw new SubjectFreezeError('invalid_subject', 'Git is unavailable')
+  }
+
+  const chunks: Buffer[] = []
+  let outputBytes = 0
+  let outputExceeded = false
+  const outputComplete = new Promise<void>((resolvePromise, rejectPromise) => {
+    stdout.on('data', (chunk: Buffer) => {
+      if (outputExceeded) return
+      outputBytes += chunk.byteLength
+      if (outputBytes > MAX_GIT_OUTPUT_BYTES) {
+        outputExceeded = true
+        handle.terminate()
         return
       }
-      stdout.push(chunk)
+      chunks.push(chunk)
     })
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrBytes += chunk.byteLength
-      if (stderrBytes <= 8_192) stderr.push(chunk)
-    })
-    child.once('close', code => {
-      if (signal?.aborted) {
-        finish(new SubjectFreezeError('canceled', 'Subject Freeze was canceled'))
-      } else if (code !== 0) {
-        finish(new SubjectFreezeError('invalid_subject', 'Git could not resolve the exact Subject identity'))
-      } else {
-        finish(undefined, Buffer.concat(stdout))
-      }
-    })
+    stdout.once('end', resolvePromise)
+    stdout.once('error', rejectPromise)
   })
+
+  try {
+    const [outcome] = await Promise.all([handle.done, outputComplete])
+    if (signal?.aborted) {
+      throw new SubjectFreezeError('canceled', 'Subject Freeze was canceled')
+    }
+    if (outputExceeded) {
+      throw new SubjectFreezeError('resource_limit', 'Git output exceeded the Subject limit')
+    }
+    if (outcome.exitCode !== 0) {
+      throw new SubjectFreezeError('invalid_subject', 'Git could not resolve the exact Subject identity')
+    }
+    return Buffer.concat(chunks, outputBytes)
+  } catch (error) {
+    handle.terminate()
+    await handle.waitForExit()
+    if (error instanceof SubjectFreezeError) throw error
+    if (signal?.aborted) throw new SubjectFreezeError('canceled', 'Subject Freeze was canceled')
+    if (outputExceeded) {
+      throw new SubjectFreezeError('resource_limit', 'Git output exceeded the Subject limit')
+    }
+    throw new SubjectFreezeError('invalid_subject', 'Git is unavailable')
+  }
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
@@ -276,8 +327,13 @@ function parseGitTree(bytes: Buffer): readonly GitTreeEntry[] {
   })
 }
 
-async function exactCommit(repositoryRoot: string, commit: string, signal?: AbortSignal): Promise<string> {
-  const resolved = decodeUtf8(await runGit(repositoryRoot, [
+async function exactCommit(
+  subprocess: SubprocessRuntime,
+  repositoryRoot: string,
+  commit: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const resolved = decodeUtf8(await runGit(subprocess, repositoryRoot, [
     'rev-parse',
     '--verify',
     `${commit}^{commit}`,
@@ -304,12 +360,13 @@ async function writeMaterializedFile(root: string, entryPath: string, bytes: Uin
 }
 
 async function materializeGitTree(
+  subprocess: SubprocessRuntime,
   repositoryRoot: string,
   commit: string,
   contentRoot: string,
   signal?: AbortSignal,
 ): Promise<readonly SubjectManifestEntryV1[]> {
-  const tree = parseGitTree(await runGit(repositoryRoot, ['ls-tree', '-rz', '--full-tree', commit], signal))
+  const tree = parseGitTree(await runGit(subprocess, repositoryRoot, ['ls-tree', '-rz', '--full-tree', commit], signal))
   if (tree.length > MAX_SUBJECT_FILES) {
     throw new SubjectFreezeError('resource_limit', 'Subject exceeds the v0.1 entry limit')
   }
@@ -324,7 +381,7 @@ async function materializeGitTree(
     if (item.type !== 'blob' || !['100644', '100755', '120000'].includes(item.mode)) {
       throw new SubjectFreezeError('invalid_subject', 'Git tree contains an unsupported object kind')
     }
-    const bytes = await runGit(repositoryRoot, ['cat-file', 'blob', item.objectId], signal)
+    const bytes = await runGit(subprocess, repositoryRoot, ['cat-file', 'blob', item.objectId], signal)
     totalBytes += bytes.byteLength
     if (totalBytes > MAX_SUBJECT_BYTES) {
       throw new SubjectFreezeError('resource_limit', 'Subject exceeds the v0.1 byte limit')
@@ -438,6 +495,7 @@ function parseIndexModes(bytes: Buffer): ReadonlyMap<string, { readonly mode: st
 }
 
 async function materializeWorkspace(
+  subprocess: SubprocessRuntime,
   repositoryRoot: string,
   contentRoot: string,
   signal?: AbortSignal,
@@ -449,15 +507,15 @@ async function materializeWorkspace(
 }> {
   const resolvedRepositoryRoot = await realpath(repositoryRoot)
   const selectionArgs = ['ls-files', '-z', '--cached', '--others', '--exclude-standard'] as const
-  const beforeSelection = await runGit(repositoryRoot, selectionArgs, signal)
-  const beforeDeleted = await runGit(repositoryRoot, ['ls-files', '-z', '--deleted'], signal)
-  const beforeHead = decodeUtf8(await runGit(repositoryRoot, [
+  const beforeSelection = await runGit(subprocess, repositoryRoot, selectionArgs, signal)
+  const beforeDeleted = await runGit(subprocess, repositoryRoot, ['ls-files', '-z', '--deleted'], signal)
+  const beforeHead = decodeUtf8(await runGit(subprocess, repositoryRoot, [
     'rev-parse', '--verify', 'HEAD^{commit}',
   ], signal)).trim()
   if (!/^[0-9a-f]{40}$/u.test(beforeHead)) {
     throw new SubjectFreezeError('invalid_subject', 'Workspace does not have an exact HEAD commit')
   }
-  const indexModes = parseIndexModes(await runGit(repositoryRoot, ['ls-files', '-s', '-z'], signal))
+  const indexModes = parseIndexModes(await runGit(subprocess, repositoryRoot, ['ls-files', '-s', '-z'], signal))
   const unsafePaths = nullSeparated(beforeSelection)
   if (unsafePaths.length > MAX_SUBJECT_FILES) {
     throw new SubjectFreezeError('resource_limit', 'Workspace exceeds the v0.1 entry limit')
@@ -526,9 +584,9 @@ async function materializeWorkspace(
       throw new SubjectFreezeError('unstable_subject', 'Workspace changed across the stable-read boundary')
     }
   }
-  const afterSelection = await runGit(repositoryRoot, selectionArgs, signal)
-  const afterDeleted = await runGit(repositoryRoot, ['ls-files', '-z', '--deleted'], signal)
-  const afterHead = decodeUtf8(await runGit(repositoryRoot, [
+  const afterSelection = await runGit(subprocess, repositoryRoot, selectionArgs, signal)
+  const afterDeleted = await runGit(subprocess, repositoryRoot, ['ls-files', '-z', '--deleted'], signal)
+  const afterHead = decodeUtf8(await runGit(subprocess, repositoryRoot, [
     'rev-parse', '--verify', 'HEAD^{commit}',
   ], signal)).trim()
   if (!beforeSelection.equals(afterSelection) || !beforeDeleted.equals(afterDeleted) || beforeHead !== afterHead) {
@@ -635,16 +693,16 @@ export async function freezeSubject(options: FreezeSubjectOptions): Promise<Froz
     let resolvedSubject: Readonly<Record<string, unknown>>
     let subjectExclusions: readonly { readonly kind: 'workspace_deleted'; readonly path: string }[] = []
     if (options.source.kind === 'git_revision') {
-      const commit = await exactCommit(options.repositoryRoot, options.source.commit, options.signal)
-      entries = await materializeGitTree(options.repositoryRoot, commit, contentRoot, options.signal)
+      const commit = await exactCommit(options.subprocess, options.repositoryRoot, options.source.commit, options.signal)
+      entries = await materializeGitTree(options.subprocess, options.repositoryRoot, commit, contentRoot, options.signal)
       resolvedSubject = { kind: 'git_revision', commit }
     } else if (options.source.kind === 'change') {
-      const baseCommit = await exactCommit(options.repositoryRoot, options.source.baseCommit, options.signal)
-      const headCommit = await exactCommit(options.repositoryRoot, options.source.headCommit, options.signal)
-      const changeSet = await runGit(options.repositoryRoot, [
-        'diff', '--raw', '-z', '--no-renames', baseCommit, headCommit,
+      const baseCommit = await exactCommit(options.subprocess, options.repositoryRoot, options.source.baseCommit, options.signal)
+      const headCommit = await exactCommit(options.subprocess, options.repositoryRoot, options.source.headCommit, options.signal)
+      const changeSet = await runGit(options.subprocess, options.repositoryRoot, [
+        'diff', '--raw', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', baseCommit, headCommit,
       ], options.signal)
-      entries = await materializeGitTree(options.repositoryRoot, headCommit, contentRoot, options.signal)
+      entries = await materializeGitTree(options.subprocess, options.repositoryRoot, headCommit, contentRoot, options.signal)
       resolvedSubject = {
         kind: 'change',
         baseCommit,
@@ -652,7 +710,7 @@ export async function freezeSubject(options: FreezeSubjectOptions): Promise<Froz
         changeSetDigest: binaryDigest('application/vnd.dsh.git.raw-diff', changeSet),
       }
     } else {
-      const workspace = await materializeWorkspace(options.repositoryRoot, contentRoot, options.signal)
+      const workspace = await materializeWorkspace(options.subprocess, options.repositoryRoot, contentRoot, options.signal)
       entries = workspace.entries
       subjectExclusions = workspace.exclusions
       resolvedSubject = {

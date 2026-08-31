@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import z from 'zod'
 import {
   disableRepositoryRequestSchema,
@@ -383,6 +384,8 @@ class SecurityArtifactIntegrityError extends Error {
  * mint or deserialize Security Invocations.
  */
 export class SecurityAssuranceService extends Service {
+  static inject = ['subprocess']
+
   private readonly authorityResolver = new SecurityAuthorityResolver()
   private readonly analyzerRegistry = new AnalyzerRegistry()
   private readonly findingQueries = new FindingQueryModule()
@@ -394,6 +397,7 @@ export class SecurityAssuranceService extends Service {
   private readonly runtimeCompatible = nodeVersionIsSupported(this.actualNodeVersion)
   private readonly ready: Promise<SecurityPersistence | undefined>
   private readonly securityRoot: string
+  private readonly subprocess: SubprocessRuntime
   private readonly runningAssessments = new Map<AssessmentId, {
     readonly controller: AbortController
     readonly task: Promise<void>
@@ -410,6 +414,7 @@ export class SecurityAssuranceService extends Service {
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'securityAssurance')
+    this.subprocess = ctx.subprocess
     const parsedConfig = securityAssuranceConfigSchema.safeParse(config)
     if (!parsedConfig.success) throw new TypeError('Security Assurance configuration is invalid')
     this.securityRoot = join(resolveDshHome(parsedConfig.data.dshHome), 'security-assurance')
@@ -944,6 +949,7 @@ export class SecurityAssuranceService extends Service {
       )
 
       const frozen = await freezeSubject({
+        subprocess: this.subprocess,
         repositoryRoot: repository.canonicalRoot,
         securityRoot: this.securityRoot,
         source: parsed.data.subject,

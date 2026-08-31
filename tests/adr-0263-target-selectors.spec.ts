@@ -1,3 +1,4 @@
+import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -5,7 +6,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import SecurityAssuranceService, { assessmentTargetSelectorV1Schema } from '../src/index.ts'
+import { assessmentTargetSelectorV1Schema } from '../src/index.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
 const run = promisify(execFile)
@@ -52,7 +53,7 @@ describe('ADR 0263 mode-specific Target Selectors', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-target-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
-    const fiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const platform = process.platform
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)
