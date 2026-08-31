@@ -13,6 +13,10 @@ const packageJson = JSON.parse(
   files?: string[]
   scripts?: Record<string, string>
 }
+const ciWorkflow = readFileSync(
+  new URL('../.github/workflows/ci.yml', import.meta.url),
+  'utf8',
+)
 
 describe('v0.1 release candidate package', () => {
   it('binds runtime and package identity to the candidate version', () => {
@@ -35,9 +39,23 @@ describe('v0.1 release candidate package', () => {
   it('rebuilds before packing and exposes one complete release gate', () => {
     expect(packageJson.scripts?.prepack).toBe('pnpm build')
     expect(packageJson.scripts?.['release:check']).toMatch(
-      /pnpm typecheck && pnpm build && pnpm test/,
+      /pnpm build && pnpm typecheck && pnpm test/,
     )
     expect(packageJson.scripts?.['release:check']).toContain('pnpm pack:profile-smoke')
     expect(packageJson.scripts?.['release:check']).not.toContain('pnpm pack:browser-e2e')
+  })
+
+  it('builds linked packages before source and public-entry typechecking', () => {
+    const controlPlaneInstall = ciWorkflow.indexOf('name: Install Control Plane dependencies')
+    const controlPlaneBuild = ciWorkflow.indexOf('name: Build Control Plane')
+    const securityInstall = ciWorkflow.indexOf('name: Install Security Assurance dependencies')
+    const securityBuild = ciWorkflow.indexOf('name: Build Security Assurance')
+    const securityTypecheck = ciWorkflow.indexOf('name: Typecheck')
+
+    expect(controlPlaneInstall).toBeGreaterThan(-1)
+    expect(controlPlaneBuild).toBeGreaterThan(controlPlaneInstall)
+    expect(securityInstall).toBeGreaterThan(controlPlaneBuild)
+    expect(securityBuild).toBeGreaterThan(securityInstall)
+    expect(securityTypecheck).toBeGreaterThan(securityBuild)
   })
 })

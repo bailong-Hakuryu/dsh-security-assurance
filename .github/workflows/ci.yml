@@ -79,6 +79,10 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: DSH Engineering Control Plane
 
+      - name: Build Control Plane
+        run: pnpm build
+        working-directory: DSH Engineering Control Plane
+
       - name: Install Security Assurance dependencies
         run: pnpm install --frozen-lockfile
         working-directory: plugin
@@ -87,16 +91,16 @@ jobs:
         run: pnpm lint
         working-directory: plugin
 
+      - name: Build Security Assurance
+        run: pnpm build
+        working-directory: plugin
+
       - name: Typecheck
         run: pnpm typecheck
         working-directory: plugin
 
       - name: Test
         run: pnpm test
-        working-directory: plugin
-
-      - name: Build
-        run: pnpm build
         working-directory: plugin
 
       - name: Inspect packed artifact

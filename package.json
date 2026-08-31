@@ -124,7 +124,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "pack:dry-run": "npm --cache .scratch/npm-cache pack --dry-run",
     "pack:profile-smoke": "node scripts/latest-harness-profile-smoke.mjs",
-    "release:check": "pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm pack:dry-run && pnpm pack:profile-smoke"
+    "release:check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm pack:dry-run && pnpm pack:profile-smoke"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",

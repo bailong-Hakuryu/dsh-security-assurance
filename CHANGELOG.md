@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Build the linked Control Plane and generated Security Assurance package
+  entries before fresh-checkout typechecking, removing reliance on stale local
+  `lib` artifacts across Linux, macOS, and Windows CI.
 - Add a bundled PURE npm audit JSON normalization adapter that consumes
   digest-verified `npm-audit.json` Subject slices without executing
   npm or using network authority.
