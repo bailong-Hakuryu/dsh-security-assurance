@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentStatus } from '@deepseek-ai/dsh-agent'
+import CommandRuntime from '@deepseek-ai/dsh-commands'
 import { ToolCallId as CallId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -28,12 +29,14 @@ afterEach(async () => {
 interface StubAgent {
   readonly agent: Agent
   readonly session: Session
+  readonly steered: ReturnType<typeof createUserMessage>[]
   setStatus(status: AgentStatus): void
 }
 
 function stubAgent(rawId: string, supplied?: Session): StubAgent {
   const session = supplied ?? Session.create(SessionId(rawId))
   let status: AgentStatus = 'running'
+  const steered: ReturnType<typeof createUserMessage>[] = []
   const agent: Agent = {
     id: session.id,
     options: {},
@@ -43,13 +46,13 @@ function stubAgent(rawId: string, supplied?: Session): StubAgent {
     ctx: new Context(),
     send: () => {},
     followup: () => {},
-    steer: () => ({ outcome: Promise.resolve({ status: 'rejected' as const }) }),
+    steer: message => { steered.push(message) },
     inject(input) { this.inbox.append('next-step', input) },
     cancel() {},
     runMaintenance: task => task(new AbortController().signal),
     whenIdle: () => Promise.resolve(),
   }
-  return { agent, session, setStatus(value) { status = value } }
+  return { agent, session, steered, setStatus(value) { status = value } }
 }
 
 function openTurn(stub: StubAgent): number {
@@ -123,6 +126,7 @@ async function harness() {
   const ctx = new Context()
   const systemPromptFiber = await ctx.plugin(SystemPrompt)
   const agentFiber = await ctx.plugin(AgentRegistry)
+  const commandFiber = await ctx.plugin(CommandRuntime)
   const toolRuntimeFiber = await ctx.plugin(ToolRuntime)
   let serviceFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
   await ctx.securityAssurance.whenReady()
@@ -141,6 +145,7 @@ async function harness() {
       await toolsFiber.dispose()
       await serviceFiber.dispose()
       await toolRuntimeFiber.dispose()
+      await commandFiber.dispose()
       await agentFiber.dispose()
       await systemPromptFiber.dispose()
     },
@@ -373,6 +378,42 @@ describe('security assessment tool registration', () => {
       expect(fixture.ctx.tools.get('security_assessment_cancel')).toBeUndefined()
       expect(fixture.ctx.tools.get('security_assessment_export')).toBeUndefined()
       expect(fixture.ctx.reflect.get('securityAssurance')).toBeDefined()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+
+  it('registers /security and steers the catalog-first standalone workflow', async () => {
+    const fixture = await harness()
+    const root = stubAgent(`security-command-${Math.random()}`)
+    try {
+      expect(fixture.ctx.commands.list(root.agent)).toContainEqual({
+        name: 'security',
+        description: 'Run a standalone repository security assessment',
+        input: { hint: '[scope]' },
+      })
+      const execution = await fixture.ctx.commands.execute(
+        root.agent,
+        '/security review package lifecycle scripts',
+        [],
+        toolSignal,
+      )
+      expect(execution?.result).toEqual({
+        kind: 'success',
+        text: 'Security assessment request submitted.',
+      })
+      expect(root.steered).toHaveLength(1)
+      expect(root.steered[0]?.content).toEqual([{
+        type: 'text',
+        text: expect.stringContaining('First call security_repositories, then call security_catalog'),
+      }])
+      expect(root.steered[0]?.content).toEqual([{
+        type: 'text',
+        text: expect.stringContaining('review package lifecycle scripts'),
+      }])
+      expect(fixture.ctx.tools.get('security_repositories')?.description).toContain(
+        'First step for a top-level standalone security assessment',
+      )
     } finally {
       await fixture.dispose()
     }

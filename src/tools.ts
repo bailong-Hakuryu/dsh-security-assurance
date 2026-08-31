@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
-import { HarnessError } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-commands'
+import { createUserMessage, HarnessError } from '@deepseek-ai/dsh-llm'
 import { defineTool, type GenericCallView, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import {
   cancelAssessmentRequestSchema,
@@ -31,6 +32,18 @@ import {
   resolveTrustedInvocation,
   type SecurityPermission,
 } from './internal/authority.ts'
+
+export const SECURITY_COMMAND_NAME = 'security'
+
+/** Build the model-visible routing request owned by the explicit `/security` command. */
+export function securityCommandPrompt(scope: string): string {
+  return [
+    'Run a standalone Security Assurance assessment for the current workspace.',
+    'First call security_repositories, then call security_catalog with an ENABLED repositoryId. Select only a supported mode, subject, target, profile, and stronger controls from those results; never guess identifiers or repository paths.',
+    'Start the assessment with a fresh stable idempotency key, query status to a terminal or blocked state without busy polling, and report the authoritative coverage, verdict, and redacted findings.',
+    ...(scope.length === 0 ? [] : ['', 'User-requested scope:', scope]),
+  ].join('\n')
+}
 
 /** Model-safe projection of one accepted Assessment start. */
 export interface SecurityAssessmentStartReceiptV1 {
@@ -757,7 +770,11 @@ const SecurityAssuranceTools = {
   apply(ctx: Context): void {
     ctx.tools.register(defineTool({
       name: 'security_repositories',
-      description: 'List the bounded, path-free Security Repository choices visible to the calling Harness '
+      description: 'First step for a top-level standalone security assessment when the user explicitly asks to '
+        + 'audit, scan, or assess repository security. When an Engineering Control Plane Mission already owns '
+        + 'the work, rely on its configured Assurance Provider instead of starting a duplicate standalone '
+        + 'assessment unless the user explicitly requests one. List the bounded, path-free Security Repository '
+        + 'choices visible to the calling Harness '
         + 'session. Use an ENABLED repositoryId from this result with security_catalog and '
         + 'security_assessment_start. This tool never returns repository roots, root digests, credentials, '
         + 'authority metadata, or storage handles.',
@@ -1303,6 +1320,31 @@ const SecurityAssuranceTools = {
       },
       presentCall: presentExport,
     }))
+
+    // Optional interactive surface. The command produces a normal user request
+    // so repository selection and every mutation still pass through typed tools.
+    ctx.inject(['commands'], (commandCtx) => {
+      commandCtx.commands.register({
+        name: SECURITY_COMMAND_NAME,
+        description: 'Run a standalone repository security assessment',
+        input: { hint: '[scope]' },
+        handler: ({ agent, rawInput }) => {
+          if (agent.session.header.origin === 'subagent') {
+            return { kind: 'error', text: '/security is available only in a top-level session.' }
+          }
+          agent.steer(createUserMessage({
+            content: [{ type: 'text', text: securityCommandPrompt(rawInput.trim()) }],
+            source: {
+              kind: 'plugin',
+              plugin: 'dsh-security-assurance',
+              form: 'instructions',
+              summary: 'Run a standalone Security Assurance assessment.',
+            },
+          }))
+          return { kind: 'success', text: 'Security assessment request submitted.' }
+        },
+      })
+    })
   },
 }
 

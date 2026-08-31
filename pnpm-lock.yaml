@@ -27,6 +27,9 @@ importers:
       '@deepseek-ai/dsh-api-gateway':
         specifier: link:../deepseek-harness-latest/packages/api/gateway
         version: link:../deepseek-harness-latest/packages/api/gateway
+      '@deepseek-ai/dsh-commands':
+        specifier: link:../deepseek-harness-latest/packages/interaction/commands
+        version: link:../deepseek-harness-latest/packages/interaction/commands
       '@deepseek-ai/dsh-home-paths':
         specifier: link:../deepseek-harness-latest/packages/util/home-paths
         version: link:../deepseek-harness-latest/packages/util/home-paths

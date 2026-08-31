@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-rc.9] - 2026-08-31
+
+- Route explicit top-level security audit requests through the catalog-first
+  Security tool workflow while avoiding duplicate standalone assessments for
+  Control Plane-owned work.
+- Add the `/security [scope]` Web/CLI command, which submits a normalized
+  standalone Assessment request and rejects delegated-role invocation.
+
 ## [0.1.0-rc.8] - 2026-08-30
 
 - Re-derive coverage digests and Policy bindings at the seal-readiness seam.

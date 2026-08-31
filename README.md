@@ -6,7 +6,7 @@ Harness and Cordis seams and does not modify Harness Core.
 
 ## v0.1 release candidate status
 
-Version `0.1.0-rc.8` is the directly usable v0.1 candidate for Harness
+Version `0.1.0-rc.9` is the directly usable v0.1 candidate for Harness
 `0.1.2-alpha.1`. It is
 intended for acceptance and release-gate verification. Stable `0.1.0`
 promotion is limited to version, signature, and release metadata after the
@@ -57,7 +57,7 @@ change may be folded into that promotion. The candidate proves:
   `recordRiskDecision`, `resumeAssessment`, and `cancelAssessment` without putting a Principal, permissions, or Security
   Invocation on the wire;
 - legacy Workbench browser source retained for future migration, but deliberately
-  excluded from the `0.1.0-rc.8` package because Harness `0.1.2-alpha.1` no longer
+  excluded from the `0.1.0-rc.9` package because Harness `0.1.2-alpha.1` no longer
   publishes the client-runtime preset it was built against. Direct Web users
   instead receive Harness's generic cards for the eight registered model tools.
   The legacy source previously provided one transient
@@ -803,7 +803,7 @@ Repository using public identifier configuration:
 ```yaml
 assuranceProviders:
   - providerId: dsh/security-assurance
-    providerVersion: 0.1.0-rc.8
+    providerVersion: 0.1.0-rc.9
     activation: required
     configuration:
       repositoryId: repo-00000000-0000-4000-8000-000000000000
@@ -865,17 +865,22 @@ commands from the Git repository that users want the plugins to govern; the
 launcher cwd becomes the `current-workspace` binding automatically.
 
 ```powershell
-dsh plugin --profile web add D:\path\to\dsh-engineering-control-plane-0.1.7.tgz
-dsh plugin --profile web add D:\path\to\dsh-security-assurance-0.1.0-rc.8.tgz
+dsh plugin --profile web add D:\path\to\dsh-engineering-control-plane-0.1.9.tgz
+dsh plugin --profile web add D:\path\to\dsh-security-assurance-0.1.0-rc.9.tgz
 dsh --profile web --dump-config
 dsh web
 ```
 
 No manual Repository UUID or profile activation patch is required. In the Web
-conversation, users can ask the model to call `security_repositories` and
-`security_catalog`, start an Assessment with `security_assessment_start`, or
-create a governed engineering Mission with `mission_start`. Harness renders the
-eight Security tools and the Mission tools with its generic tool cards.
+conversation, users can ask for a security audit in natural language or use
+`/security [scope]`; both routes direct the model through
+`security_repositories`, `security_catalog`, and `security_assessment_start`
+without guessing identifiers. Use `/mission <objective>` for governed
+engineering work. A Control Plane Mission invokes its configured Security
+Assurance Provider itself, so the natural-language router does not start a
+duplicate standalone Assessment unless the user explicitly requests one.
+Harness renders the eight Security tools and the Mission tools with its generic
+tool cards.
 
 ## Development
 
