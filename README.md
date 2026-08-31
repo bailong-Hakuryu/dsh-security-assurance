@@ -5,6 +5,10 @@
 [![Release](https://img.shields.io/github/v/release/bailong-Hakuryu/dsh-security-assurance?display_name=tag)](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+<p align="center">
+  <img src="assets/hero-security-assurance.png" alt="安全评估主视觉" width="100%">
+</p>
+
 ## 中文
 
 ### 这是什么
@@ -12,6 +16,10 @@
 <code>dsh-security-assurance</code> 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供证据驱动的仓库安全评估。它通过公开的 Harness/Cordis 接口接入，不修改 Harness Core，并把评估过程封装为可查询、可恢复、可审计的版本化结果。
 
 这是一个安全保障插件，不是通用漏洞扫描器。当前内建策略针对 Node 项目的 <code>package.json</code> 安装生命周期键存在性进行检查。
+
+<p align="right">
+  <img src="assets/mascot-sticker.png" alt="安全评估角色贴纸" width="220">
+</p>
 
 ### 当前版本
 
