@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+- Add public Linux and Windows CI, and make linting part of the release gate.
+- Retry transient Windows directory locks while reaping abandoned Subject
+  staging trees, with deterministic regression coverage.
+- Derive the packed-profile provider-version assertion from the package
+  manifest and align the current Harness qualification documentation.
+
 ## [0.1.0-rc.10] - 2026-08-31
 
 - Route Subject Freeze Git operations through the Harness-managed subprocess

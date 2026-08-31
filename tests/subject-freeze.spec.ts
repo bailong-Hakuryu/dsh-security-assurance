@@ -1,5 +1,7 @@
 import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +10,7 @@ import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import { referenceHostInvocation } from './support/reference-host.ts'
+import { reapSubjectStaging } from '../src/internal/subject-freeze.ts'
 
 const run = promisify(execFile)
 const temporaryRoots: string[] = []
@@ -31,6 +34,33 @@ async function repositoryFixture(): Promise<string> {
 }
 
 describe('SecurityAssuranceService immutable Subject Freeze', () => {
+  it('retries a transient Windows directory lock while reaping abandoned Subject staging', async () => {
+    if (process.platform !== 'win32') return
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-security-subject-reap-'))
+    temporaryRoots.push(securityRoot)
+    const stagingRoot = join(securityRoot, 'staging', `subject-${randomUUID()}`)
+    await mkdir(stagingRoot, { recursive: true })
+    await writeFile(join(stagingRoot, 'pending.txt'), 'non-authoritative staging\n', 'utf8')
+    const holder = spawn(process.execPath, [
+      '-e',
+      'process.stdout.write("ready\\n"); setTimeout(() => {}, 150)',
+    ], {
+      cwd: stagingRoot,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'inherit'],
+    })
+    if (holder.stdout === null) throw new Error('directory-lock fixture stdout is unavailable')
+    await once(holder.stdout, 'data')
+
+    try {
+      await reapSubjectStaging(securityRoot)
+      await expect(readFile(join(stagingRoot, 'pending.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      if (holder.exitCode === null) holder.kill()
+      if (holder.exitCode === null) await once(holder, 'exit')
+    }
+  })
+
   it('publishes a content-addressed Workspace Snapshot before creating the Assessment', async () => {
     const repository = await repositoryFixture()
     const workspaceFile = join(repository, 'src', 'workspace.ts')

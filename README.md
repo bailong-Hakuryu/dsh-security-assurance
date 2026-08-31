@@ -138,6 +138,7 @@ dsh web
 
 ~~~powershell
 pnpm install
+pnpm lint
 pnpm typecheck
 pnpm build
 pnpm test
@@ -146,7 +147,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-当前 <code>v0.1.0-rc.10</code> 发布门禁已通过：70 个测试文件、348 个测试，类型检查、构建、打包和 Harness Profile smoke 均通过。
+当前 <code>main</code> 分支发布门禁已通过：70 个测试文件、349 个测试，静态检查、类型检查、构建、打包和 Harness Profile smoke 均通过。
 
 完整领域模型见 [CONTEXT.md](CONTEXT.md)，安全政策见 [SECURITY.md](SECURITY.md)，候选版审查见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
@@ -218,6 +219,7 @@ Engineering Control Plane owns the Mission, engineering Evidence, and final Qual
 
 ~~~powershell
 pnpm install
+pnpm lint
 pnpm typecheck
 pnpm build
 pnpm test
@@ -226,7 +228,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-Release <code>v0.1.0-rc.10</code> passed with 70 test files and 348 tests, including typecheck, build, packaging, and Harness profile smoke.
+The current <code>main</code> branch gate passes with 70 test files and 349 tests, including linting, typecheck, build, packaging, and Harness profile smoke.
 
 </details>
 

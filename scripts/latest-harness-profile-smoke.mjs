@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -18,6 +18,7 @@ const repositoryRoot = join(temporaryRoot, 'repository')
 const dshHome = join(temporaryRoot, 'dsh-home')
 const npmCache = join(temporaryRoot, 'npm-cache')
 const commandEnvironment = { ...process.env, DSH_HOME: dshHome }
+const packageManifest = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8'))
 
 function executeNpm(args, options) {
   if (process.platform === 'win32') {
@@ -206,9 +207,17 @@ try {
   await runHarness(['plugin', '--profile', 'web', 'add', securityTarball])
 
   const dump = await runHarness(['--profile', 'web', '--dump-config'])
+  const providerVersionLines = dump.stdout
+    .split(/\r?\n/u)
+    .map(line => line.trim())
+    .filter(line => line.startsWith('providerVersion:'))
   assert.match(dump.stdout, /# == dsh-engineering-control-plane/u)
   assert.match(dump.stdout, /name: dsh-engineering-control-plane\/tools/u)
-  assert.match(dump.stdout, /providerVersion: 0\.1\.0-rc\.9/u)
+  assert.equal(
+    providerVersionLines.includes(`providerVersion: ${packageManifest.version}`),
+    true,
+    `Security Assurance provider version did not match package.json; observed: ${providerVersionLines.join(', ')}`,
+  )
   assert.match(dump.stdout, /repositoryBindingId: current-workspace/u)
   assert.match(dump.stdout, /# == dsh-security-assurance/u)
   assert.match(dump.stdout, /name: dsh-security-assurance\/tools/u)

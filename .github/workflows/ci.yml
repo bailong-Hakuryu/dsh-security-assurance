@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            harness_build: build
+            profile_smoke: true
+          - os: windows-latest
+            harness_build: build:lib
+            profile_smoke: false
+
+    steps:
+      - name: Check out Security Assurance
+        uses: actions/checkout@v6
+        with:
+          path: plugin
+          persist-credentials: false
+
+      # Development and packed-profile checks use the same qualified sibling
+      # layout as the release gate. Harness is immutable; Control Plane stays
+      # on main until its rc.10 provider binding has a new release tag.
+      - name: Check out qualified Harness
+        uses: actions/checkout@v6
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: dsh-v0.1.2-alpha.1
+          path: deepseek-harness-latest
+          persist-credentials: false
+
+      - name: Check out qualified Control Plane
+        uses: actions/checkout@v6
+        with:
+          repository: bailong-Hakuryu/dsh-engineering-control-plane
+          ref: main
+          path: DSH Engineering Control Plane
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+          cache-dependency-path: |
+            plugin/pnpm-lock.yaml
+            deepseek-harness-latest/pnpm-lock.yaml
+            DSH Engineering Control Plane/pnpm-lock.yaml
+
+      - name: Install Harness dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: deepseek-harness-latest
+
+      - name: Build Harness fixture
+        run: pnpm ${{ matrix.harness_build }}
+        working-directory: deepseek-harness-latest
+
+      - name: Install Control Plane dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: DSH Engineering Control Plane
+
+      - name: Install Security Assurance dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: plugin
+
+      - name: Lint
+        run: pnpm lint
+        working-directory: plugin
+
+      - name: Typecheck
+        run: pnpm typecheck
+        working-directory: plugin
+
+      - name: Test
+        run: pnpm test
+        working-directory: plugin
+
+      - name: Build
+        run: pnpm build
+        working-directory: plugin
+
+      - name: Inspect packed artifact
+        run: pnpm pack:dry-run
+        working-directory: plugin
+
+      - name: Run packed Harness profile smoke
+        if: matrix.profile_smoke
+        run: pnpm pack:profile-smoke
+        working-directory: plugin

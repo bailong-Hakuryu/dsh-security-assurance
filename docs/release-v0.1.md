@@ -3,7 +3,7 @@
 ## Candidate
 
 - Package: `dsh-security-assurance`
-- Candidate version: `0.1.0-rc.4`
+- Candidate version: `0.1.0-rc.10`
 - Qualified Harness target: `0.1.2-alpha.1`
 - Node.js: `^22.19.0 || >=24.0.0`
 - License: MIT
@@ -20,8 +20,8 @@ Run the complete local gate with:
 pnpm release:check
 ```
 
-It covers type checking, the full current-Harness deterministic test suite, a
-clean build, npm pack inspection, and a fresh Harness `0.1.2-alpha.1` Web
+It covers linting, type checking, the full current-Harness deterministic test
+suite, a clean build, npm pack inspection, and a fresh Harness `0.1.2-alpha.1` Web
 profile that installs both packed bundles, composes their active rows, boots a
 clean Git repository, completes browser-token authentication, and serves the
 Web page. Legacy `0.1.1-rc.2` consumer and browser scenarios remain available

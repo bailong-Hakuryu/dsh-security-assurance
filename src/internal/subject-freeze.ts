@@ -34,6 +34,8 @@ const MAX_ANALYZER_SLICE_BYTES = 1024 * 1024
 const MAX_ANALYZER_SOURCE_BYTES = 4 * 1024 * 1024
 const TARGET_SELECTOR_MEDIA_TYPE = 'application/vnd.dsh.security.target-selector+json'
 const WINDOWS_RENAME_RETRY_DELAYS_MS = [5, 10, 25, 50, 100, 200] as const
+const SUBJECT_STAGING_REMOVE_MAX_RETRIES = 6
+const SUBJECT_STAGING_REMOVE_RETRY_DELAY_MS = 25
 
 export type SubjectFreezeErrorCode =
   | 'invalid_subject'
@@ -139,7 +141,12 @@ export async function reapSubjectStaging(securityRoot: string): Promise<void> {
   }
   await Promise.all(entries
     .filter(entry => entry.isDirectory() && /^subject-[0-9a-f-]{36}$/u.test(entry.name))
-    .map(entry => rm(join(stagingParent, entry.name), { recursive: true, force: true })))
+    .map(entry => rm(join(stagingParent, entry.name), {
+      recursive: true,
+      force: true,
+      maxRetries: SUBJECT_STAGING_REMOVE_MAX_RETRIES,
+      retryDelay: SUBJECT_STAGING_REMOVE_RETRY_DELAY_MS,
+    })))
 }
 
 interface GitTreeEntry {

@@ -72,6 +72,9 @@ importers:
       dsh-engineering-control-plane:
         specifier: link:../DSH Engineering Control Plane
         version: link:../DSH Engineering Control Plane
+      oxlint:
+        specifier: link:../deepseek-harness-latest/node_modules/oxlint
+        version: link:../deepseek-harness-latest/node_modules/oxlint
       tsdown:
         specifier: ^0.22.2
         version: 0.22.14(typescript@6.0.3)

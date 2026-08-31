@@ -22,7 +22,8 @@ The implementation MUST:
 - keep the Security Assessment Kernel, Engine, stores, scheduler, and
   transaction machinery package-private;
 - install every runtime entry dormant by default; and
-- qualify the exact Harness version `0.1.1-rc.2` on Node `^22.19 || >=24`.
+- qualify the exact Harness version `0.1.2-alpha.1` on Node
+  `^22.19.0 || >=24.0.0`.
 
 The implementation MUST NOT:
 
@@ -44,15 +45,15 @@ Primary boundary decisions: ADR 0001, 0002, 0100, 0101, 0235, and 0236.
 | Cordis Service key | `securityAssurance` |
 | Context property | `ctx.securityAssurance` |
 | Remote namespace | `securityAssurance` |
-| qualified Harness target | `0.1.1-rc.2` exactly |
-| Node range | `^22.19 || >=24` |
+| qualified Harness target | `0.1.2-alpha.1` exactly |
+| Node range | `^22.19.0 || >=24.0.0` |
 | first public candidate | `0.1.0-rc.1` |
-| current candidate package version | `0.1.0-rc.1` |
+| current candidate package version | `0.1.0-rc.10` |
 | module format | ESM |
 | JavaScript target | ES2024 |
 
 Development builds remain private and MUST NOT claim the public RC version.
-The qualified candidate uses `0.1.0-rc.1`; promotion to stable `0.1.0` follows
+The qualified candidate uses `0.1.0-rc.10`; promotion to stable `0.1.0` follows
 ADR 0087 and changes only version, signature, and release metadata.
 The final package is one installation unit with independent entry points:
 
@@ -405,7 +406,7 @@ complete merely because its internal classes exist.
 ### Phase 7 — release proof
 
 - pack the exact npm artifact;
-- install into a fresh unmodified Harness `0.1.1-rc.2` profile;
+- install into a fresh unmodified Harness `0.1.2-alpha.1` profile;
 - activate only declared rows;
 - run lifecycle, compatibility, filesystem, subprocess, sandbox, crash,
   migration, and cross-platform suites;
