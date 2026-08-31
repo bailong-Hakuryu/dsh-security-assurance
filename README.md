@@ -17,10 +17,6 @@
 
 这是一个安全保障插件，不是通用漏洞扫描器。当前内建策略针对 Node 项目的 <code>package.json</code> 安装生命周期键存在性进行检查。
 
-<p align="right">
-  <img src="assets/mascot-sticker.png" alt="安全评估角色贴纸" width="220">
-</p>
-
 ### 当前版本
 
 - 版本：<code>0.1.0-rc.9</code>
