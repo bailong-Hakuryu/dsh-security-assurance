@@ -117,7 +117,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && tsdown && node scripts/generate-typert.mjs",
-    "lint": "oxlint src tests --deny-warnings",
+    "lint": "oxlint src tests scripts/latest-harness-profile-smoke.mjs --deny-warnings",
     "prepack": "pnpm build",
     "test": "vitest run",
     "test:watch": "vitest",

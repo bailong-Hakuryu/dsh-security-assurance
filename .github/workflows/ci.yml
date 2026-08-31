@@ -16,18 +16,15 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify (${{ matrix.os }})
+    name: Verify and fresh-install (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            harness_build: build
-            profile_smoke: true
-          - os: windows-latest
-            harness_build: build:lib
-            profile_smoke: false
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
 
     steps:
       - name: Check out Security Assurance
@@ -75,7 +72,7 @@ jobs:
         working-directory: deepseek-harness-latest
 
       - name: Build Harness fixture
-        run: pnpm ${{ matrix.harness_build }}
+        run: pnpm build
         working-directory: deepseek-harness-latest
 
       - name: Install Control Plane dependencies
@@ -107,6 +104,5 @@ jobs:
         working-directory: plugin
 
       - name: Run packed Harness profile smoke
-        if: matrix.profile_smoke
         run: pnpm pack:profile-smoke
         working-directory: plugin

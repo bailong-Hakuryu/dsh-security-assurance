@@ -2,7 +2,8 @@
 
 ## [Unreleased]
 
-- Add public Linux and Windows CI, and make linting part of the release gate.
+- Add public Linux, macOS, and Windows CI with a fresh packed-profile
+  installation and live Web probe, and make linting part of the release gate.
 - Retry transient Windows directory locks while reaping abandoned Subject
   staging trees, with deterministic regression coverage.
 - Derive the packed-profile provider-version assertion from the package

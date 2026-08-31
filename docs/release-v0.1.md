@@ -24,8 +24,9 @@ It covers linting, type checking, the full current-Harness deterministic test
 suite, a clean build, npm pack inspection, and a fresh Harness `0.1.2-alpha.1` Web
 profile that installs both packed bundles, composes their active rows, boots a
 clean Git repository, completes browser-token authentication, and serves the
-Web page. Legacy `0.1.1-rc.2` consumer and browser scenarios remain available
-as non-release compatibility checks. The exact delivered tarball and source
+Web page. Public CI repeats this packed-installation gate on Ubuntu, macOS, and
+Windows. Legacy `0.1.1-rc.2` consumer and browser scenarios remain available as
+non-release compatibility checks. The exact delivered tarball and source
 revision are recorded in the external delivery manifest.
 
 For final artifact verification, the packed scripts accept absolute artifact
