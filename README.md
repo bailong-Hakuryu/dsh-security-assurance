@@ -1,937 +1,227 @@
 # DSH Security Assurance
 
-DSH Security Assurance is an independent DeepSeek Harness plugin for
-evidence-backed application-security assessment. It integrates through public
-Harness and Cordis seams and does not modify Harness Core.
+> DeepSeek Harness 的策略驱动仓库安全评估插件 · 中文默认，English below
 
-## v0.1 release candidate status
+[![Release](https://img.shields.io/github/v/release/bailong-Hakuryu/dsh-security-assurance?display_name=tag)](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Version `0.1.0-rc.9` is the directly usable v0.1 candidate for Harness
-`0.1.2-alpha.1`. It is
-intended for acceptance and release-gate verification. Stable `0.1.0`
-promotion is limited to version, signature, and release metadata after the
-exact candidate artifact passes every required gate; no unqualified behavior
-change may be folded into that promotion. The candidate proves:
+## 中文
 
-- dormant bundle installation metadata;
-- real Cordis registration at `ctx.securityAssurance`;
-- an opaque, runtime-verified Security Invocation boundary;
-- authorized Runtime Health, Repository Registry, Assessment start/query/wait,
-  effective Security Catalog and digest-bound Start Preflight, Finding Summary
-  and Detail, purpose-bound Evidence View, Bundle Manifest, and Assurance
-  Submission operations;
-- an independently activatable `dsh-security-assurance/tools` Consumer with
-  bounded `security_repositories`, `security_catalog`,
-  `security_assessment_start`, read-only `security_assessment_status`
-  and `security_assessment_findings`, and revision-bound
-  `security_assessment_resume` and `security_assessment_cancel`, plus bounded
-  `security_assessment_export` model tools. They derive the exact live Harness
-  session outside model arguments, mint one operation-specific permission, and
-  delegate all Assessment validation, pagination, redaction, recovery,
-  cancellation, delivery, and state transitions to the root Service;
-- versioned Zod-validated public contracts;
-- a side-effect-free `dsh-security-assurance/evaluation` entry containing the
-  first pure versioned Metrics Engine slice. It calculates Critical/High and
-  severity-weighted Validated Recall, Validated Precision, Unsafe Satisfaction
-  Rate, and Coverage Honesty Rate from strict independently adjudicated
-  Evaluation evidence;
-- one `SecurityResult<T>` success/failure envelope;
-- redacted authorization, validation, cancellation, deadline, and internal
-  failures;
-- a plugin-private SQLite Registry with immutable revisions, idempotent
-  Receipts, exact Revision CAS, fail-closed startup validation, and restart
-  recovery;
-- explicit register, get, list, update, and non-destructive disable behavior;
-- a trusted `dsh-security-assurance/host-repository-provider` composition entry
-  that registers Host configuration through the root Service and resolves only
-  immutable path-free Repository bindings;
-- a package-owned `dsh-security-assurance/workbench-remote` Host Adapter plus
-  generated strict `dsh-security-assurance/typert` and
-  `dsh-security-assurance/remote` artifacts. Its headless Workbench slice
-  exposes authority-projected Runtime Health, Repository and Assessment selection,
-  effective `getHealth`, `getCatalog`, digest-bound `startAssessment`, exact `getAssessment`,
-  integrity-verified `getBundleManifest`, path-free `getRepository`,
-  revision-bound Finding queries, strict metadata-only
-  `getEvidenceView`, separate expiring `discloseEvidence`, bounded
-  `waitForAssessmentRevision`, and revision-bound, idempotent
-  `recordRiskDecision`, `resumeAssessment`, and `cancelAssessment` without putting a Principal, permissions, or Security
-  Invocation on the wire;
-- legacy Workbench browser source retained for future migration, but deliberately
-  excluded from the `0.1.0-rc.9` package because Harness `0.1.2-alpha.1` no longer
-  publishes the client-runtime preset it was built against. Direct Web users
-  instead receive Harness's generic cards for the eight registered model tools.
-  The legacy source previously provided one transient
-  `ctx.securityAssuranceWorkbench` Controller. It opens authenticated Runtime Health,
-  redacted Repository and Assessment selectors, builds the New Assessment Wizard only
-  from Catalog choices, confirms immutable Start Preflight proposals, fetches immutable Snapshots,
-  follows committed revisions through cancellable long-polling, fences stale
-  responses and disclosure attempts, opens metadata only from an exact Finding
-  Evidence Link, separately reauthorizes purpose-bound bounded content,
-  validates every returned identity, byte, and expiry binding, and submits only
-  exact Service-projected Risk Decision options with fresh idempotency before
-  refetching committed truth, and renders verified SEALED Bundle metadata with
-  registered Delivery Destination IDs. It erases its authority context and Assessment
-  payload on close.
-  The same entry contributes an additive bilingual launcher at
-  `sidebar.footer.action` and a responsive Assessment surface at
-  `shell.overlay`; the browser renders Service-projected state, Coverage,
-  Verdict, available actions, bounded Evidence disclosure, and the governed
-  Risk Decision form without accepting a browser-authored decision-maker. A
-  `BLOCKED` Snapshot also carries bounded recovery metadata for the durable
-  blocker, affected obligations, retained Evidence, required recovery
-  condition, unreported execution budget, and possible Coverage
-  Reconciliation; Resume and Cancel forms exist only when the corresponding
-  Service action is projected;
-- exact Git revision, Change, and Workspace Snapshot Subject selectors;
-- bounded content-addressed Subject materialization below
-  `$DSH_HOME/security-assurance/subjects`, with canonical manifests and no
-  ordinary hard links to source content;
-- non-expanding symlink and submodule inventory; and
-- atomic ordering in which Subject Freeze succeeds before an Assessment ID and
-  durable creation Receipt are committed;
-- a deterministic package-private Assessment path with durable
-  `CREATED → RUNNING → SEALED` revisions;
-- a pure Policy Evaluator and independent seal-readiness check;
-- one versioned, built-in Pure Analyzer for the explicitly scoped
-  `security/node-package-lifecycle` Policy, with a frozen Descriptor,
-  development Qualification, bounded authority-free source slices, and no
-  process, network, model, credential, or workspace access;
-- a side-effect-free `dsh-security-assurance/analyzer` Contract Entry and a
-  local startup-composition Registry keyed by exact Analyzer ID and version;
-- frozen external Analyzer Descriptors, per-Assessment portfolios, bounded
-  path-free Inputs, Attempt-scoped instances, and mandatory instance disposal;
-- fail-closed external Contribution admission: identity, Subject digest,
-  Coverage obligation, and Evidence schema mismatches block the Assessment;
-- sealed advisory Evidence from unqualified external Pure Analyzers while
-  mandatory Coverage remains a visible `EVIDENCE_INELIGIBLE` Gap and the
-  Verdict remains `INDETERMINATE`;
-- Host-trusted, canonical-digest-bound external Analyzer Qualification Records
-  covering exact Analyzer build, Policy, Mode, Coverage, Evidence schemas,
-  execution backend, Provider, egress, platform, issuance, and expiry;
-- frozen per-Assessment Eligibility Decisions: qualified external Evidence and
-  Findings remain visible, but a generic external clean claim stays Advisory;
-  only the package-owned reference-validation contract can independently bind
-  its exact Candidate Evidence to the frozen Subject and Policy;
-- versioned external Candidate Finding contracts with bounded weakness,
-  Security Claim, Source Anchor, JSON Pointer, and contributed-Evidence links;
-- one exact deterministic Conformance Validation Contract that independently
-  verifies immutable Subject and file digests, unique JSON security keys, the
-  declared JSON Pointer, and the exact reference-control state against matching
-  validation Evidence or Counter-Evidence;
-- separate Candidate Admission, Validation Contract Resolution, validation
-  Evidence Eligibility, Validation Outcome, Technical Severity, Evidence
-  Confidence, and Policy Significance records; and
-- immutable Candidate tri-state resolution under that Contract: eligible proof
-  of `VIOLATED` produces `VALIDATED` and a blocking Finding, eligible
-  Counter-Evidence proving `SATISFIED` produces `REJECTED` without a Finding,
-  and contradictory or otherwise ineligible Evidence produces `UNRESOLVED`
-  with an explicit Proof Gap and `INDETERMINATE` Verdict;
-- versioned `listFindings` projections that keep validated Findings, Rejected
-  Candidates, and Unresolved Candidates visibly distinct while omitting Source
-  Anchors, Security Claims, and Evidence payloads; Validation-state filtering
-  occurs before bounded pagination, and HMAC-protected cursors bind the exact
-  Assessment, Repository, sealed revision, page size, filter, and Security
-  Principal;
-- revision-bound `getFinding` Detail Views that project canonical Subject-
-  relative Source Anchors, exact tri-state Validation Outcome and Contract
-  lineage, separate Severity/Confidence/Policy dimensions, Coverage and Risk
-  status, and digest-bound Evidence Link metadata without returning Evidence
-  values or read capabilities;
-- an opt-in frozen `security/risk-decision-window-v1` stronger control that
-  persists validated Findings and verified Evidence before opening an explicit
-  pre-Seal `BLOCKED` window. Authorized `recordRiskDecision` commands bind the
-  exact Assessment and Finding revisions, derive the decision maker only from
-  the opaque Security Invocation, commit immutable idempotent Receipts, and
-  prevent `resumeAssessment` from bypassing the window;
-- deterministic ordinary Risk Denial and non-Critical Risk Acceptance: denial
-  preserves the blocking Policy Significance and `FAILED` Verdict, while an
-  eligible time-bounded acceptance requires compensating controls, retains
-  Technical Severity, changes only Policy Significance to `NON_BLOCKING`, and
-  may produce `SATISFIED` only with complete mandatory Coverage. Risk Decision
-  records are digest-bound into the final Seal, Bundle, and Submission;
-- separately enabled Critical break-glass under the frozen
-  `security/critical-break-glass-v1` stronger control. The first qualified
-  human approval records only a durable `PENDING_DUAL_AUTHORITY` attestation;
-  acceptance becomes effective only after a second independently authenticated
-  Host Operator with a distinct principal submits the exact same rationale,
-  controls, expiry, Assessment revision successor, and Finding identity. Both
-  authorization attestations and the exact Subject/Policy scope survive restart
-  and are bound into the final Seal;
-- authority- and revision-specific `availableActions` on every
-  `getAssessment` Snapshot. Read-only callers and terminal Assessments receive
-  no mutation actions; currently admissible Resume, Cancel, ordinary Risk
-  Decision, Critical first-attestation, and distinct-principal second-
-  attestation actions carry exact expected revisions and Finding identities.
-  Risk options state their effect, authorization mode, control minimum, expiry
-  ceiling, completed/required attestations, and whether the pending form must
-  match exactly. The Workbench renders these Service projections directly;
-  they are not browser-inferred authority or a model Risk Acceptance tool;
-- revision-bound `getEvidenceView` projections that require exact Assessment,
-  consuming Finding revision, Evidence artifact, and digest identity. The
-  metadata-only Profile needs Assessment read authority and always redacts
-  content; the bounded-json Profile additionally requires the purpose-specific
-  `evidence:disclose:validation-review` authority, `VALIDATION_REVIEW` purpose,
-  an available frozen protection policy, an allowlisted Evidence schema, and a
-  32 KiB canonical JSON limit. Denied or unavailable content remains a
-  structured redacted View without Store paths, keys, unrestricted sources, or
-  reusable read capabilities;
-- blocking-Finding precedence proving a qualified validated Reference Candidate
-  seals as `FAILED` with complete Coverage without allowing the Analyzer to set
-  Finding, Severity, Significance, or Verdict directly;
-- staged, content-addressed publication of Analyzer Contribution, redacted Node
-  package-manifest Evidence, and Evidence Eligibility Decision before sealing;
-- deterministic tri-state results for that scoped Policy: complete eligible
-  Evidence with no forbidden install lifecycle script is `SATISFIED`, a
-  validated forbidden `preinstall/install/postinstall` control is `FAILED`, and
-  unsupported or malformed inputs remain `INDETERMINATE`;
-- blocking-Finding precedence over incomplete Coverage while every remaining
-  Coverage Gap stays visible;
-- honest default-Policy reconciliation: because the general application-
-  security obligation still has no complete qualified Analyzer portfolio, it
-  remains `INDETERMINATE`, never a fabricated success;
-- atomic persistence of Verdict, Assessment Seal, Bundle Manifest, and
-  self-contained Assurance Submission at one terminal revision;
-- content-addressed private Bundle publication with verification on every
-  official read;
-- fail-closed restart and integrity behavior: interrupted `RUNNING` work becomes
-  `BLOCKED`, sealed work is not rerun, and modified publication bytes are not
-  served;
-- explicit revision-bound, idempotent `resumeAssessment` and `cancelAssessment`
-  commands: resume admits a replacement execution without changing Subject or
-  Policy, while cancellation persists intent before quiescence and commits
-  `CANCELED` only afterward;
-- an optional `dsh-security-assurance/control-plane-provider` Cordis entry that
-  registers exact Provider identity `dsh/security-assurance`, starts and waits
-  for the same private Assessment Engine, and returns a Control Plane transport
-  Submission by value; and
-- real dual-plugin Gate coverage proving `SATISFIED → requirement satisfied`,
-  `FAILED → REWORK_REQUIRED`, `INDETERMINATE → BLOCKED`, and a missing Repository
-  binding → fail-closed `BLOCKED`; and
-- real dual-plugin cancellation coverage proving explicit Mission cancellation
-  records the external Assessment identity and leaves that same Assessment
-  `CANCELED` without Verdict or Seal, including restart reconciliation when the
-  Security commit precedes Control Plane Invocation termination; and
-- historical packed Harness `0.1.1-rc.2` profile proof for `disabled`, absent
-  `when-available`, absent `required`, valid required integration, Adapter
-  unload, and full profile restart; and
-- packed fail-closed Gate proof for a real Security `FAILED → REWORK_REQUIRED`,
-  a real Security `INDETERMINATE → BLOCKED`, a digest-tampered Submission that
-  is rejected before Evidence import, and a frozen Provider that disappears
-  mid-Attempt without falling back to another registered version; and
-- historical packed Harness `0.1.1-rc.2` Reference Host driven through a real
-  Chrome-family browser. The scenario proves Host-authenticated selection,
-  keyboard/focus behavior, Runtime Health, digest-bound start, `BLOCKED` Risk
-  Denial, sealed metadata-first Evidence and explicit bounded disclosure,
-  bilingual responsive rendering, reload, offline/reconnect, denied authority,
-  browser-state and remote-resource redaction, and Host lifecycle shutdown.
+### 这是什么
 
-Production-qualified external Analyzers, process or agent Analyzers, general
-Node and application-security coverage, the complete protected Evidence Store,
-and the complete Workbench information architecture are deliberately not
-claimed as implemented yet. The Workbench Host Remote, authenticated redacted Assessment selection
-with stable cursor continuation, generated Client contract, transient browser
-Controller, Runtime Health, Repositories and digest-bound New Assessment flow, read-only Assessment Detail, multidimensional Finding triage,
-revision-bound Finding Detail navigation, bilingual metadata-first Evidence,
-explicit expiring bounded-content disclosure, a governed Risk Decision form
-with Critical Dual Authority completion, and a read-only SEALED Bundle/Export
-readiness view are implemented. Service-derived Export Preview, `requestExport`,
-owner-bound `getExport` status, and durable delivery through the frozen
-`delivery/local-audit` adapter are also implemented. Persisted attempt metadata,
-bounded backoff, startup recovery of unfinished work, terminal failure, and
-lifecycle-owned worker shutdown keep Delivery independent of the browser. An
-expiry reaper also persists an owner-bound digest tombstone, denies access,
-deletes only the exact governed artifact file, and records physical purge
-completion. Offline expiry and interrupted cleanup are reconciled at startup. An
-explicit Workbench download resolves current Host authority again, atomically
-consumes a process-local 60-second one-use capability, verifies the exact
-artifact digest, and discards content from Workbench state after invoking the
-browser download.
-This repository ships no production external
-Qualification or external Analyzer
-effectiveness claim. Its external Candidate Validation path is deliberately
-limited to the exact `dsh/conformance/reference-control-validation-v1`
-Conformance contract and is not a general weakness validator. The built-in
-Analyzer's development Qualification applies only to the exact Node package
-install-lifecycle key-presence contract; a
-`SATISFIED` Verdict under that Policy is not a claim that the Subject is broadly
-secure.
+<code>dsh-security-assurance</code> 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供证据驱动的仓库安全评估。它通过公开的 Harness/Cordis 接口接入，不修改 Harness Core，并把评估过程封装为可查询、可恢复、可审计的版本化结果。
 
-## Implemented service surface
+这是一个安全保障插件，不是通用漏洞扫描器。当前内建策略针对 Node 项目的 <code>package.json</code> 安装生命周期键存在性进行检查。
 
-The root plugin is dormant until activated through Cordis and then exposes the
-sole business Interface at `ctx.securityAssurance`. Implemented operations are:
+### 当前版本
 
-- `getHealth`
-- `getCatalog`
-- `registerRepository`
-- `updateRepository`
-- `disableRepository`
-- `getRepository`
-- `listRepositories`
-- `startAssessment`
-- `resumeAssessment`
-- `cancelAssessment`
-- `getAssessment`
-- `listAssessments`
-- `listFindings`
-- `getFinding`
-- `getEvidenceView`
-- `recordRiskDecision`
-- `waitForAssessmentRevision`
-- `getBundleManifest`
-- `getAssuranceSubmission`
-- `requestExport`
-- `getExport`
+- 版本：<code>0.1.0-rc.9</code>
+- 状态：Release Candidate（预发布版）
+- 适配：DeepSeek Harness <code>0.1.2-alpha.1</code>
+- GitHub：[v0.1.0-rc.9 Release](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.9)
 
-Local Host composition additionally has the synchronous
-`registerAnalyzer(descriptor, factory)` and
-`registerAnalyzerQualification(record)` methods. They are not model, browser,
-or Remote operations. Registration closes when Assessment admission first
-freezes the startup-composed portfolio and its Eligibility Decisions;
-Factories, instances, disposal handles, and cancellation handles are never
-persisted.
+### 支持范围
 
-Repository roots remain private. Query Snapshots and command Receipts are
-versioned, JSON-safe, recursively immutable, and bounded. Assessment and list
-projections are path-free; a Finding Detail View may contain only a canonical
-Subject-relative Source Anchor and never an absolute Host or Store path.
+| 项目 | 当前状态 |
+| --- | --- |
+| 评估模式 | <code>REPOSITORY</code> |
+| 支持 Subject | <code>git_revision</code>、<code>workspace_snapshot</code> |
+| <code>CHANGE</code> 模式 | 暂不支持 |
+| <code>TARGETED</code> 模式 | 暂不支持 |
+| 默认策略 | <code>security/node-package-lifecycle</code> |
+| 默认档案 | <code>security/standard</code> |
+| 支持平台 | Windows、Linux、macOS |
 
-`listFindings` is available after the Assessment is sealed and during an
-explicit pre-Seal Risk Decision Window. It returns no total count and no Source
-or Evidence content. Its process-local cursor key is rotated when the Service
-restarts, so clients must restart pagination from the first page after
-reconnect instead of treating cursors as durable records.
+评估会先读取当前 Host 注册的 Repository 和 Catalog；只有 Service 返回的精确 ID、模式、Subject、Target、Profile 和强化控制才能用于启动，不允许模型猜测路径或标识符。
 
-`getFinding` is available in those same two states and requires the exact
-`assessmentRevision`, `recordId`, and `recordRevision` returned by
-`listFindings`. A mismatched revision fails with `CONFLICT`; an unknown record
-fails with `NOT_FOUND`.
-Evidence Links carry only artifact identity, schema, digest, purpose, and the
-bound Eligibility Decision. They never contain the Evidence payload and are
-not reusable disclosure capabilities.
+### 安装（Harness Web）
 
-`recordRiskDecision` is available only when the frozen stronger-control set
-contains `security/risk-decision-window-v1` and the Assessment is in its exact
-pre-Seal window revision. The request carries no identity field: the Service
-accepts only trusted Host Operator or Control Plane Decision Authority with
-`risk:decide`, and records the resolved principal from the opaque Invocation.
-Denial cannot carry controls or expiry. Ordinary acceptance requires at least
-one compensating control and a future expiry; High severity is capped at seven
-days and other currently admitted non-Critical severities at thirty days.
-Critical acceptance additionally requires both frozen stronger controls,
-Host-derived `risk:break-glass` authority, at least two compensating controls,
-and an expiry of at most 24 hours. The first approval remains visibly pending
-and cannot seal. Completion requires a new Security Invocation for a different
-qualified Host principal and an exactly matching decision form; repeated
-sessions for one principal, Control Plane authority, mismatched fields, or an
-expired first attestation fail closed without advancing the revision. Critical
-denial remains an ordinary `risk:decide` operation and never requires
-break-glass authority. Exact replay returns each authority's original Receipt
-even after sealing; key reuse with different content returns
-`IDEMPOTENCY_CONFLICT`.
+要求 Node.js <code>^22.19.0 || >=24.0.0</code> 和 DeepSeek Harness CLI。将终端当前目录设为要评估的 Git 仓库：
 
-`getEvidenceView` is also SEALED-only. Its request repeats the exact Assessment
-and Finding revisions plus the linked Evidence artifact ID and digest, then
-declares one viewing purpose and one named Profile. Cross-Finding links,
-mismatched digests, unknown Profiles, and stale revisions fail closed. The
-`security/evidence-view/metadata-only-v1` Profile returns classification,
-protection, retention, Egress, and Eligibility metadata with redacted content.
-The `security/evidence-view/bounded-json-v1` Profile may return at most 32 KiB
-of JSON only for `VALIDATION_REVIEW`, only under the dedicated trusted-channel
-permission, and only for currently allowlisted safe Evidence schemas. A
-missing permission, incompatible purpose, unavailable protection policy,
-unknown schema, or byte-limit breach produces a redacted View rather than a
-payload or read handle. Successful bounded JSON carries a Service-issued
-five-minute expiry; Clients must discard the value no later than that instant.
-
-`getAssuranceSubmission` uses the separate `assurance-submission:read`
-authority held by the Control Plane Adapter and explicitly trusted Host
-composition. Generic Assessment read authority cannot use the self-contained
-Control Plane transport Submission to bypass Evidence View authorization.
-
-`startAssessment` returns the durable revision-1 `CREATED` Receipt; it does not
-transfer ownership of the continuing run to the caller. The Engine persists
-`RUNNING` before evaluation and exposes official Bundle or Submission values
-only after all terminal records commit together as `SEALED`. The Bundle
-Manifest is a view. The Assurance Submission carries its required artifacts by
-value so the Control Plane Adapter does not need access to Security Assurance
-storage.
-
-Interrupted evaluation is never restarted during service initialization or by
-replaying `startAssessment`. An authorized caller must submit
-`resumeAssessment` against the exact `BLOCKED` revision with a bounded operator
-reason. `cancelAssessment` first returns the durable cancellation-request
-Receipt after the Service has quiesced local work and finalized the Assessment;
-that Receipt identifies the request revision and does not misrepresent it as
-the later terminal revision.
-
-## Effectiveness evaluation
-
-The `dsh-security-assurance/evaluation` entry is independent of the runtime
-Security Service and has no authority, Store, Subject, network, model, browser,
-or filesystem access. `calculateEffectivenessMetricsV1` accepts only strict
-Evaluation case identities, frozen severity weights, Ground Truth defect
-metadata, predeclared Stratum definitions, preclassified benchmark disposition
-or product failure, completed Assessment outcomes, and independently
-adjudicated Finding matches.
-
-The engine enforces unique Case, defect, and Finding identities plus one-to-one
-matches. Benchmark-invalid Cases are excluded uniformly; product timeout,
-budget exhaustion, crash, and incorrect outcome remain included measured
-results. Missing denominators and unadjudicated Findings produce explicit
-`INCONCLUSIVE` reasons rather than a fabricated zero or passing conclusion.
-The engine also requires predeclared sample floors across Severity, Weakness
-Family, Assessment Mode, and Supported Ecosystem, including distinct mandatory
-Critical and High Severity strata. It derives case or Ground Truth defect sample
-units itself, excludes Benchmark-invalid Cases uniformly, counts product
-failures, and makes every deficient Stratum explicitly `INCONCLUSIVE`. Results
-are canonically ordered, strict, recursively immutable, and calculated by the
-same pure implementation consumed by packed release tooling.
-
-For stochastic evidence, an optional frozen repetition plan names the complete
-independent repetition by Benchmark Case matrix, confidence level, and maximum
-interval width. The engine rejects undeclared or inconsistent identities,
-refuses partial matrices, and reports the mean, sample standard deviation,
-direction-aware worst result, and a deterministic two-sided Hoeffding interval
-for every primary metric. Repetitions never inflate Stratum sample counts.
-Every predeclared Stratum also freezes a validated-recall interval-width limit;
-the engine reports unweighted and severity-weighted recall distributions for
-that exact Stratum and makes the Stratum inconclusive when either bound is
-unavailable or too wide.
-
-`assembleAirGappedEvaluationV1` exposes a strict Runner input containing only an
-opaque Case and Subject handle, Subject digest, execution grant, mode, ecosystem,
-and admission time. Arm labels, Ground Truth, expected Findings, seed metadata,
-matching rules, and runner-authored adjudication are not representable through
-that interface. A separately authorized evaluator may join a sealed Ground Truth
-Manifest only after every declared Arm result is sealed and only under a matching
-contract registered before Runner admission. The assembler requires exact audit
-coverage, preserves evaluator and seal provenance, converts absent adjudications
-to explicit `UNADJUDICATED` outcomes, and invokes the same Metrics Engine itself.
-It also rejects an Arm-by-Case and nested-evidence composition above the fixed
-500,000 work-unit ceiling before deep validation, and uses indexed Finding and
-defect joins rather than multiplicative scans.
-Any access, canary, hint, or timing violation invalidates the complete Evaluation
-Run and returns no per-Arm metric output.
-
-`calculatePairedArmComparisonV1` accepts complete baseline and candidate Arm
-evidence, verifies that their frozen Evaluation design is identical, calculates
-direction-aware deltas for all five primary metrics, and retains both Arm
-results. Its Evaluation Budget contract covers wall time, model tokens and
-calls, Analyzer and Agent runs, CPU, memory, disk, network requests and outbound
-bytes, and human adjudication time. `MATCHED_BUDGET` requires every frozen
-resource ceiling to match exactly; `NATIVE_PROFILE` preserves and discloses
-different ceilings without presenting them as equivalent.
-
-An optional non-inferiority plan retains its external registration identity and
-proves that registration preceded evidence collection. It pre-registers a
-margin for every aggregate metric and every mandatory Stratum, is accepted only
-for a matched-budget view, and compares conservative direction-aware Hoeffding
-bounds. Missing repetition evidence, incompatible designs, unmatched budgets,
-or incomplete Stratum margins cannot become a passing result; aggregate gains
-also cannot hide a failed mandatory Stratum.
-
-`calculateUtilityMetricsV1` derives Product Utility from the same frozen
-Effectiveness request, measured resource usage, and strict operational evidence.
-Every output retains its numerator, denominator, normalization factor, unit,
-and preferred direction for validated Finding yield per runtime hour and cost
-unit, time to first validated Finding, human triage minutes, verified remediation
-success and duration, unnecessary rework, Valid Approval Yield, and Unsafe
-Approval Rate. A paired Arm may attach Utility evidence to both Arms and receive
-direction-aware Utility comparisons; one-sided evidence, contradictory event
-timing, unavailable denominators, incomplete adjudication, and inapplicable
-Control Plane evidence fail closed instead of becoming zero-value claims.
-Satisfaction surveys are intentionally outside this proof contract.
-
-`evaluateReleaseConstitutionV1` is the sole pure promotion-decision interface.
-Its versioned Constitution retains pre-Holdout registration and Development or
-Qualification calibration Evidence, then evaluates a fixed ordered set of Hard
-Safety Floors, exact qualified-artifact identity, packed Windows/Linux/macOS
-Conformance, matched-budget paired evidence, mandatory-Stratum non-inferiority,
-five conservative Effectiveness confidence bounds, and nine observed Utility
-thresholds. Any known failure returns `BLOCKED`; absent proof returns
-`INCONCLUSIVE` only when no known failure exists. Post-hoc thresholds, changed
-promotion artifacts, incomplete platform proof, and caller-authored overrides
-cannot produce `PROMOTE`.
-
-`renderPublicSecurityScorecardV1` is the sole pure public-Scorecard interface.
-It accepts declared public version and Support Matrix metadata plus the complete
-private Release Constitution input, independently recomputes the promotion
-decision, and emits only a fixed public whitelist: exact candidate-artifact
-digest, release and method versions, supported scope, model and Provider,
-aggregate Corpus statistics, Effectiveness distributions and uncertainty,
-Utility metrics and cost, resource budgets, paired comparisons, aggregate
-non-inferiority status, known limitations, and failures. Evidence, Holdout,
-Candidate Arm, and Stratum identities; active Holdout answers; Sensitive
-Evidence; and private vulnerabilities have no output fields. Public tokens are
-path-free and bounded, stable limitation and failure codes are derived rather
-than caller-authored, and invalid or extended publication input fails closed.
-
-`assembleReleaseEvidenceManifestV1` is the sole pure Release Evidence Manifest
-interface. It binds the exact candidate, qualified, and proposed-promotion
-artifact digests to source revision, Harness target, dependency-lock digests,
-the recomputed Release Constitution, the matching public Scorecard, Evaluation
-Run Bundle identities, known limitations, Risk Acceptances, and a fixed ordered
-catalogue of twenty-three required proof kinds. The catalogue covers artifact
-identity, packed Capability Conformance, Windows/Linux/macOS, Workbench,
-lifecycle, fault, race, Mutation, Resource, Effectiveness, Utility,
-non-inferiority, Dogfood, self-security, Ground Truth air gap, deterministic
-failures, Support Matrix, Risk Acceptances, Evaluation Bundles, Scorecard, and
-Constitution evidence.
-
-Every supplied proof records its Evidence ID and digest, reported status,
-candidate-artifact digest, and completion time. Assembly independently checks
-artifact binding, Constitution status alignment, and direct source-Evidence
-identity where the Constitution input already names that Evidence. Missing
-proof is explicit `INCONCLUSIVE`; any reported failure, substituted digest,
-stale Scorecard, contradictory status, or candidate Evaluation Bundle bound to
-another artifact is `BLOCKED`. A CI URL, badge, README checklist, or test count
-is not accepted as proof.
-
-These contracts are not themselves an Effectiveness, Utility, or release claim.
-The first Candidate still requires running the complete qualification and
-Holdout program and populating the Manifest with real packed-release Evidence.
-
-## Model-facing Assessment operations
-
-The optional `dsh-security-assurance/tools` entry registers the current
-`security_assessment_start` -> `security_assessment_status` ->
-`security_assessment_findings` -> `security_assessment_resume` plus
-`security_assessment_cancel` and `security_assessment_export` through the
-Harness Tool Registry. All six
-operations require the exact
-registered, running Agent in its active open turn and derive a process-local
-`harness-session` Invocation outside model arguments. Caller Principal,
-permissions, channel, Repository paths, arbitrary Policy content, and hidden
-idempotency state are never accepted from the model.
-
-`security_assessment_start` takes an explicit idempotency key, Repository ID,
-Subject, Assessment mode and profile, matching Target, optional stronger Control
-IDs, and an optional Start Preflight digest. It carries only `assessment:start`
-and delegates schema validation, Repository and Catalog binding, Preflight
-freshness, Subject freezing, idempotency, persistence, and execution to
-`startAssessment`. Its bounded Receipt contains only the Assessment ID, revision
-`1`, `CREATED` state, operation, schema version, and the caller's idempotency key.
-
-`security_assessment_status` takes only `assessment_id`, carries only
-`assessment:read`, and delegates to `getAssessment`. Its canonical result
-contains the Assessment ID and revision, state, the four bounded Coverage
-summary fields, and `verdict` (`null` until the Service has sealed the
-Assessment). It deliberately omits Repository and Subject bindings, Policy and
-Evidence digests, Coverage resolutions, recovery internals, available actions,
-timestamps, Seal metadata, Findings, attack paths, export locations, and
-authority metadata.
-
-`security_assessment_findings` takes an Assessment ID, a Service-bounded page
-limit, an optional opaque cursor, and an optional unique Validation-state
-filter. It carries only `assessment:read` and delegates to `listFindings` so the
-Service remains the owner of stable ordering, query/session-bound cursor
-validation, pagination, and redaction. Each returned Summary keeps only record
-identity and revision, Validation state and contract, weakness classification,
-Technical Severity, Evidence Confidence, Policy Significance, and the protected-
-detail availability flag. Finding Detail, Source Anchors, Evidence links or
-content, attack paths, Risk Decisions, credentials, and authority metadata are
-excluded.
-
-`security_assessment_resume` takes an exact BLOCKED Assessment ID and revision,
-an explicit idempotency key, and a bounded structured operator reason. It
-carries only `assessment:resume` and delegates to `resumeAssessment`; only the
-Service may decide whether the revision and state are resumable and create
-eligible new Attempts under the original frozen Subject, Policy, Coverage Plan,
-Provider Composition, and budget. The bounded Receipt omits the operator reason,
-timestamps, correlation, recovery internals, and all frozen semantic inputs.
-
-`security_assessment_cancel` takes an exact nonterminal Assessment ID and
-revision, an explicit idempotency key, and a bounded structured operator reason.
-It carries only `assessment:cancel` and delegates persistence, quiescence, and
-terminal transition to `cancelAssessment`. Its bounded Receipt identifies the
-state and revision at which cancellation intent was accepted but deliberately
-does not claim `CANCELED`; callers must read current status for terminal truth.
-Force completion, cleanup bypass, Evidence deletion, Verdict injection, reason,
-timestamps, correlation, and cancellation internals are excluded.
-
-`security_assessment_export` takes an exact SEALED Assessment ID and revision,
-an explicit idempotency key, the fixed supported Export Profile, and a Delivery
-Destination frozen into the Assessment contract. It carries only
-`export:request` and delegates sealed-state, profile, destination, owner,
-idempotency, and durable delivery handling to `requestExport`. The bounded
-`PENDING` Receipt contains an owner-bound Export ID but excludes preview or
-artifact content, digests, paths, URLs, credentials, destination options,
-download capabilities, timestamps, and correlation. It does not grant
-`export:read` or `export:download`. The entry is lifecycle-owned: unloading it
-removes all eight tools
-without stopping the root Security Service.
-
-The transport conformance suite locks each tool's exact model-visible input and
-top-level output fields, required-argument set, closed canonical output, single
-operation-specific Service dispatch, and unmodified live execution signal. This
-keeps future tool additions from silently widening authority or disclosure.
-
-## Host Repository composition
-
-The optional `dsh-security-assurance/host-repository-provider` entry is a
-trusted Host Adapter for deployment-owned Repository configuration. It injects
-`ctx.securityAssurance`, validates every configured registration before the
-first mutation, and invokes the root Service with package-owned Host authority:
-
-```yaml
-repositories:
-  - schemaVersion: 1
-    bindingId: mission-repository
-    root: /absolute/host/repository
-    displayName: Mission Repository
-    bindings:
-      policyId: security/node-package-lifecycle
-      assessmentProfileId: security/standard
-      evidenceProtectionId: evidence/local-protected
-      dataEgressPolicyId: egress/deny-by-default
-      platform: linux
-      deliveryDestinationIds: []
-```
-
-`idempotencyKey` is optional. When omitted, the Host Adapter resolves and
-validates the directory first, then derives a non-reversible identity from the
-full canonical root with SHA-256. Deployments may still provide an explicit
-stable key when their lifecycle requires one.
-
-After activation, trusted Host composition may call
-`ctx.securityAssuranceHostRepositories.resolve(bindingId)` to obtain the
-immutable `repositoryId`, revision, and state. The result contains no root,
-credential, Store handle, or Security Invocation. Disposing the Provider removes
-only its Cordis Service; durable Repository Registry history remains owned by
-the root Security Service, so an equal restart resolves the same Repository ID.
-Conflicting replay fails loudly instead of updating Host policy implicitly.
-
-## Workbench Remote, New Assessment, bounded Evidence, and governed actions
-
-The optional `dsh-security-assurance/workbench-remote` entry is a Host Adapter,
-not an authentication provider and not a second business Service. It injects
-the root `ctx.securityAssurance` Service and the Host Typert registry. On every
-call, Typert resolves the browser's bounded opaque
-`securityAssuranceWorkbenchContextId` through
-the deployment-supplied `resolveAuthorityContext` function. Only that Host
-function may return the current authenticated operator's principal and exact
-permissions; the Adapter then mints a process-local, non-serializable Security
-Invocation and delegates one operation to the root Service.
-
-```ts
-import SecurityAssuranceWorkbenchRemote from
-  'dsh-security-assurance/workbench-remote'
-
-await ctx.plugin(SecurityAssuranceWorkbenchRemote, {
-  async resolveAuthorityContext(authorityContextId) {
-    // Deployment-owned authentication/session registry. Return undefined when
-    // the context is missing, expired, logged out, or otherwise ambiguous.
-    return hostOperatorSessions.resolve(authorityContextId)
-  },
-})
-```
-
-The previously qualified Harness `0.1.1-rc.2` Remote transport protects
-`trusted-host` traffic against Host-header,
-DNS-rebinding, and cross-site confusion, but that transport fence is explicitly
-not user authentication and does not supply an Operator identity to a Remote
-method. Consequently this Adapter has no anonymous or fixed-superuser fallback:
-activation without a real Host resolver fails, an unknown or malformed context
-fails closed, and the dormant bundle row must not be enabled for an anonymous
-LAN deployment.
-
-The generated Host contribution is published at `./typert`; the generated
-Client contribution is published at `./remote`. All sixteen operations use strict
-generated request/result codecs. Cancellation is forwarded to the root Service,
-mutation retries retain the caller's original idempotency key, and Adapter
-disposal withdraws its lookup and Remote Service without altering Assessments
-or the root plugin.
-
-The repository retains a legacy browser client that can mount `./remote`
-through `ctx.remote.$mount()` and provide a browser-local
-`ctx.securityAssuranceWorkbench` Controller with thirty-two public operations:
-`openAssessmentSelection`, `loadMoreAssessments`, `selectAssessment`,
-`openRuntimeHealth`, `refreshRuntimeHealth`, `openRepositories`, `selectRepository`, `requestStartPreflight`,
-`cancelStartPreflight`, `confirmStartAssessment`, `backToAssessmentSelection`,
-`openAssessment`, `openBundle`, `previewExport`, `requestExport`,
-`refreshExportStatus`, `downloadExport`, `backToAssessmentDetail`, `openFindings`, `loadMoreFindings`, `selectFinding`,
-`backToFindingList`, `recordRiskDecision`, `resumeAssessment`, `cancelAssessment`,
-`selectEvidence`, `discloseEvidence`,
-`hideEvidenceDisclosure`, `backToFindingDetail`, `closeAssessment`, `getState`,
-and `subscribe`. This source is deliberately excluded from the rc.8 build and
-package; it describes the migration target rather than a published `./client`
-entry. In that legacy design, the Host
-passes its current opaque authority-context ID to `openAssessmentSelection`;
-the browser receives a bounded page of redacted, authority-visible identities
-and can append continuation pages from the same signed consistency window.
-Only one continuation is admitted at a time, and a changed watermark fails
-closed without retaining the accumulated identities. The browser can open only
-an ID from the currently loaded window. No credential, Principal, permission
-set, or Security Invocation is accepted by the selector. `openAssessment`
-remains the direct Host seam when the Assessment ID is already known. Either open path
-loads the current immutable Snapshot and internally follows
-`waitForAssessmentRevision`; `CHANGED` fetches the next Snapshot, `TIMED_OUT`
-continues from the same committed revision, and close or Client disposal aborts
-the outstanding wait. The opaque authority context remains only in the live
-in-memory Workbench session so terminal Assessment Finding queries can be
-authorized; it is absent from observable state and is erased on close, failure,
-replacement, or Client disposal.
-
-This Controller owns no security decision or durable continuation state. The
-authority context is transient authentication material, and the implementation
-contains no `localStorage`, `sessionStorage`, IndexedDB, Service Worker cache,
-URL, or logging persistence for it, Findings, Evidence, rationale, or full
-Snapshots. Bounded content is retained only in the current observable state and
-is discarded on explicit hide, Evidence navigation, close, replacement,
-authority failure, or Service expiry. Those navigation and lifecycle exits also
-abort any in-flight Evidence request before the stale-response fence is applied.
-Remote or Security failures fail closed
-to a payload-free `FAILED` state; reopening re-fetches Service truth by opaque
-Assessment ID. From the selector, the Controller can fetch or explicitly refresh
-the Service-owned Runtime Health Snapshot. Each read reuses current Host authority;
-the browser renders the exact overall state, compatibility, admission booleans,
-and redacted checks without deriving health or exposing repair/bypass actions.
-The Controller can also list path-free
-Repository Snapshots, resolve a repository-specific Security Catalog, and
-submit only the exact Catalog selection for a Service-derived Start Preflight.
-Confirmation adds a fresh idempotency identity and the proposal digest to the
-unchanged selection; a matching Receipt is required before the newly committed
-Assessment is opened. Changing a selection cancels the proposal and requires a
-new preflight.
-
-For a SEALED Snapshot, `openBundle` separately reauthorizes an integrity-verified
-Bundle Manifest read and an exact Repository binding read. The Controller accepts
-the result only when Assessment, revision, Verdict, Seal, Repository ID, and
-Repository revision match the retained Service Snapshot. The view exposes
-canonical record identities, schemas, classifications, digests, omissions, and
-stable registered Delivery Destination IDs, but no private path, Bundle bytes,
-credential, or browser-generated report. From one exact frozen destination the
-Controller may request the fixed `security/export/internal-json-v1` Preview,
-which is entirely Service-derived and explicitly names included categories,
-mandatory redactions, warnings, audience, format, media type, destination, and
-expiry. A matching Preview can be submitted with a fresh idempotency identity;
-the browser accepts only a bound Receipt and owner-bound `getExport` status. The
-current local-audit adapter writes a digest-bound artifact beneath the private
-Service home. Transient artifact I/O and sealed-source reads remain `PENDING`
-under a five-attempt Service-owned retry policy; status discloses bounded attempt
-count, last safe failure category, timestamps, and next retry time. The
-Workbench can explicitly refresh that status but never initiates a retry.
-At expiry it observes `PURGE_PENDING` or `PURGED` plus a path-free digest
-tombstone; the browser never performs cleanup. Canonical-byte conflicts are
-terminal. Status projects `HOST_MANAGED` access unless current authority also
-has `export:download`; only then does it project `ONE_USE_DOWNLOAD`. The explicit
-download action reauthorizes through the Host Remote, binds Export, artifact, and
-Digest Envelope, mints and consumes a non-serializable process-local capability
-inside the same Service invocation, and returns an artifact of at most 16 MiB as
-verified base64. The Client verifies byte length and SHA-256 again before using a
-bounded Blob URL to invoke the browser download, then retains only filename,
-digest, size, and consumed time. No capability token, private path, credential,
-content, or Blob
-URL enters Workbench state, browser history, or storage.
-
-The Client entry also registers two additive Harness UI contributions. A
-launcher in `sidebar.footer.action` opens a frame-wide dialog in
-`shell.overlay`; neither replaces a single-owner Host shell slot. The overlay
-subscribes to the Controller through the Slot renderer's observable seam and
-renders `CLOSED`, `SELECTION_LOADING`, `SELECTION_READY`,
-`SELECTION_LOADING_MORE`, Runtime Health, Bundle/Export readiness, Export
-Preview/request/status/one-use download,
-Repository/Catalog/Preflight/Wizard states, `LOADING`,
-`READY`, and `FAILED` without duplicating
-Remote, polling, authorization, or revision logic. `READY` shows canonical machine IDs
-unchanged together with revision, state, Verdict, repository and policy
-bindings, mandatory Coverage, and the Service Snapshot's `availableActions`.
-Its nested Finding states load redacted Summary pages against the rendered
-Assessment revision, admit one cursor continuation at a time, and open Detail
-only from an exact listed record revision. Triage keeps record kind, Validation,
-Technical Severity, Evidence Confidence, Policy Significance, weakness, and
-sensitivity visibly separate. Detail exposes canonical Subject-relative Source
-Anchor and Evidence Link metadata without Evidence payloads or read
-capabilities. Selecting one exact listed Evidence artifact derives the
-Assessment, Finding, artifact, and digest bindings from the retained Detail and
-fixes the viewing purpose and Profile to `FINDING_TRIAGE` and
-`security/evidence-view/metadata-only-v1`; the Controller rejects arbitrary
-identities or mismatched responses and initially renders only the metadata-only
-View, including its complete Digest Envelope and explicit redaction reason.
-A separate explicit action invokes `discloseEvidence` with the exact retained
-bindings, fixed `VALIDATION_REVIEW` purpose, and
-`security/evidence-view/bounded-json-v1` Profile. The Host resolves current
-authority again for that invocation. The Controller accepts only a matching
-structured redaction or at most 32 KiB of byte-consistent JSON with a future
-Service expiry, fences late responses, and schedules cleanup without retaining
-the bounded View in the timer closure. Hiding, leaving Evidence, closing, or
-replacing the session aborts any in-flight disclosure before its result is
-discarded. The bilingual UI marks the content as
-sensitive and time-limited, renders purpose, Profile, size, and expiry, and
-provides an explicit hide-and-discard control. Evidence transitions move focus
-to the new panel, return it to the metadata action after hide or expiry, and
-return it to the originating Link after leaving Evidence.
-The Risk Decision form appears only beside an exact Finding Detail with a
-matching `RECORD_RISK_DECISION` action in the current Snapshot. It renders the
-immutable Finding and revisions, every exact consequence, authority mode,
-compensating-control minimum, expiry ceiling, and completed/required
-attestations. The browser selects only a projected decision and supplies its
-rationale, controls, and expiry; the
-Controller derives Assessment and Finding bindings from retained Service truth,
-generates a fresh idempotency identity, and never accepts a Principal or
-permission. Critical second authority shows the first immutable attestation and
-submits only its exact rationale, controls, and expiry through a separately
-resolved Host context. A matching receipt is followed by an Assessment refetch,
-and local form input is discarded. BLOCKED recovery submits Resume and Cancel
-only when those exact revision-bound actions are projected by the Service;
-receipts are followed by a fresh Snapshot and cancellation is never presented
-as terminal before durable quiescence is observed.
-
-The surface ships complete English and Simplified Chinese copy, semantic dialog
-and status roles, keyboard dismissal and focus return, responsive layout, and
-text-bearing state indicators. It loads no third-party scripts, fonts, remote
-content, trackers, or analytics. Opening the selector still belongs to an
-authenticated Host integration calling `openAssessmentSelection`; the launcher
-does not accept, infer, persist, or mint an authority context. Selection buttons
-only forward identities already projected by the Security Service.
-
-```ts
-await ctx.securityAssuranceWorkbench.openAssessmentSelection({
-  securityAssuranceWorkbenchContextId: currentHostSession.workbenchContextId,
-})
-```
-
-## Optional Control Plane integration
-
-The root plugin remains independently installable. The optional
-`dsh-security-assurance/control-plane-provider` entry activates only when both
-`ctx.securityAssurance` and `ctx.engineeringControlPlane` exist. The Host binds
-one Control Plane repository mapping to an already registered Security
-Repository using public identifier configuration:
-
-```yaml
-assuranceProviders:
-  - providerId: dsh/security-assurance
-    providerVersion: 0.1.0-rc.9
-    activation: required
-    configuration:
-      repositoryId: repo-00000000-0000-4000-8000-000000000000
-```
-
-The Adapter receives no repository path, database, Evidence directory, Gate,
-or credentials. A Repository ID alone is not binding proof: before Assessment
-start, the root Security Service resolves that ID inside its private Registry
-and invokes the Control Plane Context's process-local repository assertion.
-The canonical root is never returned to the Adapter or serialized. A mismatch
-returns terminal `repository_binding_mismatch` External Assessment Failure and
-starts no Assessment. After binding succeeds, the Adapter resolves an internal
-`control-plane` Security Invocation, starts a Workspace Snapshot Assessment,
-retrieves the verified sealed Security Submission, and embeds its canonical
-value plus source digest in the provider-neutral Control Plane Submission. If a
-sealed Submission cannot be supplied, the Adapter returns the Control Plane's
-strict provider-neutral External Assessment Failure value. Configuration or
-external blocking, cancellation, and runtime failure therefore settle the
-Control Plane Invocation as indeterminate and block its Gate without exposing
-Security internals or fabricating Evidence. If a
-durably begun Control Plane invocation is explicitly resumed after both hosts
-restart, the Adapter reuses the exact Assessment start identity, explicitly
-resumes that Assessment when it is `BLOCKED`, and returns the same sealed value
-through `recover()` without replaying Provider `assess()`. The Control Plane
-copies and revalidates that value and remains the sole owner of Mission
-Assurance Results and the Quality Gate. The two plugins never share SQLite
-files, writable Evidence paths, transactions, or Kernel objects.
-
-Control Plane Assurance Retry is distinct from that same-Invocation recovery.
-After a retryable `blocked` or `canceled` external outcome blocks the Gate,
-explicit Mission Resume creates a successor Control Plane Invocation. Its new
-Invocation identity gives the Adapter a new idempotent Assessment start
-identity, so Security Assurance creates a distinct Assessment and preserves
-the blocked, canceled, or failed predecessor unchanged. If the repository
-content is unchanged, Subject Freeze
-may reuse the existing private content-addressed Snapshot only after complete
-Manifest and file-digest verification; Windows rename collision codes grant no
-authority by themselves. Dual-plugin conformance proves the first Assessment
-remains `CANCELED`, the successor seals independently, and only the Control
-Plane recomputes its current Assurance Result and Gate.
-
-On explicit Mission cancellation, the Adapter's separate `cancel()` operation
-uses a package-private, authority-checked lookup for the existing
-`startAssessment` idempotency record. It never creates an Assessment merely to
-cancel it. If the Assessment exists and is not terminal, the Adapter invokes
-the public revision-bound `cancelAssessment`, verifies `CANCELED`, and returns
-the external Assessment ID for Control Plane audit. Host disposal does not call
-this operation, so restart recovery remains distinct from cancellation. If the
-host stops after Security commits `CANCELED` but before Control Plane records
-its proof, the next explicit Mission cancellation resolves the stable start
-identity, observes the same Assessment as terminal, and returns that same ID;
-it does not create, resume, or replace an Assessment.
-
-## Install both plugins into Harness Web
-
-Install the Control Plane first because its bundle supplies the shared invariant
-registry used by both companions, then install Security Assurance. Run these
-commands from the Git repository that users want the plugins to govern; the
-launcher cwd becomes the `current-workspace` binding automatically.
-
-```powershell
-dsh plugin --profile web add D:\path\to\dsh-engineering-control-plane-0.1.9.tgz
-dsh plugin --profile web add D:\path\to\dsh-security-assurance-0.1.0-rc.9.tgz
+~~~powershell
+dsh plugin --profile web add D:\Downloads\dsh-security-assurance-0.1.0-rc.9.tgz
 dsh --profile web --dump-config
 dsh web
-```
+~~~
 
-No manual Repository UUID or profile activation patch is required. In the Web
-conversation, users can ask for a security audit in natural language or use
-`/security [scope]`; both routes direct the model through
-`security_repositories`, `security_catalog`, and `security_assessment_start`
-without guessing identifiers. Use `/mission <objective>` for governed
-engineering work. A Control Plane Mission invokes its configured Security
-Assurance Provider itself, so the natural-language router does not start a
-duplicate standalone Assessment unless the user explicitly requests one.
-Harness renders the eight Security tools and the Mission tools with its generic
-tool cards.
+如果还要使用工程 Mission 门禁，请先安装 [Engineering Control Plane](https://github.com/bailong-Hakuryu/dsh-engineering-control-plane/releases/tag/v0.1.9)，再安装本插件：
 
-## Development
+~~~powershell
+dsh plugin --profile web add D:\Downloads\dsh-engineering-control-plane-0.1.9.tgz
+dsh plugin --profile web add D:\Downloads\dsh-security-assurance-0.1.0-rc.9.tgz
+dsh --profile web --dump-config
+dsh web
+~~~
 
-Requirements:
+插件会把启动时的工作目录注册为 <code>current-workspace</code>。启动后建议先用 <code>dsh --profile web --dump-config</code> 检查组合；如果端口已被占用，请在 Harness Profile 中选择其他空闲端口。
 
-- Node `^22.19.0 || >=24.0.0`
-- pnpm
-- the qualified Harness `0.1.2-alpha.1` checkout at
-  `D:\Deepseek\deepseek-harness-latest` for local Cordis development linking
+### 用户如何调用
 
-Commands:
+插件同时支持被动路由和主动指令：
 
-```text
+**被动调用（推荐）**：直接描述目标，模型会先获取可用仓库和评估目录，再按服务返回的选择启动评估。
+
+~~~text
+请对当前仓库进行安全评估，并报告最终 Verdict 和 Findings。
+检查当前项目的 package.json 安装生命周期配置。
+~~~
+
+**主动调用**：在 Harness Web 或 CLI 输入：
+
+~~~text
+/security 评估当前仓库
+/security 检查当前仓库的包安装生命周期
+~~~
+
+### 工具工作流
+
+| 顺序 | 工具 | 作用 |
+| --- | --- | --- |
+| 1 | <code>security_repositories</code> | 列出当前会话可见的已授权仓库 |
+| 2 | <code>security_catalog</code> | 获取指定仓库支持的模式、Subject、Profile 和控制 |
+| 3 | <code>security_assessment_start</code> | 用精确选择启动一次持久化评估 |
+| 4 | <code>security_assessment_status</code> | 读取版本化状态、Coverage 和 Verdict |
+| 5 | <code>security_assessment_findings</code> | 分页读取脱敏 Finding 摘要 |
+| 6 | <code>security_assessment_resume</code> | 仅按服务公布的合法动作恢复阻塞评估 |
+| 7 | <code>security_assessment_cancel</code> | 按精确 revision 取消并等待外部工作静默 |
+| 8 | <code>security_assessment_export</code> | 请求固定格式、固定目标的官方导出 |
+
+推荐顺序是 <code>repositories → catalog → start → status → findings</code>。变更操作使用服务返回的精确 <code>revision</code> 和新的 <code>idempotency_key</code>；旧请求不会被自动重放。
+
+### 返回结果与安全边界
+
+- 所有公共操作返回统一的 <code>SecurityResult&lt;T&gt;</code> envelope。
+- 命令返回不可变、带版本的 Receipt；查询返回按身份和 revision 绑定的 Snapshot。
+- Findings、Evidence 和导出内容遵循宿主授权、用途和脱敏规则。
+- 模型参数不接受凭据、数据库句柄、绝对路径或可执行对象；身份和权限由 Host 当前会话解析。
+- Registry、Assessment、Evidence 和导出状态保存在插件私有 SQLite 中，使用幂等键与 revision CAS 防止重复执行。
+- 缺失授权、状态冲突、超时、取消或外部失败会 fail closed，不会伪造满足结论。
+- <code>workspace_snapshot</code> 会读取工作区内容；在未完成本候选版安全审查项前，只应对可信仓库使用。详见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
+
+### 与 Engineering Control Plane 联用
+
+两插件联用时，Control Plane 负责 Mission、工程 Evidence 和最终 Quality Gate；本插件只负责外部安全义务及其证据提交。安全评估失败或不确定会阻塞 Gate，但不会被转换成工程批准。
+
+安装两者后，Control Plane 的可选 Provider 会按精确的 Provider ID、版本和 <code>current-workspace</code> 绑定本插件。两个插件不共享 SQLite、可写 Evidence 路径、事务或 Kernel 对象。
+
+### 公开入口
+
+| 入口 | 作用 |
+| --- | --- |
+| <code>dsh-security-assurance</code> | 根 Security Assurance Service |
+| <code>dsh-security-assurance/tools</code> | 八个严格模型工具 |
+| <code>dsh-security-assurance/contracts</code> | 版本化公共契约 |
+| <code>dsh-security-assurance/analyzer</code> | 内建分析器接口 |
+| <code>dsh-security-assurance/evaluation</code> | 纯函数 Metrics Engine |
+| <code>dsh-security-assurance/host-repository-provider</code> | Host Repository 注册适配器 |
+| <code>dsh-security-assurance/control-plane-provider</code> | 可选 Control Plane 适配器 |
+| <code>dsh-security-assurance/invariant</code> | 启动就绪诊断 |
+| <code>dsh-security-assurance/workbench-remote</code> | 需要部署方认证解析器，默认禁用 |
+
+### 常见排查
+
+**仓库列表为空**：从目标 Git 仓库目录启动 Harness，并确认 Host Repository Provider 已加载；不要手工编造 Repository ID。
+
+**Catalog 显示 UNSUPPORTED**：当前只支持 <code>REPOSITORY</code> 模式；确认使用的是已授权仓库和 <code>security/standard</code> Profile。
+
+**端口冲突**：关闭占用端口的旧 Harness 进程，或在 Web Profile 中改用空闲端口后重新启动。
+
+**评估为 BLOCKED**：先读取 <code>security_assessment_status</code> 的 <code>legalNextActions</code>，只执行服务允许的 <code>resume</code> 或 <code>cancel</code>。
+
+### 开发与验证
+
+~~~powershell
 pnpm install
 pnpm typecheck
-pnpm test
 pnpm build
+pnpm test
 pnpm pack:dry-run
 pnpm pack:profile-smoke
 pnpm release:check
-```
+~~~
 
-`pack:profile-smoke` packs both plugins, installs them into a fresh Web profile
-of the local Harness `0.1.2-alpha.1` checkout, verifies the composed bundle
-rows, boots the real Web Host from a clean Git fixture, and requires an HTTP
-response before shutdown. This is the current direct-use release gate.
+当前 <code>v0.1.0-rc.9</code> 发布门禁已通过：69 个测试文件、343 个测试，类型检查、构建、打包和 Harness Profile smoke 均通过。
 
-The older packed consumer and browser scripts remain in source only as migration
-evidence for Harness `0.1.1-rc.2`. They are not package scripts, current release
-gates, or supported development dependencies, and their old browser entry is
-not included in the published package.
+完整领域模型见 [CONTEXT.md](CONTEXT.md)，安全政策见 [SECURITY.md](SECURITY.md)，候选版审查见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
-The root Service, invariant, Repository Provider, eight model tools, and
-optional Control Plane Provider are enabled by the bundle. The launcher cwd is
-registered idempotently as `current-workspace`; `security_repositories` and
-`security_catalog` expose only the bounded path-free choices needed to start an
-Assessment. The Workbench Remote remains disabled because it still requires a
-deployment-supplied authenticated Host authority resolver.
+<details>
+<summary>English</summary>
 
-The candidate acceptance checklist and stable-promotion boundary are recorded
-in `docs/release-v0.1.md`.
+## What it is
 
-## Design authority
+<code>dsh-security-assurance</code> is an evidence-backed repository security assessment plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It integrates through public Harness and Cordis seams without modifying Harness Core, and exposes versioned, queryable, recoverable assessment results.
 
-- `CONTEXT.md` defines the domain language.
-- `docs/adr/` contains the accepted decisions.
-- `docs/implementation-specification.md` maps those decisions to implementation
-  phases and acceptance evidence.
-- `docs/deepseek-harness-plugin-surface-study.md` records the read-only Harness
-  source facts used by the design.
+This is an assurance plugin, not a general vulnerability scanner. The built-in policy currently checks the presence of Node package install-lifecycle keys in <code>package.json</code>.
 
-Conformance proves that the product behaves according to its contract. It does
-not by itself prove that the product finds real vulnerabilities effectively;
-Security Effectiveness has a separate preregistered evaluation track.
+## Current release
+
+- Version: <code>0.1.0-rc.9</code>
+- Status: release candidate
+- Target Harness: <code>0.1.2-alpha.1</code>
+- Release: [v0.1.0-rc.9](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.9)
+
+## Support matrix
+
+| Item | Status |
+| --- | --- |
+| Assessment mode | <code>REPOSITORY</code> |
+| Subjects | <code>git_revision</code>, <code>workspace_snapshot</code> |
+| <code>CHANGE</code> | Not currently supported |
+| <code>TARGETED</code> | Not currently supported |
+| Default policy | <code>security/node-package-lifecycle</code> |
+| Default profile | <code>security/standard</code> |
+| Platforms | Windows, Linux, macOS |
+
+The Service resolves authorized repositories and catalog choices first. Models must use the exact returned identifiers; paths and IDs are never guessed.
+
+## Install in Harness Web
+
+Requires Node.js <code>^22.19.0 || >=24.0.0</code> and the DeepSeek Harness CLI:
+
+~~~powershell
+dsh plugin --profile web add D:\Downloads\dsh-security-assurance-0.1.0-rc.9.tgz
+dsh --profile web --dump-config
+dsh web
+~~~
+
+When both plugins are installed, install Engineering Control Plane first because it supplies the shared invariant registry. The launcher working directory is registered as <code>current-workspace</code>.
+
+## Invocation
+
+Natural-language requests are routed through the catalog-first workflow. Users can also run:
+
+~~~text
+/security Assess the current repository and report the final verdict and findings.
+~~~
+
+The eight tools are <code>security_repositories</code>, <code>security_catalog</code>, <code>security_assessment_start</code>, <code>security_assessment_status</code>, <code>security_assessment_findings</code>, <code>security_assessment_resume</code>, <code>security_assessment_cancel</code>, and <code>security_assessment_export</code>. The normal order is repositories, catalog, start, status, and findings. Mutations require the exact Service revision and a fresh idempotency key.
+
+## Results and safety
+
+All public operations return a typed <code>SecurityResult&lt;T&gt;</code> envelope. Commands return immutable versioned Receipts; queries return identity- and revision-bound Snapshots. Host authority resolves identity and permissions; model arguments never carry credentials, paths, database handles, or executable objects. Missing authorization, conflicts, timeouts, cancellation, and external failures fail closed.
+
+Use <code>workspace_snapshot</code> only with trusted repositories until the candidate review items are addressed. See [SECURITY-REVIEW.md](SECURITY-REVIEW.md).
+
+## Control Plane integration
+
+Engineering Control Plane owns the Mission, engineering Evidence, and final Quality Gate. Security Assurance owns the external security obligation and its evidence. An unavailable, failed, or indeterminate security result blocks the Gate; it is never converted into approval. The two plugins do not share SQLite files, writable Evidence paths, transactions, or Kernel objects.
+
+## Development
+
+~~~powershell
+pnpm install
+pnpm typecheck
+pnpm build
+pnpm test
+pnpm pack:dry-run
+pnpm pack:profile-smoke
+pnpm release:check
+~~~
+
+Release <code>v0.1.0-rc.9</code> passed with 69 test files and 343 tests, including typecheck, build, packaging, and Harness profile smoke.
+
+</details>
+
+## License
+
+[MIT](LICENSE)
