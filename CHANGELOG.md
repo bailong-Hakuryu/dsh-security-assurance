@@ -9,8 +9,8 @@
   immutable Subject snapshots remain enforced without causing POSIX teardown
   failures; linked directories are removed without traversing their targets.
 - Canonicalize cross-platform Export fixture roots, observe asynchronous
-  Delivery to its terminal status, and give Windows Git fixtures an explicit
-  integration-test timeout budget.
+  Delivery to its terminal status, and give shared-runner integration tests
+  explicit bounded timeout budgets.
 - Add a bundled PURE npm audit JSON normalization adapter that consumes
   digest-verified `npm-audit.json` Subject slices without executing
   npm or using network authority.

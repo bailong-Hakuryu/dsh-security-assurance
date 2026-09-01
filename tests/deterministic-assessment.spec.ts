@@ -37,6 +37,12 @@ async function repositoryFixture(): Promise<string> {
   return root
 }
 
+async function securityHomeFixture(prefix: string): Promise<string> {
+  const root = await realpath(await mkdtemp(join(tmpdir(), prefix)))
+  temporaryRoots.push(root)
+  return root
+}
+
 async function waitUntilSealed(
   service: SecurityAssuranceService,
   invocation: SecurityInvocation,
@@ -87,8 +93,7 @@ async function waitForPersistedExportPurge(recordFile: string): Promise<void> {
 describe('SecurityAssuranceService deterministic Assessment path', () => {
   it('seals an honest INDETERMINATE result and performs an idempotent registered Export delivery', async () => {
     const repository = await repositoryFixture()
-    const dshHome = await realpath(await mkdtemp(join(tmpdir(), 'dsh-security-deterministic-home-')))
-    temporaryRoots.push(dshHome)
+    const dshHome = await securityHomeFixture('dsh-security-deterministic-home-')
     const ctx = new Context()
     let fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
     const platform = process.platform
@@ -443,8 +448,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
         code: 'CAPABILITY_EXPIRED',
       })
 
-      const failedDeliveryHome = await mkdtemp(join(tmpdir(), 'dsh-security-failed-delivery-home-'))
-      temporaryRoots.push(failedDeliveryHome)
+      const failedDeliveryHome = await securityHomeFixture('dsh-security-failed-delivery-home-')
       let failureClock = new Date().toISOString()
       const failureModule = new ExportDeliveryModule(
         join(failedDeliveryHome, 'security-assurance'),
@@ -505,8 +509,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
         failure: { code: 'ARTIFACT_DELIVERY_FAILED' },
       })
 
-      const retentionHome = await mkdtemp(join(tmpdir(), 'dsh-security-export-retention-home-'))
-      temporaryRoots.push(retentionHome)
+      const retentionHome = await securityHomeFixture('dsh-security-export-retention-home-')
       let retentionClock = new Date().toISOString()
       const retentionModule = new ExportDeliveryModule(
         join(retentionHome, 'security-assurance'),
@@ -673,8 +676,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       scripts: { postinstall: 'node ./postinstall.js' },
     }), 'utf8')
     await writeFile(join(repository, 'postinstall.js'), 'process.stdout.write("fixture")\n', 'utf8')
-    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-resume-home-'))
-    temporaryRoots.push(dshHome)
+    const dshHome = await securityHomeFixture('dsh-security-resume-home-')
     const platform = process.platform
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)
@@ -801,8 +803,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
         version: '1.0.0',
       }), 'utf8')
     }))
-    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-cancel-home-'))
-    temporaryRoots.push(dshHome)
+    const dshHome = await securityHomeFixture('dsh-security-cancel-home-')
     const platform = process.platform
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)
@@ -893,8 +894,7 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
 
   it('replays the same sealed value after restart and fails closed if private publication bytes change', async () => {
     const repository = await repositoryFixture()
-    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-restart-home-'))
-    temporaryRoots.push(dshHome)
+    const dshHome = await securityHomeFixture('dsh-security-restart-home-')
     const platform = process.platform
     if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
       throw new Error(`unsupported test platform: ${platform}`)

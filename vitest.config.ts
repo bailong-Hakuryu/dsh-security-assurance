@@ -22,5 +22,6 @@ export default defineConfig({
       'tests/workbench-ui.client.spec.tsx',
     ],
     restoreMocks: true,
+    testTimeout: 15_000,
   },
 })

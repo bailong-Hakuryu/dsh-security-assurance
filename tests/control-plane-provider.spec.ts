@@ -986,7 +986,7 @@ describe('Security Assurance Control Plane Provider', () => {
       await restartedSubagentFiber.dispose()
       await restartedSubprocessFiber.dispose()
     }
-  }, 30_000)
+  }, 60_000)
 
   it('propagates explicit Mission cancellation to the active Security Assessment', async () => {
     const repository = await nodeRepositoryFixture({
