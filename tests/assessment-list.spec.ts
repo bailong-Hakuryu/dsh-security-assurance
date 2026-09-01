@@ -74,7 +74,8 @@ describe('SecurityAssuranceService Assessment list', () => {
       return started.value.assessmentId
     }
 
-    const initialIds = await Promise.all([start(1), start(2), start(3)])
+    const initialIds = []
+    for (const ordinal of [1, 2, 3]) initialIds.push(await start(ordinal))
     const first = await ctx.securityAssurance.listAssessments(invocation, {
       schemaVersion: 1,
       limit: 2,

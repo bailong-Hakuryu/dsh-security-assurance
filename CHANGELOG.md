@@ -11,6 +11,8 @@
 - Canonicalize cross-platform Export fixture roots, observe asynchronous
   Delivery to its terminal status, and give shared-runner integration tests
   explicit bounded timeout budgets.
+- Make temporary-fixture teardown idempotent under concurrent background
+  staging reaping, and keep Assessment-list pagination fixtures sequential.
 - Add a bundled PURE npm audit JSON normalization adapter that consumes
   digest-verified `npm-audit.json` Subject slices without executing
   npm or using network authority.

@@ -28,23 +28,21 @@ async function assertSystemTemporaryPath(path: string): Promise<string> {
 }
 
 async function restoreWritableModes(path: string): Promise<void> {
-  let metadata
   try {
-    metadata = await lstat(path)
+    const metadata = await lstat(path)
+    if (metadata.isSymbolicLink()) return
+    if (!metadata.isDirectory()) {
+      await chmod(path, 0o600)
+      return
+    }
+
+    await chmod(path, 0o700)
+    const entries = await readdir(path)
+    await Promise.all(entries.map(entry => restoreWritableModes(resolve(path, entry))))
   } catch (error) {
     if (isMissing(error)) return
     throw error
   }
-
-  if (metadata.isSymbolicLink()) return
-  if (!metadata.isDirectory()) {
-    await chmod(path, 0o600)
-    return
-  }
-
-  await chmod(path, 0o700)
-  const entries = await readdir(path)
-  await Promise.all(entries.map(entry => restoreWritableModes(resolve(path, entry))))
 }
 
 export async function removeTemporaryRoot(path: string): Promise<void> {

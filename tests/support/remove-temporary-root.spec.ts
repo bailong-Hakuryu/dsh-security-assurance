@@ -22,7 +22,7 @@ describe('removeTemporaryRoot', () => {
       await chmod(join(root, 'subjects', 'digest'), 0o555)
       await chmod(join(root, 'subjects'), 0o555)
 
-      await removeTemporaryRoot(root)
+      await Promise.all([removeTemporaryRoot(root), removeTemporaryRoot(root)])
 
       await expect(access(root)).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(readFile(outsideSentinel, 'utf8')).resolves.toBe('preserve\n')
