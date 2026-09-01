@@ -1,7 +1,7 @@
 import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -87,7 +87,7 @@ async function waitForPersistedExportPurge(recordFile: string): Promise<void> {
 describe('SecurityAssuranceService deterministic Assessment path', () => {
   it('seals an honest INDETERMINATE result and performs an idempotent registered Export delivery', async () => {
     const repository = await repositoryFixture()
-    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-deterministic-home-'))
+    const dshHome = await realpath(await mkdtemp(join(tmpdir(), 'dsh-security-deterministic-home-')))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
     let fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
@@ -303,11 +303,15 @@ describe('SecurityAssuranceService deterministic Assessment path', () => {
       expect(replayed).toEqual(requested)
       if (!requested.ok) throw new Error(`export request failed: ${requested.error.code}`)
 
-      const delivered = await ctx.securityAssurance.getExport(invocation, {
-        schemaVersion: 1,
-        kind: 'STATUS',
-        exportId: requested.value.exportId,
-      })
+      const delivered = {
+        ok: true as const,
+        value: await waitForExportStatus(
+          ctx.securityAssurance,
+          invocation,
+          requested.value.exportId,
+          status => status.status === 'DELIVERED',
+        ),
+      }
       expect(delivered).toMatchObject({
         ok: true,
         value: {

@@ -1,7 +1,7 @@
 import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 import { execFile } from 'node:child_process'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -14,6 +14,8 @@ import {
   RISK_DECISION_WINDOW_CONTROL_ID,
   type AssessmentId,
   type AssessmentSnapshotV1,
+  type ExportId,
+  type ExportViewV1,
   type FindingDetailViewV1,
   type FindingListPageV1,
   type SecurityResult,
@@ -98,6 +100,28 @@ async function waitUntilSealed(ctx: Context, assessmentId: AssessmentId): Promis
   throw new Error('Assessment did not produce a SEALED Bundle')
 }
 
+async function waitForExportDelivery(
+  ctx: Context,
+  securityAssuranceWorkbenchContextId: WorkbenchAuthorityContextId,
+  exportId: ExportId,
+): Promise<SecurityResult<ExportViewV1>> {
+  for (let attempt = 0; attempt < 320; attempt += 1) {
+    const status = await ctx.typertGateway.invoke({
+      namespace: 'securityAssuranceWorkbench',
+      method: 'getExport',
+      args: {
+        securityAssuranceWorkbenchContextId,
+        request: { schemaVersion: 1, kind: 'STATUS', exportId },
+      },
+    }) as SecurityResult<ExportViewV1>
+    if (status.ok && status.value.kind === 'STATUS' && status.value.status === 'DELIVERED') {
+      return status
+    }
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  throw new Error(`Export ${exportId} did not reach DELIVERED status`)
+}
+
 async function harness(strictTypert = false, riskDecisionWindow = true): Promise<{
   readonly ctx: Context
   readonly assessmentId: AssessmentId
@@ -105,7 +129,7 @@ async function harness(strictTypert = false, riskDecisionWindow = true): Promise
   readonly remoteFiber: { dispose(): Promise<void> }
 }> {
   const repository = await repositoryFixture()
-  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-workbench-home-'))
+  const dshHome = await realpath(await mkdtemp(join(tmpdir(), 'dsh-security-workbench-home-')))
   temporaryRoots.push(dshHome)
   const ctx = new Context()
   contexts.push(ctx)
@@ -280,14 +304,7 @@ describe('Security Assurance Workbench Remote', () => {
     })
     if (!requested.ok) throw new Error(`Export request failed: ${requested.error.code}`)
 
-    const status = await ctx.typertGateway.invoke({
-      namespace: 'securityAssuranceWorkbench',
-      method: 'getExport',
-      args: {
-        securityAssuranceWorkbenchContextId: authorityId,
-        request: { schemaVersion: 1, kind: 'STATUS', exportId: requested.value.exportId },
-      },
-    }) as SecurityResult<import('../src/index.ts').ExportViewV1>
+    const status = await waitForExportDelivery(ctx, authorityId, requested.value.exportId)
     expect(status).toMatchObject({
       ok: true,
       value: {

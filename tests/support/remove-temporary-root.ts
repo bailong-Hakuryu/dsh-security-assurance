@@ -1,15 +1,27 @@
-import { chmod, lstat, readdir, rm } from 'node:fs/promises'
+import { chmod, lstat, readdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 
 function isMissing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT'
 }
 
-function assertSystemTemporaryPath(path: string): string {
+function isNestedPath(root: string, target: string): boolean {
+  const relativeTarget = relative(root, target)
+  return relativeTarget !== ''
+    && relativeTarget !== '..'
+    && !relativeTarget.startsWith(`..${sep}`)
+    && !isAbsolute(relativeTarget)
+}
+
+async function assertSystemTemporaryPath(path: string): Promise<string> {
   const target = resolve(path)
-  const relativeTarget = relative(resolve(tmpdir()), target)
-  if (relativeTarget === '' || relativeTarget === '..' || relativeTarget.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) || isAbsolute(relativeTarget)) {
+  const configuredTemporaryRoot = resolve(tmpdir())
+  const canonicalTemporaryRoot = await realpath(configuredTemporaryRoot)
+  if (
+    !isNestedPath(configuredTemporaryRoot, target)
+    && !isNestedPath(canonicalTemporaryRoot, target)
+  ) {
     throw new Error(`Refusing to remove a path outside the system temporary directory: ${target}`)
   }
   return target
@@ -36,7 +48,7 @@ async function restoreWritableModes(path: string): Promise<void> {
 }
 
 export async function removeTemporaryRoot(path: string): Promise<void> {
-  const target = assertSystemTemporaryPath(path)
+  const target = await assertSystemTemporaryPath(path)
   await restoreWritableModes(target)
   await rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
 }

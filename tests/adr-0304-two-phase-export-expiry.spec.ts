@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -15,7 +15,7 @@ afterEach(async () => {
 
 describe('ADR 0304 Export expiry uses two-phase exact-target reaping', () => {
   it('denies access before deletion and retains an exact tombstone through purge recovery', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-security-adr-0304-'))
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-security-adr-0304-')))
     temporaryRoots.push(root)
     let clock = '2026-08-29T03:04:00.000Z'
     const module = new ExportDeliveryModule(root, () => clock)

@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -6,8 +6,8 @@ import { removeTemporaryRoot } from './remove-temporary-root.ts'
 
 describe('removeTemporaryRoot', () => {
   it('removes read-only fixture trees without following directory links', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-security-cleanup-root-'))
-    const outside = await mkdtemp(join(tmpdir(), 'dsh-security-cleanup-outside-'))
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-security-cleanup-root-')))
+    const outside = await realpath(await mkdtemp(join(tmpdir(), 'dsh-security-cleanup-outside-')))
     const nested = join(root, 'subjects', 'digest', 'content')
     const manifest = join(root, 'subjects', 'digest', 'manifest.json')
     const outsideSentinel = join(outside, 'sentinel.txt')

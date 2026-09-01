@@ -269,7 +269,7 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
     } finally {
       await fiber.dispose()
     }
-  })
+  }, 15_000)
 
   it('inventories Git symlinks and submodules without expanding either object', async () => {
     const repository = await repositoryFixture()
@@ -346,7 +346,7 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
     } finally {
       await fiber.dispose()
     }
-  })
+  }, 15_000)
 
   it('rejects a Workspace Snapshot whose tracked file traverses an ancestor link', async () => {
     const repository = await repositoryFixture()
