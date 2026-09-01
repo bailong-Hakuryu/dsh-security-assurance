@@ -1,5 +1,6 @@
 import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { removeTemporaryRoot } from './support/remove-temporary-root.ts'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -176,7 +177,7 @@ describe('Invariant Entry', () => {
         // Best-effort teardown keeps the primary assertion failure visible.
       }
     }
-    await rm(dshHome, { recursive: true, force: true }).catch(() => {})
+    await removeTemporaryRoot(dshHome).catch(() => {})
   })
 
   async function activateService(): Promise<void> {

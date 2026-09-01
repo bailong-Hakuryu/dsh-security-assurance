@@ -1,14 +1,15 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 import { EXPORT_DELIVERY_MAX_ATTEMPTS, exportStatusV1Schema } from '../src/contracts.ts'
 import { buildExportPreview, ExportDeliveryModule } from '../src/internal/export-delivery.ts'
 
 const temporaryRoots: string[] = []
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+  await removeTemporaryRoots(temporaryRoots)
 })
 
 describe('ADR 0303 Export Delivery recovery is Service-owned and bounded', () => {

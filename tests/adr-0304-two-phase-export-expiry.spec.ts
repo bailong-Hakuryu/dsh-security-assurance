@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 import { exportStatusV1Schema } from '../src/contracts.ts'
 import { binaryDigest } from '../src/internal/canonical.ts'
 import { buildExportPreview, ExportDeliveryModule } from '../src/internal/export-delivery.ts'
@@ -9,7 +10,7 @@ import { buildExportPreview, ExportDeliveryModule } from '../src/internal/export
 const temporaryRoots: string[] = []
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+  await removeTemporaryRoots(temporaryRoots)
 })
 
 describe('ADR 0304 Export expiry uses two-phase exact-target reaping', () => {

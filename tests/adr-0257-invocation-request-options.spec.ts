@@ -1,5 +1,6 @@
 import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -60,7 +61,7 @@ const exactInvocationOptionKeys: ExactInvocationOptionKeys = true
 
 afterEach(async () => {
   await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
-  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
+  await removeTemporaryRoots(temporaryRoots)
 })
 
 describe('ADR 0257: Invocation, Request, and local options are separate', () => {

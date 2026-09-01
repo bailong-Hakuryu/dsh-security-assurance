@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -10,6 +10,7 @@ import type { SubagentProvider } from '@deepseek-ai/dsh-subagent'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import EngineeringControlPlane from 'dsh-engineering-control-plane'
 import { afterEach, describe, expect, it } from 'vitest'
+import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 import SecurityAssuranceService from '../src/index.ts'
 import type { AnalyzerDescriptorV1 } from '../src/analyzer.ts'
 import SecurityAssuranceControlPlaneProvider, {
@@ -29,7 +30,7 @@ const run = promisify(execFile)
 const temporaryRoots: string[] = []
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
+  await removeTemporaryRoots(temporaryRoots)
 })
 
 async function nodeRepositoryFixture(packageJson: unknown, extraPackages = 0): Promise<string> {

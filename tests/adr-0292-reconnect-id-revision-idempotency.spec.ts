@@ -1,7 +1,8 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 import {
   INTERNAL_JSON_EXPORT_PROFILE_ID,
   LOCAL_AUDIT_DELIVERY_DESTINATION_ID,
@@ -16,7 +17,7 @@ const temporaryRoots: string[] = []
 const assessmentId = 'asm-00000000-0000-0000-0000-000000000292'
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+  await removeTemporaryRoots(temporaryRoots)
 })
 
 describe('ADR 0292 reconnect recovery by ID, revision, and idempotency', () => {

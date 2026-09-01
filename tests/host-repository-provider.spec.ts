@@ -1,7 +1,8 @@
 import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
+import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -13,7 +14,7 @@ const run = promisify(execFile)
 const temporaryRoots: string[] = []
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
+  await removeTemporaryRoots(temporaryRoots)
 })
 
 async function cleanRepository(): Promise<string> {

@@ -158,7 +158,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-当前 <code>main</code> 分支发布门禁已通过：71 个测试文件、366 个测试，静态检查、类型检查、构建、打包和 Harness Profile smoke 均通过。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针。
+当前 <code>main</code> 分支发布门禁已通过：72 个测试文件、367 个测试，静态检查、类型检查、构建、打包和 Harness Profile smoke 均通过。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针。
 
 完整领域模型见 [CONTEXT.md](CONTEXT.md)，安全政策见 [SECURITY.md](SECURITY.md)，候选版审查见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
@@ -250,7 +250,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-The current <code>main</code> branch gate passes with 71 test files and 366 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows.
+The current <code>main</code> branch gate passes with 72 test files and 367 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows.
 
 </details>
 

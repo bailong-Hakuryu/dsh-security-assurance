@@ -1,5 +1,6 @@
 import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -9,7 +10,7 @@ import { referenceHostInvocation } from './support/reference-host.ts'
 const temporaryRoots: string[] = []
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
+  await removeTemporaryRoots(temporaryRoots)
 })
 
 describe('ADR 0261 Repository mutation CAS and idempotency', () => {

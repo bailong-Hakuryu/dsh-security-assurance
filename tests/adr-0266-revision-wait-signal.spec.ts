@@ -1,6 +1,7 @@
 import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
+import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -12,7 +13,7 @@ const run = promisify(execFile)
 const temporaryRoots: string[] = []
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
+  await removeTemporaryRoots(temporaryRoots)
 })
 
 describe('ADR 0266 bounded Assessment revision wait', () => {

@@ -1,8 +1,9 @@
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
+import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 import { openSecurityPersistence } from '../src/internal/persistence.ts'
 import { prepareAssessmentContract } from '../src/internal/deterministic-kernel.ts'
 import { structuredDigest } from '../src/internal/canonical.ts'
@@ -10,7 +11,7 @@ import { structuredDigest } from '../src/internal/canonical.ts'
 const temporaryRoots: string[] = []
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
+  await removeTemporaryRoots(temporaryRoots)
 })
 
 function repositoryBindings() {

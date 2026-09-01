@@ -1,5 +1,6 @@
 import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -13,7 +14,7 @@ const temporaryHomes: string[] = []
 
 afterEach(async () => {
   await Promise.all(liveContexts.splice(0).map(async context => context.fiber.dispose()))
-  await Promise.all(temporaryHomes.splice(0).map(path => rm(path, { recursive: true, force: true })))
+  await removeTemporaryRoots(temporaryHomes)
 })
 
 async function harness() {

@@ -1,4 +1,5 @@
 import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
+import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
@@ -16,7 +17,7 @@ const run = promisify(execFile)
 const temporaryRoots: string[] = []
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
+  await removeTemporaryRoots(temporaryRoots)
 })
 
 async function repositoryFixture(): Promise<string> {
