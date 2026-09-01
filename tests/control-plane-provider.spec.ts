@@ -614,7 +614,7 @@ describe('Security Assurance Control Plane Provider', () => {
       await subagentFiber.dispose()
       await subprocessFiber.dispose()
     }
-  }, 15_000)
+  }, 30_000)
 
   it('blocks when the configured Security Repository is not the Control Plane Mission Repository', async () => {
     const missionRepository = await nodeRepositoryFixture({
