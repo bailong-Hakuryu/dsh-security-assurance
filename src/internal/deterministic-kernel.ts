@@ -18,9 +18,11 @@ import {
 } from '../contracts.ts'
 import { canonicalJson, sha256Hex, structuredDigest } from './canonical.ts'
 import {
+  gitleaksCoverageIsIndependentlyVerified,
   npmAuditCoverageIsIndependentlyVerified,
   validateExternalAnalyzerCandidates,
 } from './candidate-validation.ts'
+import { GITLEAKS_POLICY_ID } from './gitleaks-analyzer.ts'
 import { NPM_AUDIT_POLICY_ID } from './npm-audit-analyzer.ts'
 import {
   BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR,
@@ -127,33 +129,51 @@ function externalAnalyzerEvidence(
   const evidence: EvidencePublicationInputV1[] = []
   const artifactIds = new Set<string>()
   for (const analysis of analyses) {
-    for (const item of analysis.contribution.evidence) {
-      if (artifactIds.has(item.artifactId)) throw new TypeError('External Analyzer Evidence identity collides')
-      artifactIds.add(item.artifactId)
-      evidence.push(item)
+    const structurallyBoundCoverage = externalCompleteCoverageClaimIsStructurallyBound(
+      analysis,
+      obligationId,
+    )
+    const gitleaksEvidenceEligible = contract.policy.policyId === GITLEAKS_POLICY_ID
+      && structurallyBoundCoverage
+      && gitleaksCoverageIsIndependentlyVerified({
+        portfolioEntry: analysis.portfolioEntry,
+        contribution: analysis.contribution,
+        subjectSlices: analysis.subjectSlices,
+        policyId: contract.policy.policyId,
+        policyDigest: contract.policy.digest,
+      })
+    // A rejected Gitleaks Contribution may contain attacker-controlled values
+    // in fields that the real normalizer would redact. Keep it inside the Pure
+    // validation boundary and publish only fixed rejection metadata.
+    const publishContribution = contract.policy.policyId !== GITLEAKS_POLICY_ID
+      || gitleaksEvidenceEligible
+    if (publishContribution) {
+      for (const item of analysis.contribution.evidence) {
+        if (artifactIds.has(item.artifactId)) throw new TypeError('External Analyzer Evidence identity collides')
+        artifactIds.add(item.artifactId)
+        evidence.push(item)
+      }
     }
     const contributionArtifactId = `analyzer-contribution-${sha256Hex(canonicalJson({
       analyzerId: analysis.portfolioEntry.descriptor.analyzerId,
       analyzerVersion: analysis.portfolioEntry.descriptor.analyzerVersion,
     })).slice(0, 16)}`
-    if (artifactIds.has(contributionArtifactId)) throw new TypeError('Analyzer Contribution identity collides')
-    artifactIds.add(contributionArtifactId)
-    evidence.push({
-      artifactId: contributionArtifactId,
-      schemaId: 'dsh/security-analyzer-contribution',
-      mediaType: 'application/vnd.dsh.security.analyzer-contribution+json',
-      value: json(analysis.contribution),
-    })
+    if (publishContribution) {
+      if (artifactIds.has(contributionArtifactId)) throw new TypeError('Analyzer Contribution identity collides')
+      artifactIds.add(contributionArtifactId)
+      evidence.push({
+        artifactId: contributionArtifactId,
+        schemaId: 'dsh/security-analyzer-contribution',
+        mediaType: 'application/vnd.dsh.security.analyzer-contribution+json',
+        value: json(analysis.contribution),
+      })
+    }
     const eligibilityArtifactId = `evidence-eligibility-${sha256Hex(canonicalJson({
       analyzerIdentity: analysis.contribution.analyzerIdentity,
       qualificationId: analysis.portfolioEntry.eligibility.qualificationId,
     })).slice(0, 16)}`
     if (artifactIds.has(eligibilityArtifactId)) throw new TypeError('Eligibility Decision identity collides')
     artifactIds.add(eligibilityArtifactId)
-    const structurallyBoundCoverage = externalCompleteCoverageClaimIsStructurallyBound(
-      analysis,
-      obligationId,
-    )
     // Only package-owned independent verifiers can promote contributed
     // Evidence beyond advisory status. Host Qualification alone is never
     // sufficient for verdict-bearing Coverage.
@@ -169,7 +189,9 @@ function externalAnalyzerEvidence(
         policyId: contract.policy.policyId,
         policyDigest: contract.policy.digest,
       })
-    const evidenceEligible = conformanceEvidenceEligible || npmAuditEvidenceEligible
+    const evidenceEligible = conformanceEvidenceEligible
+      || npmAuditEvidenceEligible
+      || gitleaksEvidenceEligible
     const eligibilityReason = evidenceEligible
       ? null
       : analysis.portfolioEntry.eligibility.reason
@@ -193,7 +215,9 @@ function externalAnalyzerEvidence(
         subjectDigest: analysis.contribution.subjectDigest,
         policyDigest: contract.policy.digest,
         obligationId,
-        evidenceArtifactIds: analysis.contribution.evidence.map(item => item.artifactId),
+        evidenceArtifactIds: publishContribution
+          ? analysis.contribution.evidence.map(item => item.artifactId)
+          : [],
       }),
     })
   }
@@ -408,6 +432,7 @@ export function evaluateDeterministicAssessment(
       // Candidates) as complete Coverage.
       const gateBearingPolicy = contract.policy.policyId === 'security/reference-validation'
         || contract.policy.policyId === NPM_AUDIT_POLICY_ID
+        || contract.policy.policyId === GITLEAKS_POLICY_ID
       const completeCoverage = gateBearingPolicy
         && candidateValidation.unresolvedCandidateIds.length === 0
         && externalAnalyses.some(analysis => (
@@ -416,6 +441,14 @@ export function evaluateDeterministicAssessment(
           && externalCompleteCoverageClaimIsStructurallyBound(analysis, obligationId)
           && (contract.policy.policyId !== NPM_AUDIT_POLICY_ID
             || npmAuditCoverageIsIndependentlyVerified({
+              portfolioEntry: analysis.portfolioEntry,
+              contribution: analysis.contribution,
+              subjectSlices: analysis.subjectSlices,
+              policyId: contract.policy.policyId,
+              policyDigest: contract.policy.digest,
+            }))
+          && (contract.policy.policyId !== GITLEAKS_POLICY_ID
+            || gitleaksCoverageIsIndependentlyVerified({
               portfolioEntry: analysis.portfolioEntry,
               contribution: analysis.contribution,
               subjectSlices: analysis.subjectSlices,

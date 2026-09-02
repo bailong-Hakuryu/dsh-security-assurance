@@ -16,7 +16,7 @@
 
 <code>dsh-security-assurance</code> 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供证据驱动的仓库安全评估。它通过公开的 Harness/Cordis 接口接入，不修改 Harness Core，并把评估过程封装为可查询、可恢复、可审计的版本化结果。
 
-这是一个安全保障插件，不是通用漏洞扫描器。当前内建能力包括 Node 项目的 <code>package.json</code> 安装生命周期检查，以及对冻结 <code>npm-audit.json</code> 报告的纯归一化与独立验证。
+这是一个安全保障插件，不是通用漏洞扫描器。当前内建能力包括 Node 项目的 <code>package.json</code> 安装生命周期检查，以及对冻结 <code>npm-audit.json</code> 和 Gitleaks v8 JSON 报告的纯归一化与独立验证。
 
 ### 当前版本
 
@@ -35,6 +35,7 @@
 | <code>TARGETED</code> 模式 | 暂不支持 |
 | 默认策略 | <code>security/node-package-lifecycle</code> |
 | 可选 npm audit 策略 | <code>security/npm-dependency-audit</code> |
+| 可选 Gitleaks 策略 | <code>security/secret-leak-audit</code> |
 | 默认档案 | <code>security/standard</code> |
 | Harness 版本 | <code>0.1.2-alpha.1</code>（主）、<code>0.1.2-alpha.2</code>、<code>0.1.2-alpha.3</code>、<code>0.1.2-alpha.4</code> |
 | Node.js | <code>^22.19.0 \|\| >=24.0.0</code>（CI 覆盖 22 与 24） |
@@ -97,6 +98,16 @@ npm audit --json | Set-Content -Encoding utf8 npm-audit.json
 
 将 Repository 的策略绑定设为 <code>security/npm-dependency-audit</code>。适配器会按冻结字节和摘要读取 <code>npm-audit.json</code>：干净且完整的报告得到 <code>SATISFIED</code>；经独立契约复核的漏洞得到阻塞 Finding 和 <code>FAILED</code>；报告缺失、格式不受支持、Coverage 不完整或 Evidence 被篡改时得到 <code>INDETERMINATE</code>。报告新鲜度仍由生成报告的 Host/CI 负责。
 
+### Gitleaks 报告适配
+
+Gitleaks 同样由 Host、CI 或操作者在评估外部执行。推荐启用完全脱敏，并把 UTF-8 JSON 报告纳入评估 Subject：
+
+~~~powershell
+gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.json
+~~~
+
+将 Repository 的策略绑定设为 <code>security/secret-leak-audit</code>。PURE 适配器只保留规则 ID、受影响相对路径和位置；<code>Secret</code>、<code>Match</code>、源代码行、秘密哈希、作者邮箱与提交消息不会进入 Candidate、Finding、Evidence、Seal 或导出。完整空报告得到 <code>SATISFIED</code>；独立复核的任意报告项得到 HIGH、阻塞 Finding 和 <code>FAILED</code>；缺失、无效、被篡改或不完整的报告得到 <code>INDETERMINATE</code>。扫描配置、报告新鲜度、Git 历史范围和 allowlist 正确性仍由 Host/CI 负责。
+
 ### 工具工作流
 
 | 顺序 | 工具 | 作用 |
@@ -132,7 +143,7 @@ npm audit --json | Set-Content -Encoding utf8 npm-audit.json
 
 | 入口 | 作用 |
 | --- | --- |
-| <code>dsh-security-assurance</code> | 根 Security Assurance Service；同时导出 npm audit 归一化契约 |
+| <code>dsh-security-assurance</code> | 根 Security Assurance Service；同时导出 npm audit 与 Gitleaks 归一化契约 |
 | <code>dsh-security-assurance/tools</code> | 八个严格模型工具 |
 | <code>dsh-security-assurance/contracts</code> | 版本化公共契约 |
 | <code>dsh-security-assurance/analyzer</code> | 内建分析器接口 |
@@ -165,7 +176,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-当前开发树发布门禁已通过：74 个测试文件、389 个测试，静态检查、类型检查、构建、打包和 Harness Profile smoke 均通过。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针；每日兼容矩阵另对全部已声明 Harness 版本执行双插件联合 E2E 与打包安装探针。
+当前开发树发布门禁已通过：75 个测试文件、399 个测试，静态检查、类型检查、构建、打包和 Harness Profile smoke 均通过。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针；每日兼容矩阵另对全部已声明 Harness 版本执行双插件联合 E2E 与打包安装探针。
 
 完整领域模型见 [CONTEXT.md](CONTEXT.md)，安全政策见 [SECURITY.md](SECURITY.md)，候选版审查见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
@@ -176,7 +187,7 @@ pnpm release:check
 
 <code>dsh-security-assurance</code> is an evidence-backed repository security assessment plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It integrates through public Harness and Cordis seams without modifying Harness Core, and exposes versioned, queryable, recoverable assessment results.
 
-This is an assurance plugin, not a general vulnerability scanner. Built-in capabilities include the Node <code>package.json</code> install-lifecycle check and pure normalization plus independent validation of a frozen <code>npm-audit.json</code> report.
+This is an assurance plugin, not a general vulnerability scanner. Built-in capabilities include the Node <code>package.json</code> install-lifecycle check and pure normalization plus independent validation of frozen <code>npm-audit.json</code> and Gitleaks v8 JSON reports.
 
 ## Current release
 
@@ -195,6 +206,7 @@ This is an assurance plugin, not a general vulnerability scanner. Built-in capab
 | <code>TARGETED</code> | Not currently supported |
 | Default policy | <code>security/node-package-lifecycle</code> |
 | Optional npm audit policy | <code>security/npm-dependency-audit</code> |
+| Optional Gitleaks policy | <code>security/secret-leak-audit</code> |
 | Default profile | <code>security/standard</code> |
 | Harness versions | <code>0.1.2-alpha.1</code> (primary), <code>0.1.2-alpha.2</code>, <code>0.1.2-alpha.3</code>, <code>0.1.2-alpha.4</code> |
 | Node.js | <code>^22.19.0 \|\| >=24.0.0</code> (CI covers 22 and 24) |
@@ -242,6 +254,16 @@ npm audit --json | Set-Content -Encoding utf8 npm-audit.json
 
 Bind the Repository to <code>security/npm-dependency-audit</code>. The adapter reads the exact frozen report bytes and digest. A complete clean report yields <code>SATISFIED</code>; independently validated vulnerabilities yield blocking Findings and <code>FAILED</code>; a missing or unsupported report, incomplete Coverage, or tampered Evidence yields <code>INDETERMINATE</code>. Report freshness remains the responsibility of the Host or CI job that produced it.
 
+## Gitleaks report adapter
+
+The Host, CI job, or operator also runs Gitleaks outside the Assessment. Enable full redaction and freeze the UTF-8 JSON report into the selected Subject:
+
+~~~powershell
+gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.json
+~~~
+
+Bind the Repository to <code>security/secret-leak-audit</code>. The PURE adapter retains only the rule ID, affected relative path, and location. It never projects <code>Secret</code>, <code>Match</code>, source lines, secret hashes, author email, or commit messages into Candidates, Findings, Evidence, Seals, or exports. A complete empty report yields <code>SATISFIED</code>; any independently re-derived report entry yields a HIGH blocking Finding and <code>FAILED</code>; missing, malformed, tampered, or incomplete input yields <code>INDETERMINATE</code>. The Host or CI owns scan configuration, report freshness, Git history breadth, and allowlist correctness.
+
 ## Results and safety
 
 All public operations return a typed <code>SecurityResult&lt;T&gt;</code> envelope. Commands return immutable versioned Receipts; queries return identity- and revision-bound Snapshots. Host authority resolves identity and permissions; model arguments never carry credentials, paths, database handles, or executable objects. Missing authorization, conflicts, timeouts, cancellation, and external failures fail closed.
@@ -265,7 +287,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-The current development tree gate passes with 74 test files and 389 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
+The current development tree gate passes with 75 test files and 399 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
 
 </details>
 

@@ -47,6 +47,17 @@
 - Independently re-derive npm audit Candidate fields and Coverage from the
   frozen report, bind Evidence producer/path/digest/entries, accept verified
   clean zero-Candidate reports, and fail closed on missing or fabricated input.
+- Add a bundled PURE Gitleaks v8 JSON normalization adapter for
+  `security/secret-leak-audit`, with exact frozen-report binding and an
+  independent entry-for-entry Coverage and Candidate verifier.
+- Retain only rule identity, affected path, and location from Gitleaks input;
+  discard secret values, matches, source lines, secret hashes, author identity,
+  email, and commit prose before Evidence, Findings, Seals, queries, or exports,
+  including when a contributed result is rejected as tampered.
+- Accept a verified empty Gitleaks report as complete Coverage, map every
+  independently validated report entry to a HIGH blocking Finding, and fail
+  closed on missing, malformed, contradictory, or fabricated reports in both
+  `REPOSITORY` and exact-commit `CHANGE` Assessments.
 - Add public Linux, macOS, and Windows CI with a fresh packed-profile
   installation and live Web probe, and make linting part of the release gate.
 - Retry transient Windows directory locks while reaping abandoned Subject

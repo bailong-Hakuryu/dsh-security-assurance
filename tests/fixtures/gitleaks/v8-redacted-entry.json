@@ -1,0 +1,10 @@
+{
+  "ruleId": "generic-api-key",
+  "affectedPath": "config/fixture.env",
+  "location": {
+    "startLine": 7,
+    "endLine": 7,
+    "startColumn": 18,
+    "endColumn": 58
+  }
+}

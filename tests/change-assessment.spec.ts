@@ -12,7 +12,7 @@ import type {
   SecurityAssuranceService,
   SecurityInvocation,
 } from '../src/index.ts'
-import { NPM_AUDIT_POLICY_ID } from '../src/index.ts'
+import { GITLEAKS_POLICY_ID, NPM_AUDIT_POLICY_ID } from '../src/index.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
 const run = promisify(execFile)
@@ -274,5 +274,57 @@ describe('exact-commit CHANGE Assessment', () => {
         }],
       },
     })
+  }, 30_000)
+
+  it('normalizes and independently validates the redacted Gitleaks projection in the head tree', async () => {
+    const report = `${JSON.stringify([{
+      Description: 'Fixture secret',
+      StartLine: 3,
+      EndLine: 3,
+      StartColumn: 10,
+      EndColumn: 50,
+      Match: 'token = FIXTURE_CHANGE_SECRET_NOT_A_REAL_CREDENTIAL',
+      Secret: 'FIXTURE_CHANGE_SECRET_NOT_A_REAL_CREDENTIAL',
+      File: 'config/change.env',
+      Author: 'Fixture Author',
+      Email: 'fixture@example.invalid',
+      Message: 'sensitive fixture metadata',
+      RuleID: 'generic-api-key',
+    }], null, 2)}\n`
+    const fixture = await changeRepositoryFixture({
+      'package.json': '{"name":"gitleaks-change-fixture","version":"1.0.0"}\n',
+      'gitleaks-report.json': '[]\n',
+    }, {
+      'gitleaks-report.json': report,
+    })
+    const result = await runChangeAssessment({
+      id: 'gitleaks',
+      policyId: GITLEAKS_POLICY_ID,
+      repository: fixture.root,
+      baseCommit: fixture.baseCommit,
+      headCommit: fixture.headCommit,
+    })
+    expect(result.assessment).toMatchObject({
+      ok: true,
+      value: {
+        state: 'SEALED',
+        subject: { kind: 'change' },
+        contract: { assessmentMode: 'CHANGE' },
+        verdict: 'FAILED',
+        coverage: { status: 'COMPLETE' },
+      },
+    })
+    expect(result.findings).toMatchObject({
+      ok: true,
+      value: {
+        findings: [{
+          validationState: 'VALIDATED',
+          validationContractId: 'dsh/security/gitleaks-validation/v1',
+          technicalSeverity: 'HIGH',
+          policySignificance: 'BLOCKING',
+        }],
+      },
+    })
+    expect(JSON.stringify(result)).not.toContain('FIXTURE_CHANGE_SECRET_NOT_A_REAL_CREDENTIAL')
   }, 30_000)
 })

@@ -158,6 +158,13 @@ import {
 } from './internal/assessment-list-query.ts'
 import { analyzeNodePackageInstallLifecycle } from './internal/builtin-node-package-lifecycle-analyzer.ts'
 import {
+  createGitleaksAnalyzer,
+  GITLEAKS_ANALYZER_ID,
+  GITLEAKS_DESCRIPTOR,
+  GITLEAKS_QUALIFICATION,
+  GITLEAKS_REPORT_BASE_NAME,
+} from './internal/gitleaks-analyzer.ts'
+import {
   createNpmAuditAnalyzer,
   NPM_AUDIT_ANALYZER_ID,
   NPM_AUDIT_DESCRIPTOR,
@@ -198,6 +205,23 @@ import {
 
 export * from './contracts.ts'
 export * from './analyzer.ts'
+export {
+  analyzeGitleaksReport,
+  createGitleaksAnalyzer,
+  GITLEAKS_ANALYZER_ID,
+  GITLEAKS_ANALYZER_VERSION,
+  GITLEAKS_DESCRIPTOR,
+  GITLEAKS_EVIDENCE_SCHEMA_ID,
+  GITLEAKS_NORMALIZATION_CONTRACT_ID,
+  GITLEAKS_POLICY_ID,
+  GITLEAKS_QUALIFICATION,
+  GITLEAKS_REPORT_BASE_NAME,
+  GITLEAKS_WEAKNESS_ID,
+  gitleaksFindingEvidenceEntryV1Schema,
+  gitleaksReportEvidenceV1Schema,
+  gitleaksReportFindingSchema,
+  gitleaksReportSchema,
+} from './internal/gitleaks-analyzer.ts'
 export {
   analyzeNpmAuditReport,
   createNpmAuditAnalyzer,
@@ -463,6 +487,8 @@ export class SecurityAssuranceService extends Service {
     // Policy, so other Policies never see it in their Analyzer portfolio.
     this.analyzerRegistry.register(NPM_AUDIT_DESCRIPTOR, createNpmAuditAnalyzer)
     this.analyzerRegistry.registerQualification(NPM_AUDIT_QUALIFICATION)
+    this.analyzerRegistry.register(GITLEAKS_DESCRIPTOR, createGitleaksAnalyzer)
+    this.analyzerRegistry.registerQualification(GITLEAKS_QUALIFICATION)
     Object.defineProperty(this, RESOLVE_TRUSTED_INVOCATION, {
       configurable: false,
       enumerable: false,
@@ -2087,9 +2113,18 @@ export class SecurityAssuranceService extends Service {
             signal,
           )
         : []
-      const analyzerSlices = npmAuditSlices.length > 0
-        ? [...sourceSlices, ...npmAuditSlices]
-        : sourceSlices
+      const needsGitleaksSlices = running.contract.analyzerPortfolio.some(entry => (
+        entry.descriptor.analyzerId === GITLEAKS_ANALYZER_ID
+      ))
+      const gitleaksSlices = needsGitleaksSlices
+        ? await readVerifiedExternalToolReportSlices(
+            this.securityRoot,
+            running.subject.digest,
+            [GITLEAKS_REPORT_BASE_NAME],
+            signal,
+          )
+        : []
+      const analyzerSlices = [...sourceSlices, ...npmAuditSlices, ...gitleaksSlices]
       const analysis = running.contract.policy.policyId === 'security/node-package-lifecycle'
         ? {
             expectedSubjectDigest: running.subject.digest,
