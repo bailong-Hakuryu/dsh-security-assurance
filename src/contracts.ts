@@ -15,6 +15,28 @@ export const SECURITY_ASSURANCE_PRODUCT_VERSION = '0.1.0-rc.10' as const
 export const TARGET_HARNESS_VERSION = '0.1.2-alpha.1' as const
 export const REQUIRED_NODE_RANGE = '^22.19.0 || >=24.0.0' as const
 
+/**
+ * Closed, explicit set of DeepSeek Harness versions this package is verified
+ * to run on. The primary qualification target is `TARGET_HARNESS_VERSION`;
+ * every entry is exercised by the dual-plugin Harness compatibility matrix
+ * workflow on Node 22 and 24. A new upstream Harness tag enters verification
+ * automatically but is only admitted here after a passing matrix run, so the
+ * composition invariant can keep failing closed on unverified versions
+ * (ADR 0310). `scripts/harness-compat-matrix.mjs` parses this block, so keep
+ * the literal-entry shape and the leading `TARGET_HARNESS_VERSION` entry.
+ */
+export const SUPPORTED_HARNESS_VERSIONS = Object.freeze([
+  TARGET_HARNESS_VERSION,
+  '0.1.2-alpha.2',
+  '0.1.2-alpha.3',
+  '0.1.2-alpha.4',
+] as const)
+
+/** Closed-world Harness version admission used by the composition invariant. */
+export function isSupportedHarnessVersion(version: string): boolean {
+  return (SUPPORTED_HARNESS_VERSIONS as readonly string[]).includes(version)
+}
+
 declare const securityInvocationBrand: unique symbol
 
 /**

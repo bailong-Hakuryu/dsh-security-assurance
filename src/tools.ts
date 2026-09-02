@@ -32,6 +32,7 @@ import {
   resolveTrustedInvocation,
   type SecurityPermission,
 } from './internal/authority.ts'
+import { readSessionEvents } from './internal/session-events.ts'
 
 export const SECURITY_COMMAND_NAME = 'security'
 
@@ -522,8 +523,9 @@ function requireHarnessSession(ctx: Context, exec: ToolRunContext): string {
       'SECURITY_TOOL_DRIVER_REQUIRED',
     )
   }
-  for (let index = agent.session.events.length - 1; index >= 0; index -= 1) {
-    const boundary = agent.session.events[index]
+  const boundaries = readSessionEvents(agent.session)
+  for (let index = boundaries.length - 1; index >= 0; index -= 1) {
+    const boundary = boundaries[index]
     if (boundary?.type === 'turn/end') {
       return reject('security tools require an open model turn', 'SECURITY_TOOL_DRIVER_REQUIRED')
     }

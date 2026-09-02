@@ -19,6 +19,7 @@ import SecurityAssuranceService from '../src/index.ts'
 import SecurityAssuranceTools from '../src/tools.ts'
 import type { AssessmentId, SecurityInvocation } from '../src/contracts.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
+import { readSessionEvents } from '../src/internal/session-events.ts'
 
 const run = promisify(execFile)
 const temporaryRoots: string[] = []
@@ -58,7 +59,7 @@ function stubAgent(rawId: string, supplied?: Session): StubAgent {
 }
 
 function openTurn(stub: StubAgent): number {
-  const turn = stub.session.events
+  const turn = readSessionEvents(stub.session)
     .filter(event => event.type === 'turn/start')
     .reduce((maximum, event) => Math.max(maximum, event.data.turn), 0) + 1
   stub.agent.inbox.append('next-turn', createUserMessage({

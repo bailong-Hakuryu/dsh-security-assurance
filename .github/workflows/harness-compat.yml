@@ -1,0 +1,177 @@
+name: Harness Compatibility
+
+# Dual-plugin joint E2E across the verified Harness compatibility window.
+# Security Assurance owns this workflow for both plugins; Control Plane keeps
+# its own independent CI. A daily discovery lists the official Harness tags
+# and feeds them into the test matrix verbatim, so a newly published Harness
+# tag enters verification automatically. Unverified tags fail closed: the
+# composition invariant only admits the declared supported set, and discovery
+# never skips a missing version silently.
+
+on:
+  schedule:
+    - cron: '37 2 * * *'
+  workflow_dispatch:
+    inputs:
+      harness_ref:
+        description: 'Harness tag to debug (for example dsh-v0.1.2-alpha.4); empty runs the discovered matrix'
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/harness-compat.yml'
+      - 'scripts/harness-compat-matrix.mjs'
+      - 'tests/harness-compat-matrix.spec.ts'
+  pull_request:
+    paths:
+      - '.github/workflows/harness-compat.yml'
+      - 'scripts/harness-compat-matrix.mjs'
+      - 'tests/harness-compat-matrix.spec.ts'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    name: Discover verifiable Harness versions
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.compute.outputs.matrix }}
+    steps:
+      - name: Check out Security Assurance
+        uses: actions/checkout@v6
+        with:
+          path: plugin
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      # The matrix JSON is the auditable data boundary between dynamic
+      # discovery and the test lanes: it is printed into the step summary,
+      # uploaded as an artifact, and consumed verbatim via fromJSON below.
+      - name: Compute compatibility matrix
+        id: compute
+        shell: bash
+        working-directory: plugin
+        env:
+          MANUAL_REF: ${{ inputs.harness_ref }}
+        run: |
+          args=(--output ../harness-compat-matrix.json)
+          if [ -n "$MANUAL_REF" ]; then
+            args+=(--ref "$MANUAL_REF")
+          fi
+          matrix_json="$(node scripts/harness-compat-matrix.mjs "${args[@]}")"
+          echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
+
+      - name: Record the discovered matrix
+        shell: bash
+        run: |
+          {
+            echo '### Harness compatibility matrix'
+            echo ''
+            echo '```json'
+            cat harness-compat-matrix.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload matrix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-compat-matrix
+          path: harness-compat-matrix.json
+          if-no-files-found: error
+          retention-days: 30
+
+  compat:
+    name: ${{ matrix.track }} ${{ matrix.harness }} (${{ matrix.os }}, Node ${{ matrix.node }})
+    needs: discover
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Check out Security Assurance
+        uses: actions/checkout@v6
+        with:
+          path: plugin
+          persist-credentials: false
+
+      # The lane ref always comes from the discovered matrix artifact, never
+      # from a hardcoded version, so fresh-machine verification follows the
+      # official Harness tags automatically.
+      - name: Check out Harness ${{ matrix.ref }}
+        uses: actions/checkout@v6
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ matrix.ref }}
+          path: deepseek-harness-latest
+          persist-credentials: false
+
+      # Control Plane stays on main until its rc.10 provider binding has a
+      # new release tag, matching the primary CI qualification layout.
+      - name: Check out qualified Control Plane
+        uses: actions/checkout@v6
+        with:
+          repository: bailong-Hakuryu/dsh-engineering-control-plane
+          ref: main
+          path: DSH Engineering Control Plane
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+          cache-dependency-path: |
+            plugin/pnpm-lock.yaml
+            deepseek-harness-latest/pnpm-lock.yaml
+            DSH Engineering Control Plane/pnpm-lock.yaml
+
+      - name: Install Harness dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: deepseek-harness-latest
+
+      - name: Build Harness
+        run: pnpm build
+        working-directory: deepseek-harness-latest
+
+      - name: Install Control Plane dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: DSH Engineering Control Plane
+
+      - name: Build Control Plane
+        run: pnpm build
+        working-directory: DSH Engineering Control Plane
+
+      - name: Install Security Assurance dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: plugin
+
+      # Semantic leg: Mission -> Developer workspace change -> CHANGE
+      # Assessment -> sealed submission -> Quality Gate, including the
+      # SATISFIED / FAILED / INDETERMINATE gate propagation matrix and the
+      # composition invariant against the Harness under test.
+      - name: Run dual-plugin joint E2E and gate propagation
+        run: pnpm test:dual-plugin-e2e
+        working-directory: plugin
+
+      # Packed leg: both plugins are built and packed, the tarballs are
+      # installed into a clean Harness profile, and a live Web probe plus the
+      # persisted Host repository binding prove the release installation.
+      - name: Pack both plugins and probe a fresh Harness profile
+        run: pnpm pack:profile-smoke
+        working-directory: plugin

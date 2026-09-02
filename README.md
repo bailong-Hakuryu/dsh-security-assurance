@@ -3,6 +3,7 @@
 > DeepSeek Harness 的策略驱动仓库安全评估插件 · 中文默认，English below
 
 [![Release](https://img.shields.io/github/v/release/bailong-Hakuryu/dsh-security-assurance?display_name=tag)](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases)
+[![Harness Compatibility](https://github.com/bailong-Hakuryu/dsh-security-assurance/actions/workflows/harness-compat.yml/badge.svg)](https://github.com/bailong-Hakuryu/dsh-security-assurance/actions/workflows/harness-compat.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 <p align="center">
@@ -21,7 +22,7 @@
 
 - 版本：<code>0.1.0-rc.10</code>
 - 状态：Release Candidate（预发布版）
-- 适配：DeepSeek Harness <code>0.1.2-alpha.1</code>
+- 适配：DeepSeek Harness <code>0.1.2-alpha.1</code>（主目标）；<code>0.1.2-alpha.2</code> ~ <code>0.1.2-alpha.4</code> 经兼容矩阵验证
 - GitHub：[v0.1.0-rc.10 Release](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.10)
 
 ### 支持范围
@@ -35,15 +36,19 @@
 | 默认策略 | <code>security/node-package-lifecycle</code> |
 | 可选 npm audit 策略 | <code>security/npm-dependency-audit</code> |
 | 默认档案 | <code>security/standard</code> |
+| Harness 版本 | <code>0.1.2-alpha.1</code>（主）、<code>0.1.2-alpha.2</code>、<code>0.1.2-alpha.3</code>、<code>0.1.2-alpha.4</code> |
+| Node.js | <code>^22.19.0 \|\| >=24.0.0</code>（CI 覆盖 22 与 24） |
 | 支持平台 | Windows、Linux、macOS |
 
 评估会先读取当前 Host 注册的 Repository 和 Catalog；只有 Service 返回的精确 ID、模式、Subject、Target、Profile 和强化控制才能用于启动，不允许模型猜测路径或标识符。
+
+Harness 支持窗口是一个显式的已验证集合：每日 [Harness Compatibility](https://github.com/bailong-Hakuryu/dsh-security-assurance/actions/workflows/harness-compat.yml) 工作流自动发现官方仓库标签，对主目标在 Ubuntu、macOS、Windows 上、对其余版本在 Ubuntu 上执行双插件联合 E2E（Mission → Developer 工作区变更 → CHANGE Assessment → sealed submission → Quality Gate）和打包 fresh Profile 安装加 Web 探针。新标签会自动进入验证，但未通过矩阵验证前不会被声明支持（ADR 0310）。
 
 独立工具与 Workbench 的 Catalog 契约保持不变，只向模型提供精确提交 <code>change</code>。当 Control Plane 完成 Developer 与 Implementation Evidence 后，Provider 会从不可伪造的执行上下文接收 Host 专用 <code>workspace_change</code>，同时核对分支、baseline HEAD、Git 状态指纹、逐字节产出变更指纹与完整结果树；任何漂移都会在创建 Assessment 前 fail closed。
 
 ### 安装（Harness Web）
 
-兼容 DeepSeek Harness <code>0.1.2-alpha.1</code>，要求 Node.js <code>^22.19.0 || >=24.0.0</code> 和 Harness CLI。将终端当前目录设为要评估的 Git 仓库，然后直接安装 GitHub Release 中已经构建的包：
+兼容 DeepSeek Harness <code>0.1.2-alpha.1</code> ~ <code>0.1.2-alpha.4</code>（显式已验证集合，见上方支持范围），要求 Node.js <code>^22.19.0 || >=24.0.0</code> 和 Harness CLI。将终端当前目录设为要评估的 Git 仓库，然后直接安装 GitHub Release 中已经构建的包：
 
 ~~~powershell
 dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.10/dsh-security-assurance-0.1.0-rc.10.tgz
@@ -160,7 +165,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-当前开发树发布门禁已通过：73 个测试文件、371 个测试，静态检查、类型检查、构建、打包和 Harness Profile smoke 均通过。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针。
+当前开发树发布门禁已通过：74 个测试文件、387 个测试，静态检查、类型检查、构建、打包和 Harness Profile smoke 均通过。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针；每日兼容矩阵另对全部已声明 Harness 版本执行双插件联合 E2E 与打包安装探针。
 
 完整领域模型见 [CONTEXT.md](CONTEXT.md)，安全政策见 [SECURITY.md](SECURITY.md)，候选版审查见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
@@ -177,7 +182,7 @@ This is an assurance plugin, not a general vulnerability scanner. Built-in capab
 
 - Version: <code>0.1.0-rc.10</code>
 - Status: release candidate
-- Target Harness: <code>0.1.2-alpha.1</code>
+- Target Harness: <code>0.1.2-alpha.1</code> (primary); <code>0.1.2-alpha.2</code> ~ <code>0.1.2-alpha.4</code> verified by the compatibility matrix
 - Release: [v0.1.0-rc.10](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.10)
 
 ## Support matrix
@@ -191,9 +196,13 @@ This is an assurance plugin, not a general vulnerability scanner. Built-in capab
 | Default policy | <code>security/node-package-lifecycle</code> |
 | Optional npm audit policy | <code>security/npm-dependency-audit</code> |
 | Default profile | <code>security/standard</code> |
+| Harness versions | <code>0.1.2-alpha.1</code> (primary), <code>0.1.2-alpha.2</code>, <code>0.1.2-alpha.3</code>, <code>0.1.2-alpha.4</code> |
+| Node.js | <code>^22.19.0 \|\| >=24.0.0</code> (CI covers 22 and 24) |
 | Platforms | Windows, Linux, macOS |
 
 The Service resolves authorized repositories and catalog choices first. Models must use the exact returned identifiers; paths and IDs are never guessed.
+
+The Harness support window is an explicit, verified set: a daily [Harness Compatibility](https://github.com/bailong-Hakuryu/dsh-security-assurance/actions/workflows/harness-compat.yml) workflow discovers official repository tags, then runs the dual-plugin joint E2E (Mission → Developer workspace change → CHANGE Assessment → sealed submission → Quality Gate) and a packed fresh-profile installation with a live Web probe — on Ubuntu, macOS, and Windows for the primary target, and on Ubuntu for the remaining versions. New tags enter verification automatically but are not claimed as supported until the matrix passes (ADR 0310).
 
 Exact-commit <code>CHANGE</code> mode freezes the resolved base and head identities, raw diff digest, and complete head tree. The bundled policies evaluate their complete relevant input sets in that tree, which is a conservative superset of the Policy impact cone.
 
@@ -201,7 +210,7 @@ The standalone tool and Workbench catalog remains backward compatible and expose
 
 ## Install in Harness Web
 
-Compatible with DeepSeek Harness <code>0.1.2-alpha.1</code>. Requires Node.js <code>^22.19.0 || >=24.0.0</code> and the Harness CLI. Install the prebuilt GitHub Release package directly:
+Compatible with DeepSeek Harness <code>0.1.2-alpha.1</code> ~ <code>0.1.2-alpha.4</code> (an explicit, verified set; see the support matrix above). Requires Node.js <code>^22.19.0 || >=24.0.0</code> and the Harness CLI. Install the prebuilt GitHub Release package directly:
 
 ~~~powershell
 dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.10/dsh-security-assurance-0.1.0-rc.10.tgz
@@ -256,7 +265,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-The current development tree gate passes with 73 test files and 371 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows.
+The current development tree gate passes with 74 test files and 387 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
 
 </details>
 

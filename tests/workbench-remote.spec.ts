@@ -31,6 +31,15 @@ const run = promisify(execFile)
 const temporaryRoots: string[] = []
 const contexts: Context[] = []
 
+/**
+ * Harness `0.1.2-alpha.2` namespaced the typert gateway error codes
+ * (`input-invalid` became `gateway/input-invalid`, ADR 0310). Both spellings
+ * are accepted across the supported window; any other code still fails.
+ */
+function gatewayErrorCode(code: string): RegExp {
+  return new RegExp(`^(?:gateway/)?${code}$`)
+}
+
 afterEach(async () => {
   await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
   await removeTemporaryRoots(temporaryRoots)
@@ -707,7 +716,7 @@ describe('Security Assurance Workbench Remote', () => {
           viewProfileId: 'security/evidence-view/bounded-json-v1',
         },
       },
-    })).rejects.toMatchObject({ code: 'input-invalid' })
+    })).rejects.toMatchObject({ code: expect.stringMatching(gatewayErrorCode('input-invalid')) })
     expect(resolvedContextIds).toEqual([authorityId])
   })
 
@@ -927,7 +936,7 @@ describe('Security Assurance Workbench Remote', () => {
         permissions: ['risk:break-glass'],
         request: { schemaVersion: 1, assessmentId },
       },
-    })).rejects.toMatchObject({ code: 'arguments-invalid' })
+    })).rejects.toMatchObject({ code: expect.stringMatching(gatewayErrorCode('arguments-invalid')) })
     expect(resolvedContextIds).toHaveLength(1)
   })
 
@@ -1062,7 +1071,7 @@ describe('Security Assurance Workbench Remote', () => {
         securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-unknown'),
         request: { schemaVersion: 1, assessmentId },
       },
-    })).rejects.toMatchObject({ code: 'lookup-not-found' })
+    })).rejects.toMatchObject({ code: expect.stringMatching(gatewayErrorCode('lookup-not-found')) })
     await expect(ctx.typertGateway.invoke({
       namespace: 'securityAssuranceWorkbench',
       method: 'getAssessment',
@@ -1070,7 +1079,7 @@ describe('Security Assurance Workbench Remote', () => {
         securityAssuranceWorkbenchContextId: authorityContextId('short'),
         request: { schemaVersion: 1, assessmentId },
       },
-    })).rejects.toMatchObject({ code: 'lookup-not-found' })
+    })).rejects.toMatchObject({ code: expect.stringMatching(gatewayErrorCode('lookup-not-found')) })
     expect(resolvedContextIds).toEqual([
       authorityContextId('workbench-session-reviewer'),
       authorityContextId('workbench-session-unknown'),
@@ -1090,6 +1099,6 @@ describe('Security Assurance Workbench Remote', () => {
         securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-reviewer'),
         request: { schemaVersion: 1, assessmentId },
       },
-    })).rejects.toMatchObject({ code: 'invocation-unavailable' })
+    })).rejects.toMatchObject({ code: expect.stringMatching(gatewayErrorCode('invocation-unavailable')) })
   })
 })
