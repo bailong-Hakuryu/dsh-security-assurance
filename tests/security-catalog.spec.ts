@@ -71,7 +71,7 @@ describe('Security Catalog and Start Preflight', () => {
           assessmentModes: [
             { assessmentMode: 'REPOSITORY', support: 'SUPPORTED' },
             { assessmentMode: 'CHANGE', support: 'SUPPORTED' },
-            { assessmentMode: 'TARGETED', support: 'UNSUPPORTED' },
+            { assessmentMode: 'TARGETED', support: 'SUPPORTED' },
           ],
           assessmentProfiles: [{
             assessmentProfileId: 'security/standard',

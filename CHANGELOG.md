@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- Add fail-closed `TARGETED` Assessments for
+  `security/node-package-lifecycle`: the Service freezes and digest-binds the
+  complete Subject, requires every explicit relative file or directory to
+  exist, and exposes only verified in-target `package.json` slices to the
+  bundled PURE Analyzer.
+- Seal an existing Target without an analyzable package manifest as
+  `INDETERMINATE`, keep npm audit and Gitleaks report policies unsupported in
+  `TARGETED` until their external scan scope can be independently verified,
+  and qualify the broadened built-in Analyzer as version `1.1.0` under
+  qualification `v2`.
 - Support DeepSeek Harness `0.1.2-alpha.2` through `0.1.2-alpha.4` alongside
   the primary `0.1.2-alpha.1` target as an explicit, verified set: the
   composition invariant admits one coherent supported release, rejects mixed

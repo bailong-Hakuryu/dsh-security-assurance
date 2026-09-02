@@ -22,7 +22,10 @@ import type {
   AssessmentTargetSelectorV1,
   DigestEnvelopeV1,
 } from '../contracts.ts'
-import { digestEnvelopeV1Schema } from '../contracts.ts'
+import {
+  assessmentTargetSelectorV1Schema,
+  digestEnvelopeV1Schema,
+} from '../contracts.ts'
 import { binaryDigest, canonicalJson, structuredDigest } from './canonical.ts'
 import {
   computeControlPlaneProducedChangeFingerprintV1,
@@ -360,6 +363,29 @@ function assertSubjectBounds(entries: readonly SubjectManifestEntryV1[]): void {
   const bytes = files.reduce((sum, entry) => sum + entry.digest.byteLength, 0)
   if (files.length > MAX_SUBJECT_FILES || bytes > MAX_SUBJECT_BYTES) {
     throw new SubjectFreezeError('resource_limit', 'Subject exceeds the v0.1 file or byte limit')
+  }
+}
+
+function targetIncludesPath(target: AssessmentTargetSelectorV1, path: string): boolean {
+  return target.kind !== 'targeted' || target.relativePaths.some(relativePath => (
+    path === relativePath || path.startsWith(`${relativePath}/`)
+  ))
+}
+
+function assertTargetedPathsExist(
+  target: AssessmentTargetSelectorV1,
+  entries: readonly SubjectManifestEntryV1[],
+): void {
+  if (target.kind !== 'targeted') return
+  for (const relativePath of target.relativePaths) {
+    if (!entries.some(entry => (
+      entry.path === relativePath || entry.path.startsWith(`${relativePath}/`)
+    ))) {
+      throw new SubjectFreezeError(
+        'invalid_subject',
+        `Targeted path '${relativePath}' does not exist in the frozen Subject`,
+      )
+    }
   }
 }
 
@@ -855,6 +881,7 @@ export async function freezeSubject(options: FreezeSubjectOptions): Promise<Froz
       }
     }
     assertSubjectBounds(entries)
+    assertTargetedPathsExist(options.target, entries)
     const targetDigest = structuredDigest(TARGET_SELECTOR_MEDIA_TYPE, options.target)
     const payload: SubjectManifestPayloadV1 = {
       schemaVersion: 1,
@@ -968,10 +995,12 @@ export async function readVerifiedNodePackageManifestSlices(
   if (!Array.isArray(manifest.entries)) {
     throw new SubjectFreezeError('integrity_failure', 'Subject Manifest entries are invalid')
   }
+  const target = assessmentTargetSelectorV1Schema.parse(manifest.target)
   const packageEntries = manifest.entries.map(recordValue).filter(entry => (
     entry.kind === 'file'
     && typeof entry.path === 'string'
     && entry.path.split('/').at(-1) === 'package.json'
+    && targetIncludesPath(target, entry.path)
   ))
   if (packageEntries.length > MAX_ANALYZER_SOURCE_SLICES) {
     throw new SubjectFreezeError('resource_limit', 'Node package manifest count exceeds the Analyzer input limit')

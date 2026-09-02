@@ -15,9 +15,9 @@ const INSTALL_LIFECYCLE_NAMES = ['preinstall', 'install', 'postinstall'] as cons
 const ANALYZER_METHOD = {
   schemaVersion: 1,
   analyzerId: 'dsh/builtin-node-package-lifecycle',
-  analyzerVersion: '1.0.0',
+  analyzerVersion: '1.1.0',
   methodVersion: 'dsh-node-package-lifecycle-policy-v1',
-  input: 'all verified package.json text slices from one immutable Subject Snapshot',
+  input: 'all verified package.json text slices inside one immutable Assessment Target',
   rule: 'preinstall, install, and postinstall script keys with non-empty string values are candidates',
   exclusions: 'script bodies are never retained as Evidence',
 }
@@ -25,11 +25,11 @@ const ANALYZER_METHOD = {
 export const BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR = deepFreeze({
   schemaVersion: 1 as const,
   analyzerId: 'dsh/builtin-node-package-lifecycle' as const,
-  analyzerVersion: '1.0.0' as const,
+  analyzerVersion: '1.1.0' as const,
   descriptorSchemaVersion: 1 as const,
   buildDigest: structuredDigest('application/vnd.dsh.security.analyzer-method+json', ANALYZER_METHOD),
   executionClass: 'PURE' as const,
-  supportedAssessmentModes: ['REPOSITORY', 'CHANGE'] as const,
+  supportedAssessmentModes: ['REPOSITORY', 'CHANGE', 'TARGETED'] as const,
   supportedPolicyIds: ['security/node-package-lifecycle'] as const,
   coverageObligationIds: ['node-package-install-lifecycle-policy'] as const,
   evidenceSchemaIds: ['dsh/security-node-package-manifest-evidence'] as const,
@@ -38,7 +38,7 @@ export const BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR = deepFreeze({
 
 const QUALIFICATION_CORE = {
   schemaVersion: 1,
-  qualificationId: 'dsh/qualification/builtin-node-package-lifecycle/v1',
+  qualificationId: 'dsh/qualification/builtin-node-package-lifecycle/v2',
   analyzerIdentity: {
     analyzerId: BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR.analyzerId,
     analyzerVersion: BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR.analyzerVersion,
@@ -47,13 +47,14 @@ const QUALIFICATION_CORE = {
   issuer: 'dsh-security-assurance-development',
   level: 'DEVELOPMENT_BUILTIN',
   supportedEcosystemIds: ['node-package-manifest'] as const,
-  supportedAssessmentModes: ['REPOSITORY', 'CHANGE'],
+  supportedAssessmentModes: ['REPOSITORY', 'CHANGE', 'TARGETED'],
   supportedPolicyIds: ['security/node-package-lifecycle'],
   coverageObligationIds: ['node-package-install-lifecycle-policy'],
   platforms: ['win32', 'linux', 'darwin'] as const,
   limitations: [
     'Only package.json install lifecycle key presence is evaluated.',
     'CHANGE mode evaluates every package.json in the complete frozen head tree, not only changed files.',
+    'TARGETED mode evaluates only package.json files at or below the exact frozen Target paths.',
     'This qualification does not claim general Node or application security coverage.',
   ],
 }

@@ -345,7 +345,9 @@ function analyzerEvidenceIsEligible(
   )
   if (
     contract.policy.policyId !== 'security/node-package-lifecycle'
-    || (contract.assessmentMode !== 'REPOSITORY' && contract.assessmentMode !== 'CHANGE')
+    || !BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR.supportedAssessmentModes.includes(
+      contract.assessmentMode,
+    )
     || canonicalJson(contribution.data.subjectDigest) !== canonicalJson(analysis.expectedSubjectDigest)
     || contribution.data.analyzerIdentity.analyzerId !== BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR.analyzerId
     || contribution.data.analyzerIdentity.analyzerVersion !== BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR.analyzerVersion

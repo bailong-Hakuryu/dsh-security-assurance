@@ -177,14 +177,14 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
               value: {
                 analyzers: [{
                   analyzerId: 'dsh/builtin-node-package-lifecycle',
-                  analyzerVersion: '1.0.0',
+                  analyzerVersion: '1.1.0',
                   descriptorSchemaVersion: 1,
                   buildDigest: {
                     algorithm: 'sha256',
                     canonicalization: 'dsh-canonical-json-v1',
                   },
                   executionClass: 'PURE',
-                  qualificationId: 'dsh/qualification/builtin-node-package-lifecycle/v1',
+                  qualificationId: 'dsh/qualification/builtin-node-package-lifecycle/v2',
                   qualificationDigest: {
                     algorithm: 'sha256',
                     canonicalization: 'dsh-canonical-json-v1',

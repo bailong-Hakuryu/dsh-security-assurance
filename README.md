@@ -29,10 +29,10 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| 评估模式 | <code>REPOSITORY</code>、精确提交或 Mission 产出工作区的 <code>CHANGE</code> |
+| 评估模式 | <code>REPOSITORY</code>、精确提交或 Mission 产出工作区的 <code>CHANGE</code>，以及默认策略的 <code>TARGETED</code> |
 | 支持 Subject | <code>git_revision</code>、<code>workspace_snapshot</code>、<code>change</code>（精确 base/head）；Control Plane 可使用 Host 专用 <code>workspace_change</code> |
 | <code>CHANGE</code> 模式 | 支持精确已提交的 base→head，以及 Control Plane 冻结的 baseline→produced workspace；均扫描完整结果树 |
-| <code>TARGETED</code> 模式 | 暂不支持 |
+| <code>TARGETED</code> 模式 | <code>security/node-package-lifecycle</code> 支持 <code>git_revision</code> 与 <code>workspace_snapshot</code> 的明确相对文件/目录；只评估目标内的 <code>package.json</code> |
 | 默认策略 | <code>security/node-package-lifecycle</code> |
 | 可选 npm audit 策略 | <code>security/npm-dependency-audit</code> |
 | 可选 Gitleaks 策略 | <code>security/secret-leak-audit</code> |
@@ -42,6 +42,8 @@
 | 支持平台 | Windows、Linux、macOS |
 
 评估会先读取当前 Host 注册的 Repository 和 Catalog；只有 Service 返回的精确 ID、模式、Subject、Target、Profile 和强化控制才能用于启动，不允许模型猜测路径或标识符。
+
+<code>TARGETED</code> 仍会冻结并摘要绑定完整 Subject，但只把明确目标内的已验证 <code>package.json</code> slice 交给内建分析器。每个目标必须对应一个现有条目或目录前缀；不存在的目标会在创建 Assessment 前被拒绝，存在但没有可分析清单的目标会得到 <code>INDETERMINATE</code>。npm audit 与 Gitleaks 报告策略暂不声明 <code>TARGETED</code> 支持，因为外部报告目前不能独立证明其扫描范围与目标完全一致。
 
 Harness 支持窗口是一个显式的已验证集合：每日 [Harness Compatibility](https://github.com/bailong-Hakuryu/dsh-security-assurance/actions/workflows/harness-compat.yml) 工作流自动发现官方仓库标签，对主目标在 Ubuntu、macOS、Windows 上、对其余版本在 Ubuntu 上执行双插件联合 E2E（Mission → Developer 工作区变更 → CHANGE Assessment → sealed submission → Quality Gate）和打包 fresh Profile 安装加 Web 探针。新标签会自动进入验证，但未通过矩阵验证前不会被声明支持（ADR 0310）。
 
@@ -86,6 +88,7 @@ dsh web
 ~~~text
 /security 评估当前仓库
 /security 检查当前仓库的包安装生命周期
+/security 只检查 packages/api 和 packages/web 的包安装生命周期
 ~~~
 
 ### npm audit 报告适配
@@ -157,7 +160,7 @@ gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.j
 
 **仓库列表为空**：从目标 Git 仓库目录启动 Harness，并确认 Host Repository Provider 已加载；不要手工编造 Repository ID。
 
-**Catalog 显示 UNSUPPORTED**：确认使用的是已授权仓库、<code>security/standard</code> Profile，以及 Catalog 为当前策略返回的模式。独立启动的 <code>CHANGE</code> 接受精确已提交的 base/head；未提交工作区只由 Control Plane 的 Host 专用 Subject 接入。<code>TARGETED</code> 尚未支持。
+**Catalog 显示 UNSUPPORTED**：确认使用的是已授权仓库、<code>security/standard</code> Profile，以及 Catalog 为当前策略返回的模式。独立启动的 <code>CHANGE</code> 接受精确已提交的 base/head；未提交工作区只由 Control Plane 的 Host 专用 Subject 接入。<code>TARGETED</code> 当前只支持 <code>security/node-package-lifecycle</code>，npm audit 与 Gitleaks 报告策略仍显示 <code>UNSUPPORTED</code>。
 
 **端口冲突**：关闭占用端口的旧 Harness 进程，或在 Web Profile 中改用空闲端口后重新启动。
 
@@ -200,10 +203,10 @@ This is an assurance plugin, not a general vulnerability scanner. Built-in capab
 
 | Item | Status |
 | --- | --- |
-| Assessment mode | <code>REPOSITORY</code>; exact-commit or Mission-produced-workspace <code>CHANGE</code> |
+| Assessment mode | <code>REPOSITORY</code>; exact-commit or Mission-produced-workspace <code>CHANGE</code>; and <code>TARGETED</code> for the default policy |
 | Subjects | <code>git_revision</code>, <code>workspace_snapshot</code>, exact base/head <code>change</code>; Host-only Control Plane <code>workspace_change</code> |
 | <code>CHANGE</code> | Exact committed base-to-head pairs or Control Plane-frozen baseline-to-produced workspaces; scans the complete resulting tree |
-| <code>TARGETED</code> | Not currently supported |
+| <code>TARGETED</code> | <code>security/node-package-lifecycle</code> supports explicit relative files/directories in <code>git_revision</code> and <code>workspace_snapshot</code> Subjects; only in-target <code>package.json</code> files are evaluated |
 | Default policy | <code>security/node-package-lifecycle</code> |
 | Optional npm audit policy | <code>security/npm-dependency-audit</code> |
 | Optional Gitleaks policy | <code>security/secret-leak-audit</code> |
@@ -213,6 +216,8 @@ This is an assurance plugin, not a general vulnerability scanner. Built-in capab
 | Platforms | Windows, Linux, macOS |
 
 The Service resolves authorized repositories and catalog choices first. Models must use the exact returned identifiers; paths and IDs are never guessed.
+
+<code>TARGETED</code> still freezes and digest-binds the complete Subject, then exposes only verified <code>package.json</code> slices inside the explicit Target to the bundled analyzer. Every Target path must name an existing entry or directory prefix. A nonexistent path is rejected before Assessment creation; an existing Target without an analyzable manifest seals <code>INDETERMINATE</code>. The npm audit and Gitleaks report policies do not yet claim <code>TARGETED</code> support because their external reports cannot independently prove an exact Target scan scope.
 
 The Harness support window is an explicit, verified set: a daily [Harness Compatibility](https://github.com/bailong-Hakuryu/dsh-security-assurance/actions/workflows/harness-compat.yml) workflow discovers official repository tags, then runs the dual-plugin joint E2E (Mission → Developer workspace change → CHANGE Assessment → sealed submission → Quality Gate) and a packed fresh-profile installation with a live Web probe — on Ubuntu, macOS, and Windows for the primary target, and on Ubuntu for the remaining versions. New tags enter verification automatically but are not claimed as supported until the matrix passes (ADR 0310).
 
@@ -240,6 +245,7 @@ Natural-language requests are routed through the catalog-first workflow. Users c
 
 ~~~text
 /security Assess the current repository and report the final verdict and findings.
+/security Assess only packages/api and packages/web for package installation lifecycle risks.
 ~~~
 
 The eight tools are <code>security_repositories</code>, <code>security_catalog</code>, <code>security_assessment_start</code>, <code>security_assessment_status</code>, <code>security_assessment_findings</code>, <code>security_assessment_resume</code>, <code>security_assessment_cancel</code>, and <code>security_assessment_export</code>. The normal order is repositories, catalog, start, status, and findings. Mutations require the exact Service revision and a fresh idempotency key.
@@ -287,7 +293,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-The current development tree gate passes with 75 test files and 399 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
+The current development tree gate passes with 76 test files and 401 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
 
 </details>
 
