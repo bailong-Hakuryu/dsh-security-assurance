@@ -1,7 +1,7 @@
 import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 import { execFile, spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -12,6 +12,14 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import { referenceHostInvocation } from './support/reference-host.ts'
 import { reapSubjectStaging } from '../src/internal/subject-freeze.ts'
+import {
+  computeAssuranceProducedChangeFingerprintV1,
+  computeAssuranceWorkspaceFingerprintV1,
+} from 'dsh-engineering-control-plane/assurance-provider'
+import {
+  computeControlPlaneProducedChangeFingerprintV1,
+  computeControlPlaneWorkspaceFingerprintV1,
+} from '../src/internal/control-plane-workspace-identity.ts'
 
 const run = promisify(execFile)
 const temporaryRoots: string[] = []
@@ -34,7 +42,141 @@ async function repositoryFixture(): Promise<string> {
   return root
 }
 
+async function workspaceChangeIdentity(root: string) {
+  const branch = (await run('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: root })).stdout.trim()
+  const baseCommit = (await run('git', ['rev-parse', 'HEAD'], { cwd: root })).stdout.trim()
+  const status = (await run(
+    'git',
+    ['status', '--porcelain=v2', '-z', '--untracked-files=all'],
+    { cwd: root },
+  )).stdout
+  const trackedDiff = (await run(
+    'git',
+    ['diff', '--binary', '--no-ext-diff', 'HEAD', '--'],
+    { cwd: root },
+  )).stdout
+  const untrackedOutput = (await run(
+    'git',
+    ['ls-files', '--others', '--exclude-standard', '-z'],
+    { cwd: root },
+  )).stdout
+  const untrackedFiles = await Promise.all(untrackedOutput.split('\0').filter(Boolean).map(async path => ({
+    path,
+    digest: `sha256:${createHash('sha256').update(await readFile(join(root, ...path.split('/')))).digest('hex')}`,
+  })))
+  const workspaceInput = { branch, head: baseCommit, status }
+  const producedChangeInput = { baseCommit, trackedDiff, untrackedFiles }
+  expect(computeControlPlaneWorkspaceFingerprintV1(workspaceInput))
+    .toBe(computeAssuranceWorkspaceFingerprintV1(workspaceInput))
+  expect(computeControlPlaneProducedChangeFingerprintV1(producedChangeInput))
+    .toBe(computeAssuranceProducedChangeFingerprintV1(producedChangeInput))
+  return {
+    branch,
+    baseCommit,
+    workspaceFingerprint: computeAssuranceWorkspaceFingerprintV1(workspaceInput),
+    producedChangeFingerprint: computeAssuranceProducedChangeFingerprintV1(producedChangeInput),
+  }
+}
+
 describe('SecurityAssuranceService immutable Subject Freeze', () => {
+  it('freezes the exact Control Plane produced change and rejects same-status byte drift', async () => {
+    const repository = await repositoryFixture()
+    const trackedPath = join(repository, 'src', 'tracked.ts')
+    await writeFile(trackedPath, 'export const tracked = 2\n', 'utf8')
+    await writeFile(join(repository, 'report.json'), '{"state":"first"}\n', 'utf8')
+    const original = await workspaceChangeIdentity(repository)
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-workspace-change-home-'))
+    temporaryRoots.push(dshHome)
+    const ctx = new Context()
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
+    const platform = process.platform
+    if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+      throw new Error(`unsupported test platform: ${platform}`)
+    }
+
+    try {
+      const invocation = referenceHostInvocation(ctx.securityAssurance)
+      const registered = await ctx.securityAssurance.registerRepository(invocation, {
+        schemaVersion: 1,
+        contractVersion: 1,
+        idempotencyKey: 'workspace-change-register-1',
+        root: repository,
+        displayName: 'Control Plane produced change fixture',
+        bindings: {
+          policyId: 'security/default',
+          assessmentProfileId: 'security/standard',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform,
+          deliveryDestinationIds: [],
+        },
+      })
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+      const selection = {
+        repositoryId: registered.value.repositoryId,
+        subject: {
+          kind: 'workspace_change' as const,
+          branch: original.branch,
+          baseCommit: original.baseCommit,
+          workspaceFingerprint: original.workspaceFingerprint,
+          producedChangeFingerprint: original.producedChangeFingerprint,
+        },
+        assessmentMode: 'CHANGE' as const,
+        assessmentProfileId: 'security/standard',
+        target: {
+          kind: 'change' as const,
+          baseCommit: original.baseCommit,
+          workspaceFingerprint: original.workspaceFingerprint,
+          producedChangeFingerprint: original.producedChangeFingerprint,
+          impactCone: 'POLICY_DEFAULT' as const,
+        },
+        requestedStrongerControlIds: [],
+      }
+      const started = await ctx.securityAssurance.startAssessment(invocation, {
+        schemaVersion: 1,
+        contractVersion: 1,
+        idempotencyKey: 'workspace-change-start-1',
+        ...selection,
+      })
+      if (!started.ok) throw new Error(`start failed: ${JSON.stringify(started.error)}`)
+      expect(started).toMatchObject({
+        ok: true,
+        value: { subject: { kind: 'workspace_change' } },
+      })
+      const subjectRoot = join(
+        dshHome,
+        'security-assurance',
+        'subjects',
+        started.value.subject.digest.value,
+      )
+      const manifest = JSON.parse(await readFile(join(subjectRoot, 'manifest.json'), 'utf8')) as unknown
+      expect(manifest).toMatchObject({
+        subject: {
+          kind: 'workspace_change',
+          branch: original.branch,
+          baseCommit: original.baseCommit,
+          workspaceFingerprint: original.workspaceFingerprint,
+          producedChangeFingerprint: original.producedChangeFingerprint,
+        },
+      })
+      expect(await readFile(join(subjectRoot, 'content', 'src', 'tracked.ts'), 'utf8'))
+        .toBe('export const tracked = 2\n')
+
+      await writeFile(trackedPath, 'export const tracked = 3\n', 'utf8')
+      const drifted = await workspaceChangeIdentity(repository)
+      expect(drifted.workspaceFingerprint).toBe(original.workspaceFingerprint)
+      expect(drifted.producedChangeFingerprint).not.toBe(original.producedChangeFingerprint)
+      await expect(ctx.securityAssurance.startAssessment(invocation, {
+        schemaVersion: 1,
+        contractVersion: 1,
+        idempotencyKey: 'workspace-change-start-stale',
+        ...selection,
+      })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+    } finally {
+      await fiber.dispose()
+    }
+  }, 15_000)
+
   it('retries a transient Windows directory lock while reaping abandoned Subject staging', async () => {
     if (process.platform !== 'win32') return
     const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-security-subject-reap-'))
@@ -62,11 +204,12 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
     }
   })
 
-  it('publishes a content-addressed Workspace Snapshot before creating the Assessment', async () => {
+  it('publishes a content-addressed detached-HEAD Workspace Snapshot before creating the Assessment', async () => {
     const repository = await repositoryFixture()
     const workspaceFile = join(repository, 'src', 'workspace.ts')
     await writeFile(workspaceFile, 'export const frozen = 1\n', 'utf8')
     await rm(join(repository, 'src', 'tracked.ts'))
+    await run('git', ['switch', '--detach'], { cwd: repository })
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-subject-home-'))
     temporaryRoots.push(dshHome)
     const ctx = new Context()
@@ -107,6 +250,7 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
         requestedStrongerControlIds: [],
       }
       const started = await ctx.securityAssurance.startAssessment(invocation, request)
+      if (!started.ok) throw new Error(`start failed: ${JSON.stringify(started.error)}`)
       expect(started).toMatchObject({
         ok: true,
         value: {
@@ -130,7 +274,6 @@ describe('SecurityAssuranceService immutable Subject Freeze', () => {
           },
         },
       })
-      if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
       await expect(ctx.securityAssurance.startAssessment(invocation, request)).resolves.toEqual(started)
       await expect(ctx.securityAssurance.startAssessment(invocation, {
         ...request,

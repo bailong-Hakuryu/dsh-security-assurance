@@ -72,6 +72,10 @@ _Avoid_: Branch name, current HEAD, live checkout
 An Assessment Subject binding an exact base, resulting revision or frozen workspace state, declared diff, and materialized resulting tree for Change Impact Cone analysis.
 _Avoid_: Diff text alone, pull-request number, moving branch
 
+**Control Plane Workspace Change Subject**:
+A Host-only Change Subject binding the Mission branch and Git Baseline to both the Control Plane Workspace Fingerprint and its byte-exact Produced Change Fingerprint before Security Assurance freezes the complete resulting tree.
+_Avoid_: Model-selected workspace, Workspace Snapshot Subject, Git status alone
+
 **Workspace Snapshot Subject**:
 An Assessment Subject explicitly capturing the current tracked and permitted untracked workspace bytes before analysis, independent of later workspace mutation.
 _Avoid_: Live workspace, implicit dirty tree, temporary scan path

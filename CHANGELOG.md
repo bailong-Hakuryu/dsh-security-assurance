@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Run Control Plane-owned Mission assessments as Host-bound `CHANGE` against
+  the exact produced workspace, independently verifying branch, baseline HEAD,
+  Git status fingerprint, byte-exact produced-change fingerprint, and the full
+  resulting tree before any Assessment is created.
+- Support exact-commit `CHANGE` Assessments for the bundled Node lifecycle and
+  npm audit policies by evaluating the complete frozen head tree as a safe
+  superset of the Policy impact cone.
 - Build the linked Control Plane and generated Security Assurance package
   entries before fresh-checkout typechecking, removing reliance on stale local
   `lib` artifacts across Linux, macOS, and Windows CI.

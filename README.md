@@ -28,9 +28,9 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| 评估模式 | <code>REPOSITORY</code> |
-| 支持 Subject | <code>git_revision</code>、<code>workspace_snapshot</code> |
-| <code>CHANGE</code> 模式 | 暂不支持 |
+| 评估模式 | <code>REPOSITORY</code>、精确提交或 Mission 产出工作区的 <code>CHANGE</code> |
+| 支持 Subject | <code>git_revision</code>、<code>workspace_snapshot</code>、<code>change</code>（精确 base/head）；Control Plane 可使用 Host 专用 <code>workspace_change</code> |
+| <code>CHANGE</code> 模式 | 支持精确已提交的 base→head，以及 Control Plane 冻结的 baseline→produced workspace；均扫描完整结果树 |
 | <code>TARGETED</code> 模式 | 暂不支持 |
 | 默认策略 | <code>security/node-package-lifecycle</code> |
 | 可选 npm audit 策略 | <code>security/npm-dependency-audit</code> |
@@ -38,6 +38,8 @@
 | 支持平台 | Windows、Linux、macOS |
 
 评估会先读取当前 Host 注册的 Repository 和 Catalog；只有 Service 返回的精确 ID、模式、Subject、Target、Profile 和强化控制才能用于启动，不允许模型猜测路径或标识符。
+
+独立工具与 Workbench 的 Catalog 契约保持不变，只向模型提供精确提交 <code>change</code>。当 Control Plane 完成 Developer 与 Implementation Evidence 后，Provider 会从不可伪造的执行上下文接收 Host 专用 <code>workspace_change</code>，同时核对分支、baseline HEAD、Git 状态指纹、逐字节产出变更指纹与完整结果树；任何漂移都会在创建 Assessment 前 fail closed。
 
 ### 安装（Harness Web）
 
@@ -139,7 +141,7 @@ npm audit --json | Set-Content -Encoding utf8 npm-audit.json
 
 **仓库列表为空**：从目标 Git 仓库目录启动 Harness，并确认 Host Repository Provider 已加载；不要手工编造 Repository ID。
 
-**Catalog 显示 UNSUPPORTED**：当前只支持 <code>REPOSITORY</code> 模式；确认使用的是已授权仓库和 <code>security/standard</code> Profile。
+**Catalog 显示 UNSUPPORTED**：确认使用的是已授权仓库、<code>security/standard</code> Profile，以及 Catalog 为当前策略返回的模式。独立启动的 <code>CHANGE</code> 接受精确已提交的 base/head；未提交工作区只由 Control Plane 的 Host 专用 Subject 接入。<code>TARGETED</code> 尚未支持。
 
 **端口冲突**：关闭占用端口的旧 Harness 进程，或在 Web Profile 中改用空闲端口后重新启动。
 
@@ -158,7 +160,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-当前 <code>main</code> 分支发布门禁已通过：72 个测试文件、367 个测试，静态检查、类型检查、构建、打包和 Harness Profile smoke 均通过。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针。
+当前开发树发布门禁已通过：73 个测试文件、371 个测试，静态检查、类型检查、构建、打包和 Harness Profile smoke 均通过。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针。
 
 完整领域模型见 [CONTEXT.md](CONTEXT.md)，安全政策见 [SECURITY.md](SECURITY.md)，候选版审查见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
@@ -182,9 +184,9 @@ This is an assurance plugin, not a general vulnerability scanner. Built-in capab
 
 | Item | Status |
 | --- | --- |
-| Assessment mode | <code>REPOSITORY</code> |
-| Subjects | <code>git_revision</code>, <code>workspace_snapshot</code> |
-| <code>CHANGE</code> | Not currently supported |
+| Assessment mode | <code>REPOSITORY</code>; exact-commit or Mission-produced-workspace <code>CHANGE</code> |
+| Subjects | <code>git_revision</code>, <code>workspace_snapshot</code>, exact base/head <code>change</code>; Host-only Control Plane <code>workspace_change</code> |
+| <code>CHANGE</code> | Exact committed base-to-head pairs or Control Plane-frozen baseline-to-produced workspaces; scans the complete resulting tree |
 | <code>TARGETED</code> | Not currently supported |
 | Default policy | <code>security/node-package-lifecycle</code> |
 | Optional npm audit policy | <code>security/npm-dependency-audit</code> |
@@ -192,6 +194,10 @@ This is an assurance plugin, not a general vulnerability scanner. Built-in capab
 | Platforms | Windows, Linux, macOS |
 
 The Service resolves authorized repositories and catalog choices first. Models must use the exact returned identifiers; paths and IDs are never guessed.
+
+Exact-commit <code>CHANGE</code> mode freezes the resolved base and head identities, raw diff digest, and complete head tree. The bundled policies evaluate their complete relevant input sets in that tree, which is a conservative superset of the Policy impact cone.
+
+The standalone tool and Workbench catalog remains backward compatible and exposes only exact-commit <code>change</code> to models. After a Control Plane Developer run publishes Implementation Evidence, its Provider receives a Host-only <code>workspace_change</code> from the unforgeable execution context. Security Assurance independently matches branch, baseline HEAD, Git-status fingerprint, byte-exact produced-change fingerprint, and the complete resulting tree before creating an Assessment; any drift fails closed.
 
 ## Install in Harness Web
 
@@ -250,7 +256,7 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-The current <code>main</code> branch gate passes with 72 test files and 367 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows.
+The current development tree gate passes with 73 test files and 371 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows.
 
 </details>
 

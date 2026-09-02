@@ -29,7 +29,7 @@ export const BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR = deepFreeze({
   descriptorSchemaVersion: 1 as const,
   buildDigest: structuredDigest('application/vnd.dsh.security.analyzer-method+json', ANALYZER_METHOD),
   executionClass: 'PURE' as const,
-  supportedAssessmentModes: ['REPOSITORY'] as const,
+  supportedAssessmentModes: ['REPOSITORY', 'CHANGE'] as const,
   supportedPolicyIds: ['security/node-package-lifecycle'] as const,
   coverageObligationIds: ['node-package-install-lifecycle-policy'] as const,
   evidenceSchemaIds: ['dsh/security-node-package-manifest-evidence'] as const,
@@ -47,12 +47,13 @@ const QUALIFICATION_CORE = {
   issuer: 'dsh-security-assurance-development',
   level: 'DEVELOPMENT_BUILTIN',
   supportedEcosystemIds: ['node-package-manifest'] as const,
-  supportedAssessmentModes: ['REPOSITORY'],
+  supportedAssessmentModes: ['REPOSITORY', 'CHANGE'],
   supportedPolicyIds: ['security/node-package-lifecycle'],
   coverageObligationIds: ['node-package-install-lifecycle-policy'],
   platforms: ['win32', 'linux', 'darwin'] as const,
   limitations: [
     'Only package.json install lifecycle key presence is evaluated.',
+    'CHANGE mode evaluates every package.json in the complete frozen head tree, not only changed files.',
     'This qualification does not claim general Node or application security coverage.',
   ],
 }

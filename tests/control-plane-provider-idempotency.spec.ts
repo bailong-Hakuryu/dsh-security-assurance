@@ -9,6 +9,13 @@ const context: ControlPlaneProviderContext = {
   invocationId: 'provider-invocation-1',
   missionId: 'mission-1',
   attempt: 1,
+  subject: {
+    kind: 'git_worktree',
+    branch: 'main',
+    head: 'a'.repeat(40),
+    workspaceFingerprint: `sha256:${'b'.repeat(64)}`,
+    producedChangeFingerprint: `sha256:${'c'.repeat(64)}`,
+  },
   matchesCanonicalRepository: () => true,
 }
 

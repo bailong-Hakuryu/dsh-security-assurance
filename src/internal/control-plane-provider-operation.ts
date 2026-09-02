@@ -12,6 +12,13 @@ export interface ControlPlaneProviderContext extends ControlPlaneRepositoryBindi
   readonly invocationId: string
   readonly missionId: string
   readonly attempt: number
+  readonly subject: {
+    readonly kind: 'git_worktree'
+    readonly branch: string
+    readonly head: string
+    readonly workspaceFingerprint: string
+    readonly producedChangeFingerprint: string
+  }
 }
 
 /**

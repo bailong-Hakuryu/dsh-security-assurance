@@ -24,6 +24,10 @@ import type {
 } from '../contracts.ts'
 import { digestEnvelopeV1Schema } from '../contracts.ts'
 import { binaryDigest, canonicalJson, structuredDigest } from './canonical.ts'
+import {
+  computeControlPlaneProducedChangeFingerprintV1,
+  computeControlPlaneWorkspaceFingerprintV1,
+} from './control-plane-workspace-identity.ts'
 
 const MAX_SUBJECT_FILES = 10_000
 const MAX_SUBJECT_BYTES = 64 * 1024 * 1024
@@ -319,7 +323,7 @@ function validateRelativePath(path: string, seen: Set<string>): string {
 function parseGitTree(bytes: Buffer): readonly GitTreeEntry[] {
   const seen = new Set<string>()
   return nullSeparated(bytes).map(record => {
-    const match = /^(\d{6}) (blob|commit) ([0-9a-f]{40})\t([\s\S]+)$/u.exec(record)
+    const match = /^(\d{6}) (blob|commit) ([0-9a-f]{40,64})\t([\s\S]+)$/u.exec(record)
     if (match === null) throw new SubjectFreezeError('invalid_subject', 'Git tree entry is malformed')
     const [, mode, type, objectId, unsafePath] = match
     if (mode === undefined || type === undefined || objectId === undefined || unsafePath === undefined) {
@@ -490,7 +494,7 @@ async function assertWorkspacePathWithinRoot(repositoryRoot: string, sourcePath:
 function parseIndexModes(bytes: Buffer): ReadonlyMap<string, { readonly mode: string; readonly objectId: string }> {
   const modes = new Map<string, { readonly mode: string; readonly objectId: string }>()
   for (const record of nullSeparated(bytes)) {
-    const match = /^(\d{6}) ([0-9a-f]{40}) ([0-3])\t([\s\S]+)$/u.exec(record)
+    const match = /^(\d{6}) ([0-9a-f]{40,64}) ([0-3])\t([\s\S]+)$/u.exec(record)
     if (match === null) throw new SubjectFreezeError('invalid_subject', 'Git index entry is malformed')
     const [, mode, objectId, stage, path] = match
     if (mode === undefined || objectId === undefined || stage === undefined || path === undefined || stage !== '0') {
@@ -506,21 +510,47 @@ async function materializeWorkspace(
   repositoryRoot: string,
   contentRoot: string,
   signal?: AbortSignal,
+  captureControlPlaneIdentity = false,
 ): Promise<{
   readonly entries: readonly SubjectManifestEntryV1[]
   readonly headCommit: string
+  readonly controlPlaneIdentity: null | {
+    readonly branch: string
+    readonly workspaceFingerprint: string
+    readonly producedChangeFingerprint: string
+  }
   readonly selectionDigest: DigestEnvelopeV1
   readonly exclusions: readonly { readonly kind: 'workspace_deleted'; readonly path: string }[]
 }> {
   const resolvedRepositoryRoot = await realpath(repositoryRoot)
   const selectionArgs = ['ls-files', '-z', '--cached', '--others', '--exclude-standard'] as const
+  const untrackedArgs = ['ls-files', '--others', '--exclude-standard', '-z'] as const
+  const branchArgs = ['symbolic-ref', '--quiet', '--short', 'HEAD'] as const
+  const statusArgs = ['status', '--porcelain=v2', '-z', '--untracked-files=all'] as const
+  const trackedDiffArgs = ['diff', '--binary', '--no-ext-diff', 'HEAD', '--'] as const
+  let beforeBranch: string | undefined
+  let beforeStatus: Buffer | undefined
+  let beforeTrackedDiff: Buffer | undefined
+  let beforeUntracked: Buffer | undefined
+  if (captureControlPlaneIdentity) {
+    beforeBranch = decodeUtf8(await runGit(subprocess, repositoryRoot, branchArgs, signal)).trim()
+    beforeStatus = await runGit(subprocess, repositoryRoot, statusArgs, signal)
+    beforeTrackedDiff = await runGit(subprocess, repositoryRoot, trackedDiffArgs, signal)
+    beforeUntracked = await runGit(subprocess, repositoryRoot, untrackedArgs, signal)
+  }
   const beforeSelection = await runGit(subprocess, repositoryRoot, selectionArgs, signal)
   const beforeDeleted = await runGit(subprocess, repositoryRoot, ['ls-files', '-z', '--deleted'], signal)
   const beforeHead = decodeUtf8(await runGit(subprocess, repositoryRoot, [
     'rev-parse', '--verify', 'HEAD^{commit}',
   ], signal)).trim()
-  if (!/^[0-9a-f]{40}$/u.test(beforeHead)) {
+  if (!/^[0-9a-f]{40,64}$/u.test(beforeHead)) {
     throw new SubjectFreezeError('invalid_subject', 'Workspace does not have an exact HEAD commit')
+  }
+  if (
+    beforeBranch !== undefined
+    && (beforeBranch.length === 0 || beforeBranch !== beforeBranch.trim() || beforeBranch.includes('\0'))
+  ) {
+    throw new SubjectFreezeError('invalid_subject', 'Workspace does not have one canonical branch')
   }
   const indexModes = parseIndexModes(await runGit(subprocess, repositoryRoot, ['ls-files', '-s', '-z'], signal))
   const unsafePaths = nullSeparated(beforeSelection)
@@ -578,6 +608,74 @@ async function materializeWorkspace(
     entries.push({ path, kind: 'file', mode: executable ? '100755' : '100644', digest })
   }
 
+  const afterSelection = await runGit(subprocess, repositoryRoot, selectionArgs, signal)
+  const afterDeleted = await runGit(subprocess, repositoryRoot, ['ls-files', '-z', '--deleted'], signal)
+  const afterHead = decodeUtf8(await runGit(subprocess, repositoryRoot, [
+    'rev-parse', '--verify', 'HEAD^{commit}',
+  ], signal)).trim()
+  if (
+    !beforeSelection.equals(afterSelection)
+    || !beforeDeleted.equals(afterDeleted)
+    || beforeHead !== afterHead
+  ) {
+    throw new SubjectFreezeError('unstable_subject', 'Workspace identity changed during Subject Freeze')
+  }
+  let controlPlaneIdentity: null | {
+    readonly branch: string
+    readonly workspaceFingerprint: string
+    readonly producedChangeFingerprint: string
+  } = null
+  if (captureControlPlaneIdentity) {
+    if (
+      beforeBranch === undefined
+      || beforeStatus === undefined
+      || beforeTrackedDiff === undefined
+      || beforeUntracked === undefined
+    ) {
+      throw new SubjectFreezeError('integrity_failure', 'Control Plane identity capture is incomplete')
+    }
+    const entryByPath = new Map(entries.map(entry => [entry.path, entry] as const))
+    const untrackedFiles = nullSeparated(beforeUntracked).map(path => {
+      const entry = entryByPath.get(path)
+      if (entry === undefined || entry.kind === 'submodule') {
+        throw new SubjectFreezeError('invalid_subject', 'Produced change contains an unsupported untracked object')
+      }
+      return { path, digest: `sha256:${entry.digest.value}` }
+    })
+    const afterBranch = decodeUtf8(await runGit(subprocess, repositoryRoot, branchArgs, signal)).trim()
+    const afterStatus = await runGit(subprocess, repositoryRoot, statusArgs, signal)
+    const afterTrackedDiff = await runGit(subprocess, repositoryRoot, trackedDiffArgs, signal)
+    const afterUntracked = await runGit(subprocess, repositoryRoot, untrackedArgs, signal)
+    const finalSelection = await runGit(subprocess, repositoryRoot, selectionArgs, signal)
+    const finalDeleted = await runGit(subprocess, repositoryRoot, ['ls-files', '-z', '--deleted'], signal)
+    const finalHead = decodeUtf8(await runGit(subprocess, repositoryRoot, [
+      'rev-parse', '--verify', 'HEAD^{commit}',
+    ], signal)).trim()
+    if (
+      beforeBranch !== afterBranch
+      || !beforeStatus.equals(afterStatus)
+      || !beforeTrackedDiff.equals(afterTrackedDiff)
+      || !beforeUntracked.equals(afterUntracked)
+      || !beforeSelection.equals(finalSelection)
+      || !beforeDeleted.equals(finalDeleted)
+      || beforeHead !== finalHead
+    ) {
+      throw new SubjectFreezeError('unstable_subject', 'Control Plane workspace identity changed during Subject Freeze')
+    }
+    controlPlaneIdentity = {
+      branch: beforeBranch,
+      workspaceFingerprint: computeControlPlaneWorkspaceFingerprintV1({
+        branch: beforeBranch,
+        head: beforeHead,
+        status: decodeUtf8(beforeStatus),
+      }),
+      producedChangeFingerprint: computeControlPlaneProducedChangeFingerprintV1({
+        baseCommit: beforeHead,
+        trackedDiff: decodeUtf8(beforeTrackedDiff),
+        untrackedFiles,
+      }),
+    }
+  }
   for (const [path, expected] of stableFiles) {
     canceled(signal)
     const sourcePath = join(repositoryRoot, ...path.split('/'))
@@ -591,17 +689,10 @@ async function materializeWorkspace(
       throw new SubjectFreezeError('unstable_subject', 'Workspace changed across the stable-read boundary')
     }
   }
-  const afterSelection = await runGit(subprocess, repositoryRoot, selectionArgs, signal)
-  const afterDeleted = await runGit(subprocess, repositoryRoot, ['ls-files', '-z', '--deleted'], signal)
-  const afterHead = decodeUtf8(await runGit(subprocess, repositoryRoot, [
-    'rev-parse', '--verify', 'HEAD^{commit}',
-  ], signal)).trim()
-  if (!beforeSelection.equals(afterSelection) || !beforeDeleted.equals(afterDeleted) || beforeHead !== afterHead) {
-    throw new SubjectFreezeError('unstable_subject', 'Workspace identity changed during Subject Freeze')
-  }
   return {
     entries,
     headCommit: beforeHead,
+    controlPlaneIdentity,
     selectionDigest: binaryDigest('application/vnd.dsh.git.path-selection', beforeSelection),
     exclusions: deletedPaths.map(path => ({ kind: 'workspace_deleted', path })),
   }
@@ -715,6 +806,43 @@ export async function freezeSubject(options: FreezeSubjectOptions): Promise<Froz
         baseCommit,
         headCommit,
         changeSetDigest: binaryDigest('application/vnd.dsh.git.raw-diff', changeSet),
+      }
+    } else if (options.source.kind === 'workspace_change') {
+      const baseCommit = await exactCommit(
+        options.subprocess,
+        options.repositoryRoot,
+        options.source.baseCommit,
+        options.signal,
+      )
+      const workspace = await materializeWorkspace(
+        options.subprocess,
+        options.repositoryRoot,
+        contentRoot,
+        options.signal,
+        true,
+      )
+      const controlPlaneIdentity = workspace.controlPlaneIdentity
+      if (
+        controlPlaneIdentity === null
+        || controlPlaneIdentity.branch !== options.source.branch
+        || workspace.headCommit !== baseCommit
+        || controlPlaneIdentity.workspaceFingerprint !== options.source.workspaceFingerprint
+        || controlPlaneIdentity.producedChangeFingerprint !== options.source.producedChangeFingerprint
+      ) {
+        throw new SubjectFreezeError(
+          'invalid_subject',
+          'Produced workspace does not match the Host-frozen change identity',
+        )
+      }
+      entries = workspace.entries
+      subjectExclusions = workspace.exclusions
+      resolvedSubject = {
+        kind: 'workspace_change',
+        branch: controlPlaneIdentity.branch,
+        baseCommit,
+        workspaceFingerprint: controlPlaneIdentity.workspaceFingerprint,
+        producedChangeFingerprint: controlPlaneIdentity.producedChangeFingerprint,
+        selectionDigest: workspace.selectionDigest,
       }
     } else {
       const workspace = await materializeWorkspace(options.subprocess, options.repositoryRoot, contentRoot, options.signal)

@@ -54,7 +54,10 @@ async function nodeRepositoryFixture(packageJson: unknown, extraPackages = 0): P
   return root
 }
 
-function registerScriptedEngineeringProvider(ctx: Context): () => void {
+function registerScriptedEngineeringProvider(
+  ctx: Context,
+  applyDeveloperChange?: () => Promise<void>,
+): () => void {
   const outputs = {
     planner: {
       schemaVersion: 1,
@@ -85,6 +88,7 @@ function registerScriptedEngineeringProvider(ctx: Context): () => void {
     },
   } as const
   let sequence = 0
+  let developerChangeApplied = false
   const provider: SubagentProvider = {
     name: 'spawn',
     capabilities: {
@@ -99,6 +103,10 @@ function registerScriptedEngineeringProvider(ctx: Context): () => void {
       const role = request.label?.split(' · ')[0]
       if (role !== 'planner' && role !== 'developer' && role !== 'tester' && role !== 'reviewer') {
         throw new Error('Scripted Provider received an unknown Role')
+      }
+      if (role === 'developer' && applyDeveloperChange !== undefined && !developerChangeApplied) {
+        await applyDeveloperChange()
+        developerChangeApplied = true
       }
       return {
         id: `security-control-plane-scripted-${++sequence}` as never,
@@ -129,7 +137,7 @@ function registerBlockingCancellationAnalyzer(
       value: '9'.repeat(64),
     },
     executionClass: 'PURE',
-    supportedAssessmentModes: ['REPOSITORY'],
+    supportedAssessmentModes: ['CHANGE'],
     supportedPolicyIds: ['security/node-package-lifecycle'],
     coverageObligationIds: ['application-security-analysis'],
     evidenceSchemaIds: ['fixture/blocking-cancellation-evidence'],
@@ -442,7 +450,9 @@ describe('Security Assurance Control Plane Provider', () => {
     const ctx = new Context()
     const subprocessFiber = await ctx.plugin(LocalSubprocessRuntime)
     const subagentFiber = await ctx.plugin(SubagentRuntime)
-    const disposeScriptedProvider = registerScriptedEngineeringProvider(ctx)
+    const disposeScriptedProvider = registerScriptedEngineeringProvider(ctx, async () => {
+      await writeFile(join(repository, 'index.js'), 'export const answer = 43\n', 'utf8')
+    })
     const securityFiber = await ctx.plugin(SecurityAssuranceService, { dshHome })
     await ctx.securityAssurance.whenReady()
     const invocation = referenceHostInvocation(ctx.securityAssurance)
@@ -605,6 +615,41 @@ describe('Security Assurance Control Plane Provider', () => {
               }),
             }),
       ])
+      const assessments = await ctx.securityAssurance.listAssessments(invocation, {
+        schemaVersion: 1,
+        limit: 10,
+      })
+      if (!assessments.ok) throw new Error(`Assessment list failed: ${assessments.error.code}`)
+      if (configurationMissing) {
+        expect(assessments.value.assessments).toEqual([])
+      } else {
+        expect(assessments.value.assessments).toEqual([
+          expect.objectContaining({ subjectKind: 'workspace_change' }),
+        ])
+        const assessmentId = assessments.value.assessments[0]?.assessmentId
+        if (assessmentId === undefined) throw new Error('Control Plane Security Assessment is missing')
+        await expect(ctx.securityAssurance.getAssessment(invocation, {
+          schemaVersion: 1,
+          assessmentId,
+        })).resolves.toMatchObject({
+          ok: true,
+          value: {
+            state: 'SEALED',
+            subject: { kind: 'workspace_change' },
+            contract: {
+              assessmentMode: 'CHANGE',
+              target: {
+                kind: 'change',
+                baseCommit: snapshot.repository.head,
+                workspaceFingerprint: snapshot.assuranceSubjects?.[0]?.subject.workspaceFingerprint,
+                producedChangeFingerprint:
+                  snapshot.assuranceSubjects?.[0]?.subject.producedChangeFingerprint,
+                impactCone: 'POLICY_DEFAULT',
+              },
+            },
+          },
+        })
+      }
     } finally {
       await adapterFiber.dispose()
       await controlPlaneFiber.dispose()

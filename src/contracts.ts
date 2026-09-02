@@ -362,7 +362,12 @@ export const repositoryListResultSchema: z.ZodType<SecurityResult<RepositoryList
     z.strictObject({ ok: z.literal(false), error: publicSecurityErrorSchema }),
   ])
 
-const exactGitCommitSchema = z.string().regex(/^[0-9a-f]{40}$/)
+const exactGitCommitSchema = z.string().regex(/^[0-9a-f]{40,64}$/)
+const gitBranchSchema = z.string().min(1).max(1_024).refine(
+  branch => branch === branch.trim() && !branch.includes('\0'),
+  'Git branch must be one canonical non-empty name',
+)
+const sha256EnvelopeSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/)
 
 export const assessmentSubjectSourceV1Schema = z.discriminatedUnion('kind', [
   z.strictObject({
@@ -376,6 +381,13 @@ export const assessmentSubjectSourceV1Schema = z.discriminatedUnion('kind', [
   }),
   z.strictObject({
     kind: z.literal('workspace_snapshot'),
+  }),
+  z.strictObject({
+    kind: z.literal('workspace_change'),
+    branch: gitBranchSchema,
+    baseCommit: exactGitCommitSchema,
+    workspaceFingerprint: sha256EnvelopeSchema,
+    producedChangeFingerprint: sha256EnvelopeSchema,
   }),
 ])
 
@@ -396,12 +408,19 @@ const subjectRelativePathSchema = z.string().min(1).max(1024).refine(path => (
   && path.split('/').every(segment => segment.length > 0 && segment !== '.' && segment !== '..')
 ), 'target paths must be canonical Subject-relative paths')
 
-export const assessmentTargetSelectorV1Schema = z.discriminatedUnion('kind', [
+export const assessmentTargetSelectorV1Schema = z.union([
   z.strictObject({ kind: z.literal('repository') }),
   z.strictObject({
     kind: z.literal('change'),
     baseCommit: exactGitCommitSchema,
     headCommit: exactGitCommitSchema,
+    impactCone: z.literal('POLICY_DEFAULT'),
+  }),
+  z.strictObject({
+    kind: z.literal('change'),
+    baseCommit: exactGitCommitSchema,
+    workspaceFingerprint: sha256EnvelopeSchema,
+    producedChangeFingerprint: sha256EnvelopeSchema,
     impactCone: z.literal('POLICY_DEFAULT'),
   }),
   z.strictObject({
@@ -490,7 +509,7 @@ export interface SecurityCatalogAssessmentModeV1 {
   readonly assessmentMode: AssessmentMode
   readonly label: LocalizedLabelV1
   readonly targetKind: AssessmentTargetSelectorV1['kind']
-  readonly subjectKinds: readonly AssessmentSubjectSourceV1['kind'][]
+  readonly subjectKinds: readonly Exclude<AssessmentSubjectSourceV1['kind'], 'workspace_change'>[]
   readonly support: 'SUPPORTED' | 'UNSUPPORTED'
   readonly limitations: readonly string[]
 }
@@ -646,7 +665,7 @@ export interface AssessmentSubjectReceiptV1 {
 }
 
 export const assessmentSubjectReceiptV1Schema: z.ZodType<AssessmentSubjectReceiptV1> = z.strictObject({
-  kind: z.enum(['git_revision', 'change', 'workspace_snapshot']),
+  kind: z.enum(['git_revision', 'change', 'workspace_snapshot', 'workspace_change']),
   digest: digestEnvelopeV1Schema,
 })
 
@@ -1268,7 +1287,7 @@ export const assessmentListItemV1Schema: z.ZodType<AssessmentListItemV1> = z.str
     repositoryId: repositoryIdSchema,
     repositoryRevision: z.number().int().positive(),
   }),
-  subjectKind: z.enum(['git_revision', 'change', 'workspace_snapshot']),
+  subjectKind: z.enum(['git_revision', 'change', 'workspace_snapshot', 'workspace_change']),
   policyId: boundedBindingId,
   coverageStatus: z.enum(['PENDING', 'COMPLETE', 'GAP']),
   verdict: securityVerdictSchema.nullable(),

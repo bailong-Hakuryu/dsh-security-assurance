@@ -596,9 +596,9 @@ function NewAssessmentWizard({
       ? { kind: 'targeted' as const, relativePaths: paths }
       : { kind: 'repository' as const }
   const commitsValid = subjectKind === 'git_revision'
-    ? /^[0-9a-f]{40}$/u.test(commit.trim())
+    ? /^[0-9a-f]{40,64}$/u.test(commit.trim())
     : subjectKind === 'change'
-      ? /^[0-9a-f]{40}$/u.test(baseCommit.trim()) && /^[0-9a-f]{40}$/u.test(headCommit.trim())
+      ? /^[0-9a-f]{40,64}$/u.test(baseCommit.trim()) && /^[0-9a-f]{40,64}$/u.test(headCommit.trim())
       : true
   const pathsValid = mode !== 'TARGETED' || (
     paths.length >= 1
@@ -685,18 +685,18 @@ function NewAssessmentWizard({
         {subjectKind === 'git_revision' && (
           <label className="dsh-security-risk-decision__field">
             <span>{t('wizard.commit')}</span>
-            <input aria-label={t('wizard.commit')} value={commit} maxLength={40} onChange={event => { setCommit(event.currentTarget.value) }} />
+            <input aria-label={t('wizard.commit')} value={commit} maxLength={64} onChange={event => { setCommit(event.currentTarget.value) }} />
           </label>
         )}
         {subjectKind === 'change' && (
           <>
             <label className="dsh-security-risk-decision__field">
               <span>{t('wizard.baseCommit')}</span>
-              <input aria-label={t('wizard.baseCommit')} value={baseCommit} maxLength={40} onChange={event => { setBaseCommit(event.currentTarget.value) }} />
+              <input aria-label={t('wizard.baseCommit')} value={baseCommit} maxLength={64} onChange={event => { setBaseCommit(event.currentTarget.value) }} />
             </label>
             <label className="dsh-security-risk-decision__field">
               <span>{t('wizard.headCommit')}</span>
-              <input aria-label={t('wizard.headCommit')} value={headCommit} maxLength={40} onChange={event => { setHeadCommit(event.currentTarget.value) }} />
+              <input aria-label={t('wizard.headCommit')} value={headCommit} maxLength={64} onChange={event => { setHeadCommit(event.currentTarget.value) }} />
             </label>
           </>
         )}

@@ -53,7 +53,7 @@ export const NPM_AUDIT_DESCRIPTOR: AnalyzerDescriptorV1 = deepFreeze({
   descriptorSchemaVersion: 1 as const,
   buildDigest: structuredDigest('application/vnd.dsh.security.analyzer-method+json', NPM_AUDIT_ANALYZER_METHOD),
   executionClass: 'PURE' as const,
-  supportedAssessmentModes: ['REPOSITORY'] as const,
+  supportedAssessmentModes: ['REPOSITORY', 'CHANGE'] as const,
   supportedPolicyIds: [NPM_AUDIT_POLICY_ID] as const,
   coverageObligationIds: [NPM_AUDIT_COVERAGE_OBLIGATION_ID] as const,
   evidenceSchemaIds: [NPM_AUDIT_EVIDENCE_SCHEMA_ID] as const,
@@ -72,7 +72,7 @@ const NPM_AUDIT_QUALIFICATION_CORE = {
   issuerId: 'dsh/security-assurance-development' as const,
   level: 'HOST_ATTESTED' as const,
   supportedEcosystemIds: ['node-npm-audit-report'] as const,
-  supportedAssessmentModes: ['REPOSITORY'] as const,
+  supportedAssessmentModes: ['REPOSITORY', 'CHANGE'] as const,
   supportedPolicyIds: [NPM_AUDIT_POLICY_ID] as const,
   coverageObligationIds: [NPM_AUDIT_COVERAGE_OBLIGATION_ID] as const,
   evidenceSchemaIds: [NPM_AUDIT_EVIDENCE_SCHEMA_ID] as const,
@@ -86,6 +86,7 @@ const NPM_AUDIT_QUALIFICATION_CORE = {
   evidenceDigests: [NPM_AUDIT_DESCRIPTOR.buildDigest] as const,
   limitations: [
     'Only the frozen npm-audit.json report is evaluated; report freshness is the Host responsibility.',
+    'CHANGE mode evaluates the report frozen in the complete head tree for an exact committed base-to-head pair.',
     'This qualification does not claim general dependency, license, or reachability analysis coverage.',
   ] as const,
 }

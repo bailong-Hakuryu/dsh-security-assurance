@@ -50,7 +50,9 @@ export interface SecurityCatalogCompositionInputV1 {
 }
 function builtinSupports(repository: RepositorySnapshotV1, mode: AssessmentMode): boolean {
   return repository.bindings.policyId === 'security/node-package-lifecycle'
-    && BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR.supportedAssessmentModes.includes(mode as 'REPOSITORY')
+    && BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR.supportedAssessmentModes.includes(
+      mode as 'REPOSITORY' | 'CHANGE',
+    )
     && BUILTIN_NODE_PACKAGE_LIFECYCLE_QUALIFICATION.platforms.includes(repository.bindings.platform)
 }
 

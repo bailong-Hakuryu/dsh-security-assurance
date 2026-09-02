@@ -363,13 +363,27 @@ function assessmentSelectionIsConsistent(
   mode: StartAssessmentRequest['assessmentMode'],
   target: AssessmentTargetSelectorV1,
 ): boolean {
-  if (mode === 'REPOSITORY') return target.kind === 'repository' && subject.kind !== 'change'
-  if (mode === 'TARGETED') return target.kind === 'targeted' && subject.kind !== 'change'
-  return mode === 'CHANGE'
-    && subject.kind === 'change'
-    && target.kind === 'change'
+  if (mode === 'REPOSITORY') {
+    return target.kind === 'repository'
+      && subject.kind !== 'change'
+      && subject.kind !== 'workspace_change'
+  }
+  if (mode === 'TARGETED') {
+    return target.kind === 'targeted'
+      && subject.kind !== 'change'
+      && subject.kind !== 'workspace_change'
+  }
+  if (mode !== 'CHANGE' || target.kind !== 'change') return false
+  if (subject.kind === 'change') {
+    return 'headCommit' in target
+      && subject.baseCommit === target.baseCommit
+      && subject.headCommit === target.headCommit
+  }
+  return subject.kind === 'workspace_change'
+    && 'workspaceFingerprint' in target
     && subject.baseCommit === target.baseCommit
-    && subject.headCommit === target.headCommit
+    && subject.workspaceFingerprint === target.workspaceFingerprint
+    && subject.producedChangeFingerprint === target.producedChangeFingerprint
 }
 
 function requestedStrongerControlsAreValid(controlIds: readonly string[]): boolean {
@@ -1788,10 +1802,22 @@ export class SecurityAssuranceService extends Service {
         operation.repositoryId,
       ),
       repositoryId: operation.repositoryId,
-      subject: { kind: 'workspace_snapshot' },
-      assessmentMode: 'REPOSITORY',
+      subject: {
+        kind: 'workspace_change',
+        branch: operation.context.subject.branch,
+        baseCommit: operation.context.subject.head,
+        workspaceFingerprint: operation.context.subject.workspaceFingerprint,
+        producedChangeFingerprint: operation.context.subject.producedChangeFingerprint,
+      },
+      assessmentMode: 'CHANGE',
       assessmentProfileId: repository.value.bindings.assessmentProfileId,
-      target: { kind: 'repository' },
+      target: {
+        kind: 'change',
+        baseCommit: operation.context.subject.head,
+        workspaceFingerprint: operation.context.subject.workspaceFingerprint,
+        producedChangeFingerprint: operation.context.subject.producedChangeFingerprint,
+        impactCone: 'POLICY_DEFAULT',
+      },
       requestedStrongerControlIds: [],
     }, options)
     if (!started.ok) return controlPlaneSecurityFailure(started.error.code)
