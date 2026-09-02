@@ -156,6 +156,7 @@ function buildLanes(tag, track) {
   return oses.flatMap(os => NODE_MAJORS.map(node => ({
     harness: tag.version,
     ref: tag.ref,
+    commit: tag.commit,
     track,
     os,
     node,

@@ -22,13 +22,18 @@ verification signal without anyone editing a workflow first.
 The compatibility window is a closed, explicit set:
 `SUPPORTED_HARNESS_VERSIONS` in `src/contracts.ts`, led by the primary
 qualification target `TARGET_HARNESS_VERSION`. The composition invariant
-admits exactly this set and keeps failing closed on anything else; peer
-dependency ranges spell out the same versions as an exact disjunction.
+admits exactly one coherent release from this set, rejects a runtime assembled
+from different supported package versions, and keeps failing closed on
+anything else; peer dependency ranges spell out the same versions as an exact
+disjunction.
 
 A scheduled Harness Compatibility workflow, owned by this repository on
 behalf of both plugins, lists the official Harness tags daily and feeds the
 union of the three most recent tags and the declared supported set into an
-auditable matrix JSON. The primary target runs on Ubuntu, macOS, and Windows;
+auditable matrix JSON. Each lane records the peeled release-tree commit and
+checks out that immutable SHA rather than trusting a tag to remain unmoved.
+Product-code changes also trigger the matrix. The primary target runs on
+Ubuntu, macOS, and Windows;
 every other version runs on Ubuntu; every lane runs on Node 22 and 24 and
 executes both the dual-plugin joint E2E (Mission, Developer workspace
 change, CHANGE Assessment, sealed submission, Quality Gate propagation) and

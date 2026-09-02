@@ -3,8 +3,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'
 import {
   SUPPORTED_HARNESS_VERSIONS,
-  isSupportedHarnessVersion,
 } from './contracts.ts'
+import { evaluateHarnessVersionAdmission } from './internal/harness-version-admission.ts'
 import {
   createHarnessVerificationOwner,
   HARNESS_VERIFICATION_AUTHORITY,
@@ -162,12 +162,16 @@ function verifyHarnessVersion(): HarnessVerificationCheck {
       packageName,
       actual: packageVersion(packageName),
     }))
-    const mismatches = resolved.filter(({ actual }) => !isSupportedHarnessVersion(actual))
     const describe = (entries: readonly { packageName: string, actual: string }[]) =>
       entries.map(({ packageName, actual }) => `${packageName}@${actual}`).join(', ')
-    return mismatches.length === 0
-      ? pass(id, `Harness runtime packages match supported versions: ${describe(resolved)}.`)
-      : fail(id, `Unsupported Harness runtime version: ${describe(mismatches)}; supported: ${SUPPORTED_HARNESS_VERSIONS.join(', ')}.`)
+    const admission = evaluateHarnessVersionAdmission(resolved, SUPPORTED_HARNESS_VERSIONS)
+    if (admission.status === 'UNSUPPORTED') {
+      return fail(id, `Unsupported Harness runtime version: ${describe(admission.packages)}; supported: ${SUPPORTED_HARNESS_VERSIONS.join(', ')}.`)
+    }
+    if (admission.status === 'VERSION_SKEW') {
+      return fail(id, `Harness runtime package version skew: ${describe(admission.packages)}.`)
+    }
+    return pass(id, `Harness runtime packages coherently match supported version ${admission.version}: ${describe(resolved)}.`)
   } catch (error) {
     return notEvaluated(id, `Harness version verification unavailable: ${sanitizeErrorMessage(error)}.`)
   }

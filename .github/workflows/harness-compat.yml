@@ -22,13 +22,25 @@ on:
       - main
     paths:
       - '.github/workflows/harness-compat.yml'
+      - 'dsh.bundle/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'scripts/latest-harness-profile-smoke.mjs'
       - 'scripts/harness-compat-matrix.mjs'
-      - 'tests/harness-compat-matrix.spec.ts'
+      - 'src/**'
+      - 'tests/**'
+      - 'tsconfig*.json'
   pull_request:
     paths:
       - '.github/workflows/harness-compat.yml'
+      - 'dsh.bundle/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'scripts/latest-harness-profile-smoke.mjs'
       - 'scripts/harness-compat-matrix.mjs'
-      - 'tests/harness-compat-matrix.spec.ts'
+      - 'src/**'
+      - 'tests/**'
+      - 'tsconfig*.json'
 
 permissions:
   contents: read
@@ -105,14 +117,14 @@ jobs:
           path: plugin
           persist-credentials: false
 
-      # The lane ref always comes from the discovered matrix artifact, never
-      # from a hardcoded version, so fresh-machine verification follows the
-      # official Harness tags automatically.
+      # The lane commit is the peeled release-tree SHA recorded in the matrix
+      # artifact. Checking out the immutable SHA closes the tag-movement race
+      # between discovery and execution while retaining the tag as evidence.
       - name: Check out Harness ${{ matrix.ref }}
         uses: actions/checkout@v6
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.commit }}
           path: deepseek-harness-latest
           persist-credentials: false
 

@@ -4,8 +4,9 @@
 
 - Support DeepSeek Harness `0.1.2-alpha.2` through `0.1.2-alpha.4` alongside
   the primary `0.1.2-alpha.1` target as an explicit, verified set: the
-  composition invariant admits set membership and keeps failing closed on any
-  other Harness runtime, and peer declarations list the exact versions.
+  composition invariant admits one coherent supported release, rejects mixed
+  supported-package versions, and keeps failing closed on any other Harness
+  runtime; peer declarations list the exact versions.
 - Read the live Session event log through a capability-tolerant seam that
   accepts both the `Session.events` getter (`0.1.2-alpha.1` to
   `0.1.2-alpha.3`) and its `snapshotEvents()` successor (`0.1.2-alpha.4`),
@@ -13,7 +14,8 @@
   `gateway/`-namespaced typert gateway error codes in Workbench Remote
   negative-path assertions (`0.1.2-alpha.2` namespaced them).
 - Add the scheduled Harness Compatibility workflow: daily discovery of the
-  official Harness tags feeds an auditable matrix that runs the dual-plugin
+  official Harness tags feeds an auditable, peeled-commit-pinned matrix that
+  also runs for product-code changes and executes the dual-plugin
   joint E2E (Mission, Developer workspace change, CHANGE Assessment, sealed
   submission, Quality Gate with SATISFIED / FAILED / INDETERMINATE
   propagation) plus a packed dual-tarball fresh-profile installation and Web

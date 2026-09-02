@@ -10,11 +10,13 @@ import {
   TARGET_HARNESS_VERSION,
   isSupportedHarnessVersion,
 } from '../src/contracts.js'
+import { evaluateHarnessVersionAdmission } from '../src/internal/harness-version-admission.js'
 import { removeTemporaryRoots } from './support/remove-temporary-root.js'
 
 interface MatrixLane {
   readonly harness: string
   readonly ref: string
+  readonly commit: string
   readonly track: 'target' | 'supported' | 'recent' | 'manual'
   readonly os: string
   readonly node: string
@@ -41,6 +43,12 @@ const PUBLISHED_VERSIONS = [
 function tagLine(version: string, index: number, peeled = false): string {
   const commit = index.toString(16).padStart(40, '0')
   return `${commit}\trefs/tags/dsh-v${version}${peeled ? '^{}' : ''}`
+}
+
+function tagCommit(version: string): string {
+  const index = PUBLISHED_VERSIONS.indexOf(version as (typeof PUBLISHED_VERSIONS)[number])
+  if (index < 0) throw new Error(`fixture version is not published: ${version}`)
+  return (index + 1).toString(16).padStart(40, '0')
 }
 
 function writeTags(lines: readonly string[]): string {
@@ -90,6 +98,23 @@ describe('declared Harness compatibility window', () => {
     expect(isSupportedHarnessVersion('0.1.2-alpha.4')).toBe(true)
     expect(isSupportedHarnessVersion('0.1.2-alpha.5')).toBe(false)
     expect(isSupportedHarnessVersion('0.1.1-rc.2')).toBe(false)
+  })
+
+  it('admits only a coherent runtime release and rejects supported-version skew', () => {
+    expect(evaluateHarnessVersionAdmission([
+      { packageName: '@deepseek-ai/dsh-invariants', actual: '0.1.2-alpha.4' },
+      { packageName: '@deepseek-ai/dsh-typert-registry', actual: '0.1.2-alpha.4' },
+    ], SUPPORTED_HARNESS_VERSIONS)).toEqual({ status: 'SUPPORTED', version: '0.1.2-alpha.4' })
+
+    expect(evaluateHarnessVersionAdmission([
+      { packageName: '@deepseek-ai/dsh-invariants', actual: '0.1.2-alpha.2' },
+      { packageName: '@deepseek-ai/dsh-typert-registry', actual: '0.1.2-alpha.4' },
+    ], SUPPORTED_HARNESS_VERSIONS)).toMatchObject({ status: 'VERSION_SKEW' })
+
+    expect(evaluateHarnessVersionAdmission([
+      { packageName: '@deepseek-ai/dsh-invariants', actual: '0.1.2-alpha.5' },
+      { packageName: '@deepseek-ai/dsh-typert-registry', actual: '0.1.2-alpha.5' },
+    ], SUPPORTED_HARNESS_VERSIONS)).toMatchObject({ status: 'UNSUPPORTED' })
   })
 
   it('matches the peer dependency ranges and the dual-plugin E2E script composition', () => {
@@ -142,6 +167,7 @@ describe('harness-compat-matrix discovery', () => {
     )
     expect(new Set(target.map(lane => lane.node))).toEqual(new Set(['22', '24']))
     expect(target.every(lane => lane.ref === `dsh-v${TARGET_HARNESS_VERSION}`)).toBe(true)
+    expect(target.every(lane => lane.commit === tagCommit(TARGET_HARNESS_VERSION))).toBe(true)
 
     for (const version of ['0.1.2-alpha.2', '0.1.2-alpha.3', '0.1.2-alpha.4']) {
       const lanes = matrix.include.filter(lane => lane.harness === version)
@@ -149,6 +175,7 @@ describe('harness-compat-matrix discovery', () => {
       expect(lanes.map(lane => lane.os)).toEqual(['ubuntu-latest', 'ubuntu-latest'])
       expect(lanes.map(lane => lane.node)).toEqual(['22', '24'])
       expect(lanes.every(lane => lane.ref === `dsh-v${version}`)).toBe(true)
+      expect(lanes.every(lane => lane.commit === tagCommit(version))).toBe(true)
     }
   })
 
@@ -163,7 +190,9 @@ describe('harness-compat-matrix discovery', () => {
     expect(result.status).toBe(0)
     const matrix = parseMatrix(result.stdout)
     expect(matrix.include).toHaveLength(12)
-    expect(matrix.include.filter(lane => lane.harness === '0.1.2-alpha.4')).toHaveLength(2)
+    const alpha4 = matrix.include.filter(lane => lane.harness === '0.1.2-alpha.4')
+    expect(alpha4).toHaveLength(2)
+    expect(alpha4.every(lane => lane.commit === '63'.padStart(40, '0'))).toBe(true)
   })
 
   it('admits a newly published Harness tag into verification automatically', () => {
@@ -287,7 +316,14 @@ describe('Harness Compatibility workflow contract', () => {
     expect(workflow).toContain('matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}')
     expect(workflow).toContain('runs-on: ${{ matrix.os }}')
     expect(workflow).toContain('node-version: ${{ matrix.node }}')
-    expect(workflow).toContain('ref: ${{ matrix.ref }}')
+    expect(workflow).toContain('ref: ${{ matrix.commit }}')
+  })
+
+  it('runs compatibility for product changes, not only matrix-infrastructure changes', () => {
+    expect(workflow).toContain("- 'src/**'")
+    expect(workflow).toContain("- 'package.json'")
+    expect(workflow).toContain("- 'pnpm-lock.yaml'")
+    expect(workflow).toContain("- 'tests/**'")
   })
 
   it('executes the dual-plugin joint E2E and the packed fresh-profile probe', () => {
