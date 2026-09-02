@@ -118,8 +118,9 @@ A disabled, renamed, or absent row is a failure.
 ### Harness version fails
 
 The installed `@deepseek-ai/dsh-invariants` and
-`@deepseek-ai/dsh-typert-registry` versions must exactly match
-`TARGET_HARNESS_VERSION`.
+`@deepseek-ai/dsh-typert-registry` versions must be identical and belong to
+the closed `SUPPORTED_HARNESS_VERSIONS` set. A mixed supported-version runtime
+or any unverified version fails closed; see ADR 0310.
 
 ### Companion unloads
 

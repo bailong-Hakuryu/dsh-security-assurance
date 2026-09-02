@@ -36,7 +36,7 @@ The companion publishes exactly six required checks:
 
 | Check | Evidence |
 | --- | --- |
-| `composition.harness-version` | The invariant registry and Typert registry package versions exactly equal `TARGET_HARNESS_VERSION`. |
+| `composition.harness-version` | The invariant registry and Typert registry package versions exactly equal `TARGET_HARNESS_VERSION` (original ADR 0253 baseline; ADR 0310 later replaces this with one coherent release from the closed `SUPPORTED_HARNESS_VERSIONS` set). |
 | `composition.required-service-definitions` | `securityAssurance`, `invariants`, `loader`, and `typert` expose their required runtime operations. |
 | `composition.bundle-dependencies` | Cordis, Loader, invariant registry, Typert registry, and Zod package manifests resolve at runtime. |
 | `composition.generated-contract` | The registered `dsh-security-assurance#host` Typert model contains every public Security Assurance method, and each method exists on the live Service. |
