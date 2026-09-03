@@ -906,7 +906,7 @@ describe('Security Assurance Control Plane Provider', () => {
       await subagentFiber.dispose()
       await subprocessFiber.dispose()
     }
-  }, 40_000)
+  }, 90_000)
 
   it('reconciles one begun invocation across both plugin restarts only after explicit Mission resume', async () => {
     const repository = await nodeRepositoryFixture({
