@@ -94,11 +94,38 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
     expect(duplicate.diagnostics).toContain('PACKAGE_MANIFEST_DUPLICATE_SECURITY_KEY')
   })
 
+  it('does not treat security-shaped package names in dependency objects as duplicate security keys', () => {
+    const subjectDigest = structuredDigest(
+      'application/vnd.dsh.security.subject-manifest+json',
+      { fixture: 'nested-lifecycle-package-names' },
+    )
+    const texts = [
+      '{"scripts":{"test":"vitest run"},"dependencies":{"scripts":"^1.0.0"}}\n',
+      '{"scripts":{"install":"node setup.js"},"dependencies":{"install":"^0.13.0"},"devDependencies":{"install":"^0.14.0"}}\n',
+    ]
+
+    for (const text of texts) {
+      const result = analyzeNodePackageInstallLifecycle({
+        subjectDigest,
+        slices: [{
+          path: 'package.json',
+          text,
+          digest: structuredDigest('application/octet-stream', { text }),
+        }],
+      })
+      expect(result.completionDisposition).toBe('COMPLETE')
+      expect(result.diagnostics).not.toContain('PACKAGE_MANIFEST_DUPLICATE_SECURITY_KEY')
+    }
+  })
+
   it('seals SATISFIED when eligible Evidence proves all Node package manifests omit install lifecycle scripts', async () => {
     const repository = await nodeRepositoryFixture({
       name: 'safe-node-fixture',
       version: '1.0.0',
       type: 'module',
+      scripts: { test: 'vitest run' },
+      dependencies: { scripts: '^1.0.0', install: '^0.13.0' },
+      devDependencies: { install: '^0.14.0' },
     })
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-qualified-node-home-'))
     temporaryRoots.push(dshHome)
@@ -177,14 +204,14 @@ describe('qualified built-in Node package lifecycle Analyzer', () => {
               value: {
                 analyzers: [{
                   analyzerId: 'dsh/builtin-node-package-lifecycle',
-                  analyzerVersion: '1.1.0',
+                  analyzerVersion: '1.1.1',
                   descriptorSchemaVersion: 1,
                   buildDigest: {
                     algorithm: 'sha256',
                     canonicalization: 'dsh-canonical-json-v1',
                   },
                   executionClass: 'PURE',
-                  qualificationId: 'dsh/qualification/builtin-node-package-lifecycle/v2',
+                  qualificationId: 'dsh/qualification/builtin-node-package-lifecycle/v3',
                   qualificationDigest: {
                     algorithm: 'sha256',
                     canonicalization: 'dsh-canonical-json-v1',

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Scope duplicate security-key detection to the root `scripts` property and
+  its direct `preinstall`, `install`, and `postinstall` properties, so legal
+  dependency package names such as `scripts` or `install` cannot make an
+  Assessment indeterminate. Advance the corrected built-in Analyzer to
+  version `1.1.1` and qualification `v3` with a new method and qualification
+  digest.
 - Add fail-closed `TARGETED` Assessments for
   `security/node-package-lifecycle`: the Service freezes and digest-binds the
   complete Subject, requires every explicit relative file or directory to

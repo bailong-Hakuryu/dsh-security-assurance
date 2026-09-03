@@ -15,17 +15,18 @@ const INSTALL_LIFECYCLE_NAMES = ['preinstall', 'install', 'postinstall'] as cons
 const ANALYZER_METHOD = {
   schemaVersion: 1,
   analyzerId: 'dsh/builtin-node-package-lifecycle',
-  analyzerVersion: '1.1.0',
-  methodVersion: 'dsh-node-package-lifecycle-policy-v1',
+  analyzerVersion: '1.1.1',
+  methodVersion: 'dsh-node-package-lifecycle-policy-v2',
   input: 'all verified package.json text slices inside one immutable Assessment Target',
   rule: 'preinstall, install, and postinstall script keys with non-empty string values are candidates',
+  duplicateKeyScope: 'root scripts property and lifecycle properties directly inside the root scripts object',
   exclusions: 'script bodies are never retained as Evidence',
 }
 
 export const BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR = deepFreeze({
   schemaVersion: 1 as const,
   analyzerId: 'dsh/builtin-node-package-lifecycle' as const,
-  analyzerVersion: '1.1.0' as const,
+  analyzerVersion: '1.1.1' as const,
   descriptorSchemaVersion: 1 as const,
   buildDigest: structuredDigest('application/vnd.dsh.security.analyzer-method+json', ANALYZER_METHOD),
   executionClass: 'PURE' as const,
@@ -38,7 +39,7 @@ export const BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR = deepFreeze({
 
 const QUALIFICATION_CORE = {
   schemaVersion: 1,
-  qualificationId: 'dsh/qualification/builtin-node-package-lifecycle/v2',
+  qualificationId: 'dsh/qualification/builtin-node-package-lifecycle/v3',
   analyzerIdentity: {
     analyzerId: BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR.analyzerId,
     analyzerVersion: BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR.analyzerVersion,
@@ -53,6 +54,7 @@ const QUALIFICATION_CORE = {
   platforms: ['win32', 'linux', 'darwin'] as const,
   limitations: [
     'Only package.json install lifecycle key presence is evaluated.',
+    'Duplicate-key rejection is scoped to the root scripts property and its direct lifecycle properties.',
     'CHANGE mode evaluates every package.json in the complete frozen head tree, not only changed files.',
     'TARGETED mode evaluates only package.json files at or below the exact frozen Target paths.',
     'This qualification does not claim general Node or application security coverage.',
@@ -156,11 +158,46 @@ function jsonObject(text: string): Record<string, unknown> | undefined {
 }
 
 function hasDuplicateSecurityKey(text: string): boolean {
-  const counts = new Map<string, number>()
-  // Scan JSON property tokens rather than matching quoted substrings.  This
-  // deliberately skips string values, so text such as `"scripts":` inside a
-  // description cannot manufacture a duplicate-key diagnostic.
+  type ObjectScope = 'ROOT' | 'ROOT_SCRIPTS' | 'OTHER'
+  type ContainerFrame = {
+    readonly kind: 'OBJECT' | 'ARRAY'
+    readonly scope: ObjectScope
+    readonly securityKeys: Set<string>
+    pendingKey: string | undefined
+  }
+
+  const stack: ContainerFrame[] = []
+  // Scan JSON property tokens with their containing object. This deliberately
+  // skips string values and counts only the root `scripts` property plus
+  // lifecycle properties directly inside that root object.
   for (let index = 0; index < text.length;) {
+    const character = text[index]
+    if (character === '{') {
+      const parent = stack.at(-1)
+      const scope = parent === undefined
+        ? 'ROOT'
+        : parent.kind === 'OBJECT'
+          && parent.scope === 'ROOT'
+          && parent.pendingKey === 'scripts'
+          ? 'ROOT_SCRIPTS'
+          : 'OTHER'
+      if (parent?.kind === 'OBJECT') parent.pendingKey = undefined
+      stack.push({ kind: 'OBJECT', scope, securityKeys: new Set(), pendingKey: undefined })
+      index += 1
+      continue
+    }
+    if (character === '[') {
+      const parent = stack.at(-1)
+      if (parent?.kind === 'OBJECT') parent.pendingKey = undefined
+      stack.push({ kind: 'ARRAY', scope: 'OTHER', securityKeys: new Set(), pendingKey: undefined })
+      index += 1
+      continue
+    }
+    if (character === '}' || character === ']') {
+      stack.pop()
+      index += 1
+      continue
+    }
     if (text[index] !== '"') {
       index += 1
       continue
@@ -189,14 +226,17 @@ function hasDuplicateSecurityKey(text: string): boolean {
     } catch {
       continue
     }
-    if (typeof key !== 'string' || (
-      key !== 'scripts' && !INSTALL_LIFECYCLE_NAMES.includes(
-        key as (typeof INSTALL_LIFECYCLE_NAMES)[number],
-      )
-    )) continue
-    const count = (counts.get(key) ?? 0) + 1
-    if (count > 1) return true
-    counts.set(key, count)
+    const frame = stack.at(-1)
+    if (typeof key !== 'string' || frame?.kind !== 'OBJECT') continue
+    frame.pendingKey = key
+    const securityKey = frame.scope === 'ROOT'
+      ? key === 'scripts'
+      : frame.scope === 'ROOT_SCRIPTS' && INSTALL_LIFECYCLE_NAMES.includes(
+          key as (typeof INSTALL_LIFECYCLE_NAMES)[number],
+        )
+    if (!securityKey) continue
+    if (frame.securityKeys.has(key)) return true
+    frame.securityKeys.add(key)
   }
   return false
 }
