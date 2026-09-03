@@ -62,6 +62,7 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "assets/*.svg",
     "lib/index.js",
     "lib/contracts.js",
     "lib/analyzer.js",
@@ -130,16 +131,16 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/cordis-plugin-loader": "^1.0.2",
-    "@deepseek-ai/dsh-agent": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4",
-    "@deepseek-ai/dsh-commands": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4",
-    "@deepseek-ai/dsh-api-gateway": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4",
-    "@deepseek-ai/dsh-home-paths": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4",
-    "@deepseek-ai/dsh-invariants": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4",
-    "@deepseek-ai/dsh-llm": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4",
-    "@deepseek-ai/dsh-subprocess": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4",
-    "@deepseek-ai/dsh-tools": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4",
-    "@deepseek-ai/dsh-typert-protocol": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4",
-    "@deepseek-ai/dsh-typert-registry": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4",
+    "@deepseek-ai/dsh-agent": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4 || 0.1.2-alpha.5",
+    "@deepseek-ai/dsh-commands": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4 || 0.1.2-alpha.5",
+    "@deepseek-ai/dsh-api-gateway": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4 || 0.1.2-alpha.5",
+    "@deepseek-ai/dsh-home-paths": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4 || 0.1.2-alpha.5",
+    "@deepseek-ai/dsh-invariants": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4 || 0.1.2-alpha.5",
+    "@deepseek-ai/dsh-llm": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4 || 0.1.2-alpha.5",
+    "@deepseek-ai/dsh-subprocess": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4 || 0.1.2-alpha.5",
+    "@deepseek-ai/dsh-tools": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4 || 0.1.2-alpha.5",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4 || 0.1.2-alpha.5",
+    "@deepseek-ai/dsh-typert-registry": "0.1.2-alpha.1 || 0.1.2-alpha.2 || 0.1.2-alpha.3 || 0.1.2-alpha.4 || 0.1.2-alpha.5",
     "dsh-engineering-control-plane": "^0.1.0"
   },
   "peerDependenciesMeta": {

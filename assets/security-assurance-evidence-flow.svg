@@ -1,0 +1,200 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="760" viewBox="0 0 1600 760" role="img" aria-labelledby="title description">
+  <title id="title">DSH Security Assurance evidence flow</title>
+  <desc id="description">The Security Assurance Service resolves an authorized catalog choice, freezes an immutable Subject, runs qualified pure analysis or frozen-report normalization, independently validates candidates and coverage, and seals a deterministic verdict and submission.</desc>
+  <defs>
+    <linearGradient id="sa-background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071016"/>
+      <stop offset="0.54" stop-color="#0a1720"/>
+      <stop offset="1" stop-color="#0c2025"/>
+    </linearGradient>
+    <linearGradient id="sa-card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#112836"/>
+      <stop offset="1" stop-color="#0b1a25"/>
+    </linearGradient>
+    <linearGradient id="sa-active" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16445b"/>
+      <stop offset="1" stop-color="#103142"/>
+    </linearGradient>
+    <linearGradient id="sa-seal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#123d31"/>
+      <stop offset="1" stop-color="#102b2c"/>
+    </linearGradient>
+    <filter id="sa-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="sa-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#53c8eb"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="760" rx="28" fill="url(#sa-background)"/>
+  <rect x="1.5" y="1.5" width="1597" height="757" rx="26.5" fill="none" stroke="#246b83" stroke-width="3"/>
+  <path d="M 50 116 H 1550" stroke="#1d3d4a" stroke-width="1"/>
+
+  <g font-family="Inter, Segoe UI, Microsoft YaHei, sans-serif">
+    <g transform="translate(58 42)">
+      <rect width="34" height="34" rx="10" fill="#103448" stroke="#4fc2e6"/>
+      <path d="M 17 8 L 26 12 V 19 C 26 25 22 29 17 31 C 12 29 8 25 8 19 V 12 Z" fill="#1f7693" stroke="#83ddf5" stroke-width="1.5"/>
+      <path d="M 13 19 L 16 22 L 22 15" fill="none" stroke="#b8f1ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="50" y="25" fill="#f2fbff" font-size="25" font-weight="800" letter-spacing="1.1">SECURITY ASSURANCE</text>
+      <text x="50" y="54" fill="#66cbea" font-size="16">Immutable Subject · verified Coverage · sealed security submission</text>
+    </g>
+    <g transform="translate(1130 45)">
+      <rect width="412" height="42" rx="12" fill="#0e2732" stroke="#327d93"/>
+      <circle cx="24" cy="21" r="5" fill="#68dda5"/>
+      <text x="220" y="27" text-anchor="middle" textLength="337" lengthAdjust="spacingAndGlyphs" fill="#9bd9e8" font-size="15" font-weight="700">POLICY-BOUND · REDACTED · FAIL-CLOSED</text>
+    </g>
+
+    <text x="58" y="148" fill="#7899a6" font-size="14" font-weight="700" letter-spacing="1.7">FROM AUTHORIZED SELECTION TO SEALED VERDICT</text>
+
+    <g stroke="#43b6da" stroke-width="2.5" fill="none" marker-end="url(#sa-arrow)">
+      <path d="M 320 298 H 342"/>
+      <path d="M 624 298 H 646"/>
+      <path d="M 928 298 H 950"/>
+      <path d="M 1232 298 H 1254"/>
+    </g>
+
+    <g transform="translate(56 174)">
+      <rect width="264" height="260" rx="19" fill="url(#sa-card)" stroke="#28738d" stroke-width="2"/>
+      <rect width="264" height="56" rx="19" fill="#154357"/>
+      <path d="M 0 38 H 264 V 56 H 0 Z" fill="#154357"/>
+      <circle cx="28" cy="28" r="16" fill="#247593"/>
+      <text x="28" y="34" text-anchor="middle" fill="#d4f5ff" font-size="13" font-weight="800">01</text>
+      <text x="54" y="34" fill="#effbff" font-size="17" font-weight="800">CATALOG &amp; TARGET</text>
+      <text x="20" y="88" fill="#d9edf2" font-size="18" font-weight="800">授权选择，不猜 ID</text>
+      <text x="20" y="116" fill="#77a8b8" font-size="14">Repository · Policy · Profile</text>
+      <g transform="translate(20 140)" font-size="12" font-weight="800">
+        <rect width="68" height="30" rx="8" fill="#102c38" stroke="#337b91"/>
+        <text x="34" y="20" text-anchor="middle" fill="#8ad8eb">REPO</text>
+        <rect x="78" width="77" height="30" rx="8" fill="#102c38" stroke="#337b91"/>
+        <text x="116.5" y="20" text-anchor="middle" fill="#8ad8eb">CHANGE</text>
+        <rect x="165" width="79" height="30" rx="8" fill="#102c38" stroke="#337b91"/>
+        <text x="204.5" y="20" text-anchor="middle" fill="#8ad8eb">TARGETED</text>
+      </g>
+      <rect x="20" y="190" width="224" height="48" rx="11" fill="#091821" stroke="#1e4b5b"/>
+      <text x="32" y="210" fill="#68cbe6" font-size="12" font-family="Cascadia Mono, Consolas, monospace">startPreflight</text>
+      <text x="32" y="229" fill="#7f9fad" font-size="12">policy × mode × platform</text>
+    </g>
+
+    <g transform="translate(360 174)">
+      <rect width="264" height="260" rx="19" fill="url(#sa-card)" stroke="#2d90ad" stroke-width="2"/>
+      <rect width="264" height="56" rx="19" fill="#18536b"/>
+      <path d="M 0 38 H 264 V 56 H 0 Z" fill="#18536b"/>
+      <circle cx="28" cy="28" r="16" fill="#2584a5"/>
+      <text x="28" y="34" text-anchor="middle" fill="#e0f9ff" font-size="13" font-weight="800">02</text>
+      <text x="54" y="34" fill="#effbff" font-size="17" font-weight="800">SUBJECT FREEZE</text>
+      <text x="20" y="88" fill="#d9edf2" font-size="18" font-weight="800">完整输入先冻结</text>
+      <text x="20" y="116" fill="#77a8b8" font-size="14">Git revision / workspace snapshot</text>
+      <g transform="translate(20 140)">
+        <rect width="224" height="98" rx="11" fill="#091821" stroke="#246177"/>
+        <text x="14" y="24" fill="#72d7ef" font-size="12" font-family="Cascadia Mono, Consolas, monospace">Subject Inventory</text>
+        <text x="14" y="48" fill="#91aeb9" font-size="13">canonical paths · file digests</text>
+        <text x="14" y="71" fill="#91aeb9" font-size="13">Target digest · tree identity</text>
+        <text x="14" y="91" fill="#68dda5" font-size="12" font-family="Cascadia Mono, Consolas, monospace">immutable snapshot</text>
+      </g>
+    </g>
+
+    <g transform="translate(664 164)" filter="url(#sa-glow)">
+      <rect width="264" height="280" rx="20" fill="url(#sa-active)" stroke="#54c9e9" stroke-width="3"/>
+      <rect width="264" height="58" rx="20" fill="#1d6178"/>
+      <path d="M 0 40 H 264 V 58 H 0 Z" fill="#1d6178"/>
+      <circle cx="28" cy="29" r="17" fill="#27a0c5"/>
+      <text x="28" y="35" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="800">03</text>
+      <text x="54" y="35" fill="#ffffff" font-size="17" font-weight="800">PURE ANALYSIS</text>
+      <text x="20" y="92" fill="#eefcff" font-size="18" font-weight="800">只读、确定性边界</text>
+      <text x="20" y="119" fill="#94c3d0" font-size="14">无实时网络 · 不执行扫描命令</text>
+      <rect x="20" y="142" width="224" height="52" rx="11" fill="#091b24" stroke="#2d778c"/>
+      <text x="33" y="164" fill="#75d9ef" font-size="13" font-weight="700">Built-in policy</text>
+      <text x="33" y="184" fill="#8caab5" font-size="12">package.json lifecycle keys</text>
+      <rect x="20" y="204" width="224" height="52" rx="11" fill="#091b24" stroke="#2d778c"/>
+      <text x="33" y="226" fill="#75d9ef" font-size="13" font-weight="700">Frozen report adapters</text>
+      <text x="33" y="246" fill="#8caab5" font-size="12">npm audit · redacted Gitleaks JSON</text>
+    </g>
+
+    <g transform="translate(968 174)">
+      <rect width="264" height="260" rx="19" fill="url(#sa-card)" stroke="#2d90ad" stroke-width="2"/>
+      <rect width="264" height="56" rx="19" fill="#18536b"/>
+      <path d="M 0 38 H 264 V 56 H 0 Z" fill="#18536b"/>
+      <circle cx="28" cy="28" r="16" fill="#2584a5"/>
+      <text x="28" y="34" text-anchor="middle" fill="#e0f9ff" font-size="13" font-weight="800">04</text>
+      <text x="54" y="34" fill="#effbff" font-size="17" font-weight="800">VERIFY &amp; COVER</text>
+      <text x="20" y="88" fill="#d9edf2" font-size="18" font-weight="800">候选与 Coverage 复核</text>
+      <text x="20" y="116" fill="#77a8b8" font-size="14">独立重算，不信任贡献结论</text>
+      <g transform="translate(20 140)">
+        <rect width="224" height="98" rx="11" fill="#091821" stroke="#246177"/>
+        <text x="14" y="25" fill="#68dda5" font-size="13" font-weight="700">VALIDATED</text>
+        <text x="102" y="25" fill="#e39aab" font-size="13" font-weight="700">REJECTED</text>
+        <text x="14" y="52" fill="#91aeb9" font-size="13">Finding fields re-derived</text>
+        <text x="14" y="75" fill="#91aeb9" font-size="13">Coverage obligations reconciled</text>
+        <text x="14" y="92" fill="#e9ba69" font-size="11" font-family="Cascadia Mono, Consolas, monospace">gap → indeterminate</text>
+      </g>
+    </g>
+
+    <g transform="translate(1272 174)">
+      <rect width="270" height="260" rx="19" fill="url(#sa-seal)" stroke="#4fc68d" stroke-width="2.5"/>
+      <rect width="270" height="56" rx="19" fill="#19503c"/>
+      <path d="M 0 38 H 270 V 56 H 0 Z" fill="#19503c"/>
+      <circle cx="28" cy="28" r="16" fill="#23855f"/>
+      <text x="28" y="34" text-anchor="middle" fill="#e5fff3" font-size="13" font-weight="800">05</text>
+      <text x="54" y="34" fill="#f0fff8" font-size="17" font-weight="800">VERDICT &amp; SEAL</text>
+      <text x="20" y="88" fill="#e6fff3" font-size="18" font-weight="800">Kernel 计算最终资格</text>
+      <text x="20" y="116" fill="#86baa5" font-size="14">Evidence / Findings / Coverage</text>
+      <rect x="20" y="140" width="230" height="48" rx="11" fill="#0a1d1b" stroke="#317c5f"/>
+      <text x="34" y="160" fill="#8ee2b8" font-size="11" font-weight="800">SATISFIED</text>
+      <text x="124" y="160" fill="#f2a0b0" font-size="11" font-weight="800">FAILED</text>
+      <text x="34" y="180" fill="#efc77e" font-size="11" font-weight="800">INDETERMINATE</text>
+      <rect x="20" y="198" width="230" height="40" rx="11" fill="#0a1d1b" stroke="#317c5f"/>
+      <text x="32" y="216" fill="#70dca8" font-size="12" font-family="Cascadia Mono, Consolas, monospace">sealed submission</text>
+      <text x="32" y="232" fill="#819f96" font-size="11">digest-bound · exportable</text>
+    </g>
+
+    <g transform="translate(56 486)">
+      <rect width="472" height="188" rx="20" fill="#0a1921" stroke="#25647a" stroke-width="2"/>
+      <text x="22" y="38" fill="#e3f5fa" font-size="19" font-weight="800">Authority boundary</text>
+      <text x="22" y="64" fill="#6fc8e2" font-size="14">Host 解析身份和权限；工具只接受严格 DTO</text>
+      <g transform="translate(22 89)" font-size="14">
+        <circle cx="6" cy="-4" r="4" fill="#4cc3e5"/>
+        <text x="20" y="1" fill="#9ab7c1">精确 Repository / Policy / Mode / Target</text>
+        <circle cx="6" cy="29" r="4" fill="#4cc3e5"/>
+        <text x="20" y="34" fill="#9ab7c1">模型参数不携带凭据、句柄或绝对路径</text>
+        <circle cx="6" cy="62" r="4" fill="#68dda5"/>
+        <text x="20" y="67" fill="#9ab7c1">Catalog 先声明支持，再允许 Assessment 启动</text>
+      </g>
+    </g>
+
+    <g transform="translate(548 486)">
+      <rect width="472" height="188" rx="20" fill="#0a1921" stroke="#25647a" stroke-width="2"/>
+      <text x="22" y="38" fill="#e3f5fa" font-size="19" font-weight="800">Fail-closed semantics</text>
+      <text x="22" y="64" fill="#6fc8e2" font-size="14">不能证明“满足”时，不输出满足结论</text>
+      <g transform="translate(22 89)" font-size="14">
+        <rect width="133" height="62" rx="12" fill="#112a28" stroke="#3fa97b"/>
+        <text x="66.5" y="25" text-anchor="middle" fill="#87deb3" font-weight="800">COMPLETE</text>
+        <text x="66.5" y="47" text-anchor="middle" fill="#799c8f" font-size="12">eligible evidence</text>
+        <rect x="147" width="133" height="62" rx="12" fill="#302719" stroke="#c49348"/>
+        <text x="213.5" y="25" text-anchor="middle" fill="#ebc579" font-weight="800">GAP</text>
+        <text x="213.5" y="47" text-anchor="middle" fill="#9f8e70" font-size="12">indeterminate</text>
+        <rect x="294" width="134" height="62" rx="12" fill="#302028" stroke="#c85d76"/>
+        <text x="361" y="25" text-anchor="middle" fill="#ee99ab" font-weight="800">FAILED</text>
+        <text x="361" y="47" text-anchor="middle" fill="#9e7c84" font-size="12">blocking finding</text>
+      </g>
+    </g>
+
+    <g transform="translate(1040 486)">
+      <rect width="502" height="188" rx="20" fill="#0a1921" stroke="#25647a" stroke-width="2"/>
+      <text x="22" y="38" fill="#e3f5fa" font-size="19" font-weight="800">Two-plugin handoff</text>
+      <text x="22" y="64" fill="#6fc8e2" font-size="14">Submission 满足外部安全义务，不替代工程 Gate</text>
+      <g transform="translate(22 92)">
+        <rect width="154" height="58" rx="12" fill="#112734" stroke="#31718a"/>
+        <text x="77" y="25" text-anchor="middle" fill="#a7ceda" font-size="13" font-weight="800">Security Assurance</text>
+        <text x="77" y="44" text-anchor="middle" fill="#668e99" font-size="11">sealed submission</text>
+        <path d="M 166 29 H 204" stroke="#4cc3e5" stroke-width="2.5" marker-end="url(#sa-arrow)"/>
+        <rect x="216" width="240" height="58" rx="12" fill="#12261f" stroke="#3da776"/>
+        <text x="336" y="25" text-anchor="middle" fill="#9de0ba" font-size="13" font-weight="800">Control Plane Quality Gate</text>
+        <text x="336" y="44" text-anchor="middle" fill="#70937f" font-size="11">all engineering + assurance facts</text>
+      </g>
+    </g>
+
+    <text x="58" y="716" fill="#4d7480" font-size="13" font-family="Cascadia Mono, Consolas, monospace">ASSURANCE BOUNDARY  /  authorized selection → immutable Subject → verified Coverage → sealed result</text>
+  </g>
+</svg>

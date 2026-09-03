@@ -18,11 +18,19 @@
 
 这是一个安全保障插件，不是通用漏洞扫描器。当前内建能力包括 Node 项目的 <code>package.json</code> 安装生命周期检查，以及对冻结 <code>npm-audit.json</code> 和 Gitleaks v8 JSON 报告的纯归一化与独立验证。
 
+### 评估如何形成可信结论
+
+<p align="center">
+  <img src="assets/security-assurance-evidence-flow.svg" alt="Security Assurance 从授权 Catalog 选择、Subject Freeze、PURE 分析和独立验证到 Verdict 与 sealed submission 的证据流" width="100%">
+</p>
+
+Service 先解析授权 Catalog 选择并冻结完整 Subject，再把已验证 slice 交给合格的 PURE Analyzer 或报告归一化器。Candidate 和 Coverage 必须经过独立复核，Kernel 才能计算 <code>SATISFIED</code>、<code>FAILED</code> 或 <code>INDETERMINATE</code>，并为终态 Assessment 生成摘要绑定的 Submission。
+
 ### 当前版本
 
 - 版本：<code>0.1.0-rc.10</code>
 - 状态：Release Candidate（预发布版）
-- 适配：DeepSeek Harness <code>0.1.2-alpha.1</code>（主目标）；<code>0.1.2-alpha.2</code> ~ <code>0.1.2-alpha.4</code> 经兼容矩阵验证
+- 适配：DeepSeek Harness <code>0.1.2-alpha.1</code>（主目标）；<code>0.1.2-alpha.2</code> ~ <code>0.1.2-alpha.5</code> 经兼容矩阵验证
 - GitHub：[v0.1.0-rc.10 Release](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.10)
 
 ### 支持范围
@@ -37,7 +45,7 @@
 | 可选 npm audit 策略 | <code>security/npm-dependency-audit</code> |
 | 可选 Gitleaks 策略 | <code>security/secret-leak-audit</code> |
 | 默认档案 | <code>security/standard</code> |
-| Harness 版本 | <code>0.1.2-alpha.1</code>（主）、<code>0.1.2-alpha.2</code>、<code>0.1.2-alpha.3</code>、<code>0.1.2-alpha.4</code> |
+| Harness 版本 | <code>0.1.2-alpha.1</code>（主）、<code>0.1.2-alpha.2</code>、<code>0.1.2-alpha.3</code>、<code>0.1.2-alpha.4</code>、<code>0.1.2-alpha.5</code> |
 | Node.js | <code>^22.19.0 \|\| >=24.0.0</code>（CI 覆盖 22 与 24） |
 | 支持平台 | Windows、Linux、macOS |
 
@@ -51,7 +59,7 @@ Harness 支持窗口是一个显式的已验证集合：每日 [Harness Compatib
 
 ### 安装（Harness Web）
 
-兼容 DeepSeek Harness <code>0.1.2-alpha.1</code> ~ <code>0.1.2-alpha.4</code>（显式已验证集合，见上方支持范围），要求 Node.js <code>^22.19.0 || >=24.0.0</code> 和 Harness CLI。将终端当前目录设为要评估的 Git 仓库，然后直接安装 GitHub Release 中已经构建的包：
+兼容 DeepSeek Harness <code>0.1.2-alpha.1</code> ~ <code>0.1.2-alpha.5</code>（显式已验证集合，见上方支持范围），要求 Node.js <code>^22.19.0 || >=24.0.0</code> 和 Harness CLI。将终端当前目录设为要评估的 Git 仓库，然后直接安装 GitHub Release 中已经构建的包：
 
 ~~~powershell
 dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.10/dsh-security-assurance-0.1.0-rc.10.tgz
@@ -192,11 +200,19 @@ pnpm release:check
 
 This is an assurance plugin, not a general vulnerability scanner. Built-in capabilities include the Node <code>package.json</code> install-lifecycle check and pure normalization plus independent validation of frozen <code>npm-audit.json</code> and Gitleaks v8 JSON reports.
 
+## Assessment at a glance
+
+<p align="center">
+  <img src="assets/security-assurance-evidence-flow.svg" alt="Security Assurance evidence flow from an authorized Catalog choice and immutable Subject through PURE analysis, independent validation, Coverage, Verdict, and sealed submission" width="100%">
+</p>
+
+The Service resolves an authorized Catalog selection and freezes the complete Subject before exposing verified slices to qualified PURE Analyzers or report normalizers. Candidates and Coverage are independently re-derived before the Kernel can compute <code>SATISFIED</code>, <code>FAILED</code>, or <code>INDETERMINATE</code> and emit a digest-bound Submission for a sealed Assessment.
+
 ## Current release
 
 - Version: <code>0.1.0-rc.10</code>
 - Status: release candidate
-- Target Harness: <code>0.1.2-alpha.1</code> (primary); <code>0.1.2-alpha.2</code> ~ <code>0.1.2-alpha.4</code> verified by the compatibility matrix
+- Target Harness: <code>0.1.2-alpha.1</code> (primary); <code>0.1.2-alpha.2</code> ~ <code>0.1.2-alpha.5</code> verified by the compatibility matrix
 - Release: [v0.1.0-rc.10](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.10)
 
 ## Support matrix
@@ -211,7 +227,7 @@ This is an assurance plugin, not a general vulnerability scanner. Built-in capab
 | Optional npm audit policy | <code>security/npm-dependency-audit</code> |
 | Optional Gitleaks policy | <code>security/secret-leak-audit</code> |
 | Default profile | <code>security/standard</code> |
-| Harness versions | <code>0.1.2-alpha.1</code> (primary), <code>0.1.2-alpha.2</code>, <code>0.1.2-alpha.3</code>, <code>0.1.2-alpha.4</code> |
+| Harness versions | <code>0.1.2-alpha.1</code> (primary), <code>0.1.2-alpha.2</code>, <code>0.1.2-alpha.3</code>, <code>0.1.2-alpha.4</code>, <code>0.1.2-alpha.5</code> |
 | Node.js | <code>^22.19.0 \|\| >=24.0.0</code> (CI covers 22 and 24) |
 | Platforms | Windows, Linux, macOS |
 
@@ -227,7 +243,7 @@ The standalone tool and Workbench catalog remains backward compatible and expose
 
 ## Install in Harness Web
 
-Compatible with DeepSeek Harness <code>0.1.2-alpha.1</code> ~ <code>0.1.2-alpha.4</code> (an explicit, verified set; see the support matrix above). Requires Node.js <code>^22.19.0 || >=24.0.0</code> and the Harness CLI. Install the prebuilt GitHub Release package directly:
+Compatible with DeepSeek Harness <code>0.1.2-alpha.1</code> ~ <code>0.1.2-alpha.5</code> (an explicit, verified set; see the support matrix above). Requires Node.js <code>^22.19.0 || >=24.0.0</code> and the Harness CLI. Install the prebuilt GitHub Release package directly:
 
 ~~~powershell
 dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.10/dsh-security-assurance-0.1.0-rc.10.tgz

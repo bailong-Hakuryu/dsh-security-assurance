@@ -7,9 +7,9 @@ Status: Accepted
 The plugin was first qualified against one exact Harness release candidate
 (ADR 0117) and later re-targeted to Harness `0.1.2-alpha.1` (ADR 0307), with
 the composition invariant failing closed on any other resolved Harness
-runtime version. Harness has since published `0.1.2-alpha.2`,
-`0.1.2-alpha.3`, and `0.1.2-alpha.4`, so the three most recent verifiable
-tags no longer include the qualification target.
+runtime version. Harness has since published `0.1.2-alpha.2` through
+`0.1.2-alpha.5`, so the three most recent verifiable tags no longer include
+the qualification target.
 
 A single exact pin cannot express verified support for several Harness
 versions, while an open semver range would claim compatibility with future
