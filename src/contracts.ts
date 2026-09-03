@@ -31,6 +31,7 @@ export const SUPPORTED_HARNESS_VERSIONS = Object.freeze([
   '0.1.2-alpha.3',
   '0.1.2-alpha.4',
   '0.1.2-alpha.5',
+  '0.1.2-rc.1',
 ] as const)
 
 /** Closed-world Harness version admission used by the composition invariant. */

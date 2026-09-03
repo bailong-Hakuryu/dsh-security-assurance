@@ -18,7 +18,7 @@
   `TARGETED` until their external scan scope can be independently verified,
   and qualify the broadened built-in Analyzer as version `1.1.0` under
   qualification `v2`.
-- Support DeepSeek Harness `0.1.2-alpha.2` through `0.1.2-alpha.5` alongside
+- Support DeepSeek Harness `0.1.2-alpha.2` through `0.1.2-rc.1` alongside
   the primary `0.1.2-alpha.1` target as an explicit, verified set: the
   composition invariant admits one coherent supported release, rejects mixed
   supported-package versions, and keeps failing closed on any other Harness
