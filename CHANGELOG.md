@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Admit DeepSeek Harness `0.1.3-alpha.1` into the closed verified compatibility
+  set after its dual-plugin semantic matrix passed outside the exact-version
+  invariant; keep peer declarations and bilingual support documentation aligned.
+  Harden packed-profile teardown with bounded retries for transient Windows
+  `EBUSY`, `ENOTEMPTY`, `EPERM`, and `EACCES` directory locks after Web exits.
 - Add strict exact-artifact `ReleaseProofRecordV1` records, optional packed
   profile and real-browser proof emission, and a packaged `release:collect`
   CLI that validates candidate identity, rejects duplicate proof claims, hashes

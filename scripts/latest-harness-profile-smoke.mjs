@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
-import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { writeReleaseProofRecord } from '../lib/release-proof-output.js'
+import { removeTemporaryRoot } from './support/remove-temporary-root.mjs'
 
 const execute = promisify(execFile)
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -299,5 +300,5 @@ try {
   }
   process.stdout.write('Latest Harness profile smoke passed: both packed bundles composed and Web responded.\n')
 } finally {
-  await rm(temporaryRoot, { recursive: true, force: true })
+  await removeTemporaryRoot(temporaryRoot)
 }
