@@ -159,6 +159,7 @@ gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.j
 | <code>dsh-security-assurance/contracts</code> | 版本化公共契约 |
 | <code>dsh-security-assurance/analyzer</code> | 内建分析器接口 |
 | <code>dsh-security-assurance/evaluation</code> | 纯函数 Metrics Engine |
+| <code>dsh-security-assurance/release-file-bindings</code> | 发布文件绑定的版本化纯契约 |
 | <code>dsh-security-assurance/host-repository-provider</code> | Host Repository 注册适配器 |
 | <code>dsh-security-assurance/control-plane-provider</code> | 可选 Control Plane 适配器 |
 | <code>dsh-security-assurance/invariant</code> | 启动就绪诊断 |
@@ -187,7 +188,16 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-当前开发树发布门禁已通过：75 个测试文件、399 个测试，静态检查、类型检查、构建、打包和 Harness Profile smoke 均通过。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针；每日兼容矩阵另对全部已声明 Harness 版本执行双插件联合 E2E 与打包安装探针。
+稳定版候选还必须先从真实 tarball、干净源码修订和锁文件生成确定性绑定，再用该绑定核验完整发布证据：
+
+~~~powershell
+pnpm release:bind -- --input .\release-files.json --output .\release-file-bindings.json
+pnpm release:qualify -- --input .\release-qualification-input.json --output .\release-qualification
+~~~
+
+第一条命令只记录已复核的文件事实，不制造测试或安全证明；第二条命令会重新读取绑定的真实文件，并且只在 Release Constitution 为 <code>PROMOTE</code> 且最终 Manifest 为 <code>VERIFIED</code> 时返回 0，原子生成 Manifest、公开 Scorecard 和资格结论三件套。有效但阻断/不完整的证据返回 2 并保留可审计产物；字节摘要、Git HEAD、已跟踪源码或输入不一致时返回 1 且不生成产物。两条命令都不会自动打 tag、上传或发布包。完整输入契约见 [v0.1 发布清单](docs/release-v0.1.md)。
+
+当前开发树包含 78 个测试文件、408 个测试，并由发布门禁统一执行静态检查、类型检查、构建、打包和 Harness Profile smoke。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针；每日兼容矩阵另对全部已声明 Harness 版本执行双插件联合 E2E 与打包安装探针。
 
 完整领域模型见 [CONTEXT.md](CONTEXT.md)，安全政策见 [SECURITY.md](SECURITY.md)，候选版审查见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
@@ -309,7 +319,25 @@ pnpm pack:profile-smoke
 pnpm release:check
 ~~~
 
-The current development tree gate passes with 76 test files and 401 tests, including linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
+Stable candidates must first derive deterministic bindings from the real
+tarball, clean source revision, and lock files, then verify the complete
+release-evidence request against those bindings:
+
+~~~powershell
+pnpm release:bind -- --input .\release-files.json --output .\release-file-bindings.json
+pnpm release:qualify -- --input .\release-qualification-input.json --output .\release-qualification
+~~~
+
+The first command records verified file facts but manufactures no test or
+security proof. The second rereads the bound files and exits `0` only when the
+Release Constitution says `PROMOTE` and the assembled Manifest is `VERIFIED`,
+atomically emitting the Manifest, public Scorecard, and qualification verdict.
+Valid blocked or incomplete evidence exits `2` with auditable output; byte,
+Git `HEAD`, tracked-source, or input mismatches exit `1` without output. Neither
+command tags, uploads, or publishes a package. See the
+[v0.1 release checklist](docs/release-v0.1.md) for both input contracts.
+
+The current development tree contains 78 test files and 408 tests; the release gate runs those tests together with linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
 
 </details>
 

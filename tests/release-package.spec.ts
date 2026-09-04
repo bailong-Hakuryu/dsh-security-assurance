@@ -12,6 +12,8 @@ const packageJson = JSON.parse(
   publishConfig?: { access?: string }
   files?: string[]
   scripts?: Record<string, string>
+  bin?: Record<string, string>
+  exports?: Record<string, unknown>
 }
 const ciWorkflow = readFileSync(
   new URL('../.github/workflows/ci.yml', import.meta.url),
@@ -44,6 +46,29 @@ describe('v0.1 release candidate package', () => {
     )
     expect(packageJson.scripts?.['release:check']).toContain('pnpm pack:profile-smoke')
     expect(packageJson.scripts?.['release:check']).not.toContain('pnpm pack:browser-e2e')
+    expect(packageJson.scripts?.['release:qualify']).toBe(
+      'pnpm build && node lib/release-qualify.js',
+    )
+    expect(packageJson.scripts?.['release:bind']).toBe(
+      'pnpm build && node lib/release-bind.js',
+    )
+    expect(packageJson.bin?.['dsh-security-assurance-release-qualify']).toBe(
+      './lib/release-qualify.js',
+    )
+    expect(packageJson.bin?.['dsh-security-assurance-release-bind']).toBe(
+      './lib/release-bind.js',
+    )
+    expect(packageJson.exports?.['./release-file-bindings']).toEqual({
+      types: './lib/types/release-file-bindings.d.ts',
+      default: './lib/release-file-bindings.js',
+    })
+    expect(packageJson.files).toEqual(expect.arrayContaining([
+      'lib/release-bind.js',
+      'lib/release-qualify.js',
+      'lib/release-file-bindings.js',
+      'lib/types/release-file-bindings.d.ts',
+      'lib/types/release-file-bindings.d.ts.map',
+    ]))
   })
 
   it('builds linked packages before source and public-entry typechecking', () => {

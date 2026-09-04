@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Add packaged release binding and exact-artifact qualification CLIs. The
+  deterministic binder records a clean source `HEAD`, candidate tarball bytes,
+  and dependency-lock bytes without manufacturing proof; qualification
+  independently rereads those files before assembling the existing Release
+  Evidence Manifest, public Security Scorecard, and compact atomic verdict.
+  Only a verified manifest plus a `PROMOTE` Release Constitution exits zero;
+  valid blocked or incomplete evidence remains auditable and exits non-zero.
 - Scope duplicate security-key detection to the root `scripts` property and
   its direct `preinstall`, `install`, and `postinstall` properties, so legal
   dependency package names such as `scripts` or `install` cannot make an

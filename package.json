@@ -9,6 +9,10 @@
   "sideEffects": false,
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
+  "bin": {
+    "dsh-security-assurance-release-bind": "./lib/release-bind.js",
+    "dsh-security-assurance-release-qualify": "./lib/release-qualify.js"
+  },
   "exports": {
     ".": {
       "types": "./lib/types/index.d.ts",
@@ -29,6 +33,10 @@
     "./evaluation": {
       "types": "./lib/types/evaluation.d.ts",
       "default": "./lib/evaluation.js"
+    },
+    "./release-file-bindings": {
+      "types": "./lib/types/release-file-bindings.d.ts",
+      "default": "./lib/release-file-bindings.js"
     },
     "./tools": {
       "types": "./lib/types/tools.d.ts",
@@ -68,6 +76,9 @@
     "lib/analyzer.js",
     "lib/conformance.js",
     "lib/evaluation.js",
+    "lib/release-bind.js",
+    "lib/release-file-bindings.js",
+    "lib/release-qualify.js",
     "lib/tools.js",
     "lib/control-plane-provider.js",
     "lib/host-repository-provider.js",
@@ -87,6 +98,8 @@
     "lib/types/conformance.d.ts.map",
     "lib/types/evaluation.d.ts",
     "lib/types/evaluation.d.ts.map",
+    "lib/types/release-file-bindings.d.ts",
+    "lib/types/release-file-bindings.d.ts.map",
     "lib/types/digest-envelope.d.ts",
     "lib/types/digest-envelope.d.ts.map",
     "lib/types/tools.d.ts",
@@ -126,6 +139,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "pack:dry-run": "npm --cache .scratch/npm-cache pack --dry-run",
     "pack:profile-smoke": "node scripts/latest-harness-profile-smoke.mjs",
+    "release:bind": "pnpm build && node lib/release-bind.js",
+    "release:qualify": "pnpm build && node lib/release-qualify.js",
     "release:check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm pack:dry-run && pnpm pack:profile-smoke"
   },
   "peerDependencies": {

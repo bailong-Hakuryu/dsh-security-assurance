@@ -34,6 +34,75 @@ paths through `DSH_SECURITY_PACKED_ARTIFACT` and
 `DSH_CONTROL_PLANE_PACKED_ARTIFACT`. This makes the latest-Harness profile
 smoke exercise the exact files whose SHA-256 digests are delivered.
 
+## Exact-artifact qualification
+
+First describe only the real source checkout, packed candidate, and lock files:
+
+```json
+{
+  "schemaVersion": 1,
+  "sourceRepositoryPath": ".",
+  "candidateArtifact": {
+    "path": "./artifacts/dsh-security-assurance.tgz",
+    "mediaType": "application/gzip"
+  },
+  "dependencyLockFiles": [
+    {
+      "lockKind": "PNPM_LOCK",
+      "path": "./pnpm-lock.yaml",
+      "mediaType": "application/yaml"
+    }
+  ]
+}
+```
+
+Generate a deterministic, versioned binding file from those exact bytes and a
+clean tracked source tree:
+
+```sh
+pnpm release:bind -- --input ./release-files.json --output ./release-file-bindings.json
+```
+
+The binding contains the verified Git `HEAD` and raw-byte SHA-256 envelopes.
+It contains no timestamp and is byte-identical for identical inputs placed in
+the same directory. Use those facts when the external release automation
+assembles the Release Constitution request, public Scorecard, and complete
+proof portfolio. The binder does not manufacture or upgrade any proof result.
+
+Then reference the binding file from the qualification input and run:
+
+```sh
+pnpm release:qualify -- --input ./release-qualification-input.json --output ./release-qualification
+```
+
+The strict qualification envelope has this outer shape. The binding path is
+resolved relative to the qualification input; paths inside the binding are
+resolved relative to the binding file itself:
+
+```json
+{
+  "schemaVersion": 1,
+  "releaseFileBindingsPath": "./release-file-bindings.json",
+  "releaseEvidence": "<ReleaseEvidenceManifestRequestV1>"
+}
+```
+
+The source revision, candidate digests, and lock digests inside
+`releaseEvidence` must equal the binding. Qualification independently rereads
+every file, requires the Git `HEAD` to match both inputs, rejects tracked
+working-tree drift, and checks the source again after byte verification. It
+atomically creates `release-evidence-manifest.json`,
+`public-security-scorecard.json`, and `release-qualification-verdict.json` in a
+previously absent output directory.
+
+Exit `0` means both `manifestVerification: VERIFIED` and
+`releaseDecision: PROMOTE`. Exit `2` preserves a valid blocked or inconclusive
+portfolio for review. Exit `1` means input, source, byte binding, or output
+validation failed and no portfolio is emitted. This command does not tag,
+upload, sign, or publish anything. The side-effect-free
+`dsh-security-assurance/release-file-bindings` export exposes the strict input
+and output schemas for external release automation.
+
 ## Acceptance gates before stable promotion
 
 - Verify the delivered tarball digest and install it without workspace links.
