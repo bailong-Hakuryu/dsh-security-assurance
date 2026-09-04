@@ -11,6 +11,7 @@
   "types": "lib/types/index.d.ts",
   "bin": {
     "dsh-security-assurance-release-bind": "./lib/release-bind.js",
+    "dsh-security-assurance-release-collect": "./lib/release-collect.js",
     "dsh-security-assurance-release-qualify": "./lib/release-qualify.js"
   },
   "exports": {
@@ -37,6 +38,10 @@
     "./release-file-bindings": {
       "types": "./lib/types/release-file-bindings.d.ts",
       "default": "./lib/release-file-bindings.js"
+    },
+    "./release-proof": {
+      "types": "./lib/types/release-proof.d.ts",
+      "default": "./lib/release-proof.js"
     },
     "./tools": {
       "types": "./lib/types/tools.d.ts",
@@ -77,7 +82,9 @@
     "lib/conformance.js",
     "lib/evaluation.js",
     "lib/release-bind.js",
+    "lib/release-collect.js",
     "lib/release-file-bindings.js",
+    "lib/release-proof.js",
     "lib/release-qualify.js",
     "lib/tools.js",
     "lib/control-plane-provider.js",
@@ -100,6 +107,8 @@
     "lib/types/evaluation.d.ts.map",
     "lib/types/release-file-bindings.d.ts",
     "lib/types/release-file-bindings.d.ts.map",
+    "lib/types/release-proof.d.ts",
+    "lib/types/release-proof.d.ts.map",
     "lib/types/digest-envelope.d.ts",
     "lib/types/digest-envelope.d.ts.map",
     "lib/types/tools.d.ts",
@@ -131,15 +140,17 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && tsdown && node scripts/generate-typert.mjs",
-    "lint": "oxlint src tests scripts/latest-harness-profile-smoke.mjs scripts/harness-compat-matrix.mjs --deny-warnings",
+    "lint": "oxlint src tests scripts/latest-harness-profile-smoke.mjs scripts/packed-browser-e2e.mjs scripts/harness-compat-matrix.mjs --deny-warnings",
     "prepack": "pnpm build",
     "test": "vitest run",
     "test:dual-plugin-e2e": "vitest run tests/control-plane-provider.spec.ts tests/change-assessment.spec.ts tests/subject-freeze.spec.ts tests/invariant.spec.ts",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "pack:dry-run": "npm --cache .scratch/npm-cache pack --dry-run",
-    "pack:profile-smoke": "node scripts/latest-harness-profile-smoke.mjs",
+    "pack:browser-e2e": "pnpm build && node scripts/packed-browser-e2e.mjs",
+    "pack:profile-smoke": "pnpm build && node scripts/latest-harness-profile-smoke.mjs",
     "release:bind": "pnpm build && node lib/release-bind.js",
+    "release:collect": "pnpm build && node lib/release-collect.js",
     "release:qualify": "pnpm build && node lib/release-qualify.js",
     "release:check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm pack:dry-run && pnpm pack:profile-smoke"
   },

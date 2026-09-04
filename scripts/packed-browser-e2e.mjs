@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
+import { writeReleaseProofRecord } from '../lib/release-proof-output.js'
+
 const execute = promisify(execFile)
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const harnessRoot = resolve(projectRoot, '..', 'deepseek-harness-master')
+const playwrightHarnessRoot = resolve(projectRoot, '..', 'deepseek-harness-latest')
+const browserHarnessVersion = '0.1.2-rc.1'
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'dsh-security-browser-e2e-'))
 const npmCache = join(temporaryRoot, 'npm-cache')
 const artifactRoot = join(temporaryRoot, 'artifacts')
@@ -24,6 +27,8 @@ const repositoryDisplayName = 'Packed Browser E2E Repository'
 const deliveryDestinationId = 'delivery/local-audit'
 const scriptBodyMarker = 'browser-e2e-secret-body.js'
 const riskRationale = 'The validated install lifecycle risk remains blocking for this release.'
+const proofOutputPath = process.env.DSH_RELEASE_PROOF_OUTPUT
+const suppliedSecurityArtifact = process.env.DSH_SECURITY_PACKED_ARTIFACT
 const fullPermissions = [
   'health:read',
   'repository:read',
@@ -47,6 +52,13 @@ let hostUrl
 
 function normalizedPath(value) {
   return value.replaceAll('\\', '/')
+}
+
+function proofPlatform() {
+  if (process.platform === 'win32') return 'WINDOWS'
+  if (process.platform === 'darwin') return 'MACOS'
+  if (process.platform === 'linux') return 'LINUX'
+  throw new Error(`Unsupported release proof platform: ${process.platform}`)
 }
 
 function executeNpm(args, options) {
@@ -87,14 +99,6 @@ function runStreaming(command, args, options) {
       ))
     })
   })
-}
-
-function runStreamingNpm(args, options) {
-  if (process.platform === 'win32') {
-    const npmCli = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
-    return runStreaming(process.execPath, [npmCli, ...args], options)
-  }
-  return runStreaming('npm', args, options)
 }
 
 function runStreamingPnpm(args, options) {
@@ -148,11 +152,18 @@ async function createFixtureRepository() {
 }
 
 async function packSecurityArtifact() {
-  const suppliedArtifact = process.env.DSH_SECURITY_PACKED_ARTIFACT
-  if (suppliedArtifact) {
-    const artifact = resolve(suppliedArtifact)
-    await access(artifact, fsConstants.R_OK)
-    return artifact
+  if (suppliedSecurityArtifact) {
+    const source = resolve(suppliedSecurityArtifact)
+    const target = join(artifactRoot, 'security-assurance-supplied.tgz')
+    await mkdir(artifactRoot, { recursive: true })
+    await access(source, fsConstants.R_OK)
+    await copyFile(source, target)
+    assert.equal(
+      (await readFile(target)).equals(await readFile(source)),
+      true,
+      'staged Security Assurance artifact bytes changed',
+    )
+    return { source, target }
   }
   await mkdir(artifactRoot, { recursive: true })
   const packed = await executeNpm([
@@ -164,7 +175,26 @@ async function packSecurityArtifact() {
   const manifest = parseTrailingJsonArray(packed.stdout, 'Security npm pack')
   const filename = manifest[0]?.filename
   if (typeof filename !== 'string') throw new Error('npm pack did not report a Security artifact')
-  return join(artifactRoot, filename)
+  return { source: undefined, target: join(artifactRoot, filename) }
+}
+
+async function readPackedPackageManifest(artifactPath) {
+  const extracted = await execute('tar', ['-xOf', artifactPath, 'package/package.json'], {
+    encoding: 'utf8',
+    windowsHide: true,
+    maxBuffer: 1024 * 1024,
+  })
+  const manifest = JSON.parse(extracted.stdout)
+  if (manifest.name !== 'dsh-security-assurance' || typeof manifest.version !== 'string') {
+    throw new Error('Packed Security artifact has an invalid package identity')
+  }
+  return manifest
+}
+
+function shipsWorkbenchClient(manifest) {
+  return manifest.exports?.['./client'] !== undefined
+    && Array.isArray(manifest.files)
+    && manifest.files.includes('lib/client.js')
 }
 
 async function createReferenceBrowserPackage() {
@@ -248,14 +278,14 @@ window.__ModuleLoader__.load({
 `.trimStart(), 'utf8')
 }
 
-async function installFreshHarness(securityTarball) {
+async function installFreshHarness(securityTarball, includeReferenceBrowser) {
   await mkdir(runnerRoot, { recursive: true })
   await writeFile(join(runnerRoot, 'package.json'), `${JSON.stringify({
     name: 'dsh-security-packed-browser-runner',
     version: '0.0.0',
     private: true,
     type: 'module',
-    dependencies: { '@deepseek-ai/dsh': '0.1.1-rc.2' },
+    dependencies: { '@deepseek-ai/dsh': browserHarnessVersion },
   }, null, 2)}\n`, 'utf8')
   console.log('packed-browser-e2e: installing @deepseek-ai/dsh runtime closure')
   await runStreamingPnpm([
@@ -270,13 +300,15 @@ async function installFreshHarness(securityTarball) {
     DSH_HOME: dshHome,
     DSH_TELEMETRY_DISABLED: '1',
   }
+  const profileLayers = includeReferenceBrowser
+    ? [securityTarball, referencePackageRoot]
+    : [securityTarball]
   await runStreaming(process.execPath, [
     dshBin,
     'plugin',
     '--profile', 'web',
     'add',
-    securityTarball,
-    referencePackageRoot,
+    ...profileLayers,
     '--save-exact',
     '--ignore-scripts',
   ], {
@@ -313,6 +345,12 @@ async function configureReferenceHost() {
           platform: ${process.platform}
           deliveryDestinationIds:
             - ${deliveryDestinationId}
+
+- id: dsh-security-assurance-control-plane-provider
+  disabled: true
+
+- id: dsh-security-assurance-invariant
+  disabled: true
 
 - id: dsh-security-assurance-workbench-remote
   disabled: false
@@ -405,7 +443,14 @@ async function findBrowserExecutable() {
 }
 
 async function loadPlaywright() {
-  const playwrightEntry = join(harnessRoot, 'apps', 'web', 'node_modules', 'playwright', 'index.mjs')
+  const playwrightEntry = join(
+    playwrightHarnessRoot,
+    'apps',
+    'web',
+    'node_modules',
+    'playwright',
+    'index.mjs',
+  )
   try {
     return await import(pathToFileURL(playwrightEntry).href)
   } catch (error) {
@@ -799,6 +844,48 @@ async function runBrowserScenario() {
   }
 }
 
+async function runCurrentWebScenario() {
+  const { chromium } = await loadPlaywright()
+  const executablePath = await findBrowserExecutable()
+  browser = await chromium.launch({
+    executablePath,
+    headless: true,
+    args: ['--disable-background-networking', '--disable-component-update'],
+  })
+  const context = await browser.newContext({ locale: 'en-US', viewport: { width: 1280, height: 900 } })
+  const page = await context.newPage()
+  const pageErrors = []
+  const requestUrls = []
+  page.on('pageerror', error => { pageErrors.push(String(error)) })
+  page.on('request', request => { requestUrls.push(request.url()) })
+
+  await page.goto(hostUrl, { waitUntil: 'domcontentloaded' })
+  await dismissReferenceHostOnboarding(page)
+  const bodyText = await page.locator('body').innerText()
+  assert.equal(bodyText.trim().length > 0, true, 'Harness Web must render visible content')
+  assert.equal(
+    await page.getByRole('button', { name: 'Open Security Assurance Workbench' }).count(),
+    0,
+    'a candidate without ./client must not expose the retired Workbench launcher',
+  )
+  assert.deepEqual(pageErrors, [], `browser page errors: ${pageErrors.join('\n')}`)
+  const expectedOrigin = new URL(hostUrl).origin
+  for (const requestUrl of requestUrls) {
+    const parsed = new URL(requestUrl)
+    if (parsed.protocol === 'data:' || parsed.protocol === 'blob:') continue
+    assert.equal(parsed.origin, expectedOrigin, `unexpected remote browser resource ${requestUrl}`)
+  }
+
+  await context.close()
+  await browser.close()
+  browser = undefined
+  return {
+    currentWebShell: 'PASS',
+    workbenchClient: 'NOT_SHIPPED',
+    requestCount: requestUrls.length,
+  }
+}
+
 async function stopHost() {
   const child = hostProcess
   hostProcess = undefined
@@ -831,21 +918,30 @@ async function assertHostStopped() {
 }
 
 try {
+  if (proofOutputPath !== undefined && suppliedSecurityArtifact === undefined) {
+    throw new Error(
+      'DSH_RELEASE_PROOF_OUTPUT requires DSH_SECURITY_PACKED_ARTIFACT so the proof binds a retained candidate.',
+    )
+  }
   console.log('packed-browser-e2e: creating isolated Repository and packed artifact')
   await mkdir(npmCache, { recursive: true })
   await createFixtureRepository()
-  await createReferenceBrowserPackage()
-  const securityTarball = await packSecurityArtifact()
+  const securityArtifact = await packSecurityArtifact()
+  const packedManifest = await readPackedPackageManifest(securityArtifact.target)
+  const workbenchShipped = shipsWorkbenchClient(packedManifest)
+  if (workbenchShipped) await createReferenceBrowserPackage()
 
-  console.log('packed-browser-e2e: installing fresh Harness 0.1.1-rc.2 profile')
-  const host = await installFreshHarness(securityTarball)
+  console.log(`packed-browser-e2e: installing fresh Harness ${browserHarnessVersion} profile`)
+  const host = await installFreshHarness(securityArtifact.target, workbenchShipped)
   await configureReferenceHost()
 
   console.log('packed-browser-e2e: starting packed Reference Test Host')
   hostUrl = await startHost(host.dshBin, host.environment)
 
   console.log(`packed-browser-e2e: driving real browser at ${hostUrl}`)
-  const evidence = await runBrowserScenario()
+  const evidence = workbenchShipped
+    ? await runBrowserScenario()
+    : await runCurrentWebScenario()
   const exit = await stopHost()
   assert.equal(
     exit?.code === 0 || (process.platform === 'win32' && exit?.code === null && exit.signal === 'SIGTERM'),
@@ -854,17 +950,63 @@ try {
   )
   await assertHostStopped()
 
-  console.log(JSON.stringify({
-    packedHost: 'PASS',
-    realBrowser: 'PASS',
-    realAuthority: 'PASS',
-    accessibility: 'PASS',
-    bilingual: 'PASS',
-    redaction: 'PASS',
-    reconnect: 'PASS',
-    lifecycle: 'PASS',
-    ...evidence,
-  }, null, 2))
+  if (proofOutputPath !== undefined) {
+    const platform = proofPlatform()
+    await writeReleaseProofRecord({
+      outputPath: proofOutputPath,
+      candidateArtifactPath: securityArtifact.target,
+      retainedCandidateArtifactPath: securityArtifact.source,
+      candidateArtifactMediaType: 'application/gzip',
+      proofRecordId: `proof/packed-browser/${platform.toLowerCase()}/${packedManifest.version}`,
+      proofKind: 'WORKBENCH',
+      producer: 'PACKED_BROWSER_E2E',
+      producerVersion: packedManifest.version,
+      completedAtEpochMs: Date.now(),
+      environment: {
+        platform,
+        architecture: process.arch,
+        nodeVersion: process.versions.node,
+        harnessVersion: browserHarnessVersion,
+      },
+      assertions: workbenchShipped
+        ? [
+            { assertionId: 'PACKED_HOST_READY', status: 'PASSED' },
+            { assertionId: 'WORKBENCH_CLIENT_SHIPPED', status: 'PASSED' },
+            { assertionId: 'REAL_BROWSER_FLOW_COMPLETED', status: 'PASSED' },
+            { assertionId: 'REAL_AUTHORITY_ENFORCED', status: 'PASSED' },
+            { assertionId: 'ACCESSIBILITY_CHECKS_PASSED', status: 'PASSED' },
+            { assertionId: 'BILINGUAL_FLOW_PASSED', status: 'PASSED' },
+            { assertionId: 'SENSITIVE_STATE_REDACTED', status: 'PASSED' },
+            { assertionId: 'RECONNECT_RECOVERED', status: 'PASSED' },
+            { assertionId: 'LIFECYCLE_DISPOSED', status: 'PASSED' },
+          ]
+        : [
+            { assertionId: 'PACKED_HOST_READY', status: 'PASSED' },
+            { assertionId: 'CURRENT_WEB_SHELL_LOADED', status: 'PASSED' },
+            { assertionId: 'WORKBENCH_CLIENT_SHIPPED', status: 'INCONCLUSIVE' },
+            { assertionId: 'LIFECYCLE_DISPOSED', status: 'PASSED' },
+          ],
+    })
+  }
+
+  console.log(JSON.stringify(workbenchShipped
+    ? {
+        packedHost: 'PASS',
+        realBrowser: 'PASS',
+        realAuthority: 'PASS',
+        accessibility: 'PASS',
+        bilingual: 'PASS',
+        redaction: 'PASS',
+        reconnect: 'PASS',
+        lifecycle: 'PASS',
+        ...evidence,
+      }
+    : {
+        packedHost: 'PASS',
+        realBrowser: 'PASS',
+        lifecycle: 'PASS',
+        ...evidence,
+      }, null, 2))
 } finally {
   await browser?.close().catch(() => {})
   await stopHost().catch(() => {})

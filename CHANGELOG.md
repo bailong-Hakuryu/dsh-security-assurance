@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- Add strict exact-artifact `ReleaseProofRecordV1` records, optional packed
+  profile and real-browser proof emission, and a packaged `release:collect`
+  CLI that validates candidate identity, rejects duplicate proof claims, hashes
+  the raw record bytes, and produces a deterministic Manifest-ready proof
+  index. The current package correctly records Workbench proof as inconclusive
+  because ADR 0307 excludes the retired client from this candidate. Supplied
+  candidates are proved against the exact installed snapshot, retained-source
+  drift fails closed, and Workbench records require an explicit client-shipped
+  assertion.
 - Add packaged release binding and exact-artifact qualification CLIs. The
   deterministic binder records a clean source `HEAD`, candidate tarball bytes,
   and dependency-lock bytes without manufacturing proof; qualification

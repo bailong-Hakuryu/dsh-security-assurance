@@ -69,6 +69,57 @@ the same directory. Use those facts when the external release automation
 assembles the Release Constitution request, public Scorecard, and complete
 proof portfolio. The binder does not manufacture or upgrade any proof result.
 
+## Exact-artifact proof records
+
+Retain the candidate tarball and pass its absolute path to each packed check.
+When `DSH_RELEASE_PROOF_OUTPUT` names a previously absent JSON file, a passing
+profile smoke writes a platform-specific `ReleaseProofRecordV1` after its Web
+probe and cleanup complete. The runner installs a private snapshot of the
+supplied tarball, hashes that tested snapshot, and refuses to emit proof if the
+retained source changes before record commit:
+
+```powershell
+$env:DSH_SECURITY_PACKED_ARTIFACT = (Resolve-Path .\artifacts\dsh-security-assurance.tgz)
+$env:DSH_CONTROL_PLANE_PACKED_ARTIFACT = (Resolve-Path .\artifacts\dsh-engineering-control-plane.tgz)
+$env:DSH_RELEASE_PROOF_OUTPUT = "$PWD\evidence\windows-platform.json"
+pnpm pack:profile-smoke
+```
+
+The real-browser runner uses the same Security candidate variable and output
+variable. It selects the actual package manifest from the tarball. For the
+current candidate, ADR 0307 excludes `./client`, so the run verifies the current
+Harness Web shell but records `WORKBENCH` as `INCONCLUSIVE`. It must never turn
+generic Web availability into passed Workbench evidence.
+
+```powershell
+$env:DSH_RELEASE_PROOF_OUTPUT = "$PWD\evidence\workbench.json"
+pnpm pack:browser-e2e
+```
+
+Collect any completed records against the binding with a strict input file:
+
+```json
+{
+  "schemaVersion": 1,
+  "releaseFileBindingsPath": "./release-file-bindings.json",
+  "proofFiles": [
+    "./evidence/windows-platform.json",
+    "./evidence/workbench.json"
+  ]
+}
+```
+
+```sh
+pnpm release:collect -- --input ./release-proof-input.json --output ./release-proof-index.json
+```
+
+Collection rejects malformed records, duplicate paths, record IDs or proof
+kinds, and every candidate digest mismatch. It hashes the raw proof-record
+bytes and orders records by the Manifest proof taxonomy, so
+`records[].proof` can be copied without reinterpretation into the complete
+Release Evidence Manifest request. Missing records remain missing, and failed
+or inconclusive records keep their original status.
+
 Then reference the binding file from the qualification input and run:
 
 ```sh
@@ -100,8 +151,9 @@ Exit `0` means both `manifestVerification: VERIFIED` and
 portfolio for review. Exit `1` means input, source, byte binding, or output
 validation failed and no portfolio is emitted. This command does not tag,
 upload, sign, or publish anything. The side-effect-free
-`dsh-security-assurance/release-file-bindings` export exposes the strict input
-and output schemas for external release automation.
+`dsh-security-assurance/release-file-bindings` exposes the binding schemas and
+`dsh-security-assurance/release-proof` exposes strict record, collection-input,
+and index schemas for external release automation.
 
 ## Acceptance gates before stable promotion
 

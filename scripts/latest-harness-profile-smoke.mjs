@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+
+import { writeReleaseProofRecord } from '../lib/release-proof-output.js'
 
 const execute = promisify(execFile)
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -18,7 +20,16 @@ const repositoryRoot = join(temporaryRoot, 'repository')
 const dshHome = join(temporaryRoot, 'dsh-home')
 const npmCache = join(temporaryRoot, 'npm-cache')
 const commandEnvironment = { ...process.env, DSH_HOME: dshHome }
-const packageManifest = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8'))
+const harnessManifest = JSON.parse(await readFile(join(harnessRoot, 'package.json'), 'utf8'))
+const proofOutputPath = process.env.DSH_RELEASE_PROOF_OUTPUT
+const suppliedSecurityArtifact = process.env.DSH_SECURITY_PACKED_ARTIFACT
+
+function proofPlatform() {
+  if (process.platform === 'win32') return 'WINDOWS'
+  if (process.platform === 'darwin') return 'MACOS'
+  if (process.platform === 'linux') return 'LINUX'
+  throw new Error(`Unsupported release proof platform: ${process.platform}`)
+}
 
 function executeNpm(args, options) {
   if (process.platform === 'win32') {
@@ -57,6 +68,32 @@ async function pack(root, label) {
   const tarball = join(artifactRoot, filename)
   await access(tarball)
   return tarball
+}
+
+async function stageSuppliedArtifact(path, label) {
+  const source = resolve(path)
+  const target = join(artifactRoot, `${label}-${Date.now()}.tgz`)
+  await access(source)
+  await copyFile(source, target)
+  assert.equal(
+    (await readFile(target)).equals(await readFile(source)),
+    true,
+    `${label} staged artifact bytes changed`,
+  )
+  return { source, target }
+}
+
+async function readPackedPackageManifest(artifactPath) {
+  const extracted = await execute('tar', ['-xOf', artifactPath, 'package/package.json'], {
+    encoding: 'utf8',
+    windowsHide: true,
+    maxBuffer: 1024 * 1024,
+  })
+  const manifest = JSON.parse(extracted.stdout)
+  if (manifest.name !== 'dsh-security-assurance' || typeof manifest.version !== 'string') {
+    throw new Error('Packed Security artifact has an invalid package identity')
+  }
+  return manifest
 }
 
 async function runHarness(args) {
@@ -165,6 +202,11 @@ async function bootAndProbeWeb() {
 }
 
 try {
+  if (proofOutputPath !== undefined && suppliedSecurityArtifact === undefined) {
+    throw new Error(
+      'DSH_RELEASE_PROOF_OUTPUT requires DSH_SECURITY_PACKED_ARTIFACT so the proof binds a retained candidate.',
+    )
+  }
   await access(harnessCli)
   await mkdir(artifactRoot)
   await mkdir(repositoryRoot)
@@ -195,12 +237,15 @@ try {
     windowsHide: true,
   })
 
-  const controlTarball = process.env.DSH_CONTROL_PLANE_PACKED_ARTIFACT === undefined
-    ? await pack(controlPlaneRoot, 'Control Plane')
-    : resolve(process.env.DSH_CONTROL_PLANE_PACKED_ARTIFACT)
-  const securityTarball = process.env.DSH_SECURITY_PACKED_ARTIFACT === undefined
-    ? await pack(projectRoot, 'Security Assurance')
-    : resolve(process.env.DSH_SECURITY_PACKED_ARTIFACT)
+  const controlArtifact = process.env.DSH_CONTROL_PLANE_PACKED_ARTIFACT === undefined
+    ? { source: undefined, target: await pack(controlPlaneRoot, 'Control Plane') }
+    : await stageSuppliedArtifact(process.env.DSH_CONTROL_PLANE_PACKED_ARTIFACT, 'control-plane')
+  const securityArtifact = suppliedSecurityArtifact === undefined
+    ? { source: undefined, target: await pack(projectRoot, 'Security Assurance') }
+    : await stageSuppliedArtifact(suppliedSecurityArtifact, 'security-assurance')
+  const packedSecurityManifest = await readPackedPackageManifest(securityArtifact.target)
+  const controlTarball = controlArtifact.target
+  const securityTarball = securityArtifact.target
   await access(controlTarball)
   await access(securityTarball)
   await runHarness(['plugin', '--profile', 'web', 'add', controlTarball])
@@ -214,7 +259,7 @@ try {
   assert.match(dump.stdout, /# == dsh-engineering-control-plane/u)
   assert.match(dump.stdout, /name: dsh-engineering-control-plane\/tools/u)
   assert.equal(
-    providerVersionLines.includes(`providerVersion: ${packageManifest.version}`),
+    providerVersionLines.includes(`providerVersion: ${packedSecurityManifest.version}`),
     true,
     `Security Assurance provider version did not match package.json; observed: ${providerVersionLines.join(', ')}`,
   )
@@ -225,6 +270,33 @@ try {
   assert.match(dump.stdout, /name: dsh-security-assurance\/workbench-remote[\s\S]*disabled: true/u)
 
   await bootAndProbeWeb()
+  if (proofOutputPath !== undefined) {
+    const platform = proofPlatform()
+    await writeReleaseProofRecord({
+      outputPath: proofOutputPath,
+      candidateArtifactPath: securityArtifact.target,
+      retainedCandidateArtifactPath: securityArtifact.source,
+      candidateArtifactMediaType: 'application/gzip',
+      proofRecordId: `proof/packed-profile/${platform.toLowerCase()}/${packedSecurityManifest.version}`,
+      proofKind: `${platform}_PLATFORM`,
+      producer: 'PACKED_HARNESS_PROFILE_SMOKE',
+      producerVersion: packedSecurityManifest.version,
+      completedAtEpochMs: Date.now(),
+      environment: {
+        platform,
+        architecture: process.arch,
+        nodeVersion: process.versions.node,
+        harnessVersion: harnessManifest.version,
+      },
+      assertions: [
+        { assertionId: 'PACKED_CONTROL_PLANE_INSTALLED', status: 'PASSED' },
+        { assertionId: 'PACKED_SECURITY_ASSURANCE_INSTALLED', status: 'PASSED' },
+        { assertionId: 'PROVIDER_VERSION_MATCHED', status: 'PASSED' },
+        { assertionId: 'HOST_REPOSITORY_BOUND', status: 'PASSED' },
+        { assertionId: 'HARNESS_WEB_RESPONDED', status: 'PASSED' },
+      ],
+    })
+  }
   process.stdout.write('Latest Harness profile smoke passed: both packed bundles composed and Web responded.\n')
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true })

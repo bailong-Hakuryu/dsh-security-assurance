@@ -1,5 +1,19 @@
 import { z } from 'zod'
 import { digestEnvelopeV1Schema } from './digest-envelope.ts'
+import {
+  RELEASE_EVIDENCE_PROOF_KINDS,
+  releaseEvidenceProofV1Schema,
+  releaseEvidenceReportedStatusV1Schema,
+  type ReleaseEvidenceProofKind,
+} from './release-proof.ts'
+
+export {
+  RELEASE_EVIDENCE_PROOF_KINDS,
+  releaseEvidenceProofV1Schema,
+  releaseEvidenceReportedStatusV1Schema,
+  type ReleaseEvidenceProofKind,
+  type ReleaseEvidenceProofV1,
+} from './release-proof.ts'
 
 export const EFFECTIVENESS_METRICS_ENGINE_ID = 'security/effectiveness-metrics/v1' as const
 
@@ -3765,47 +3779,6 @@ export function renderPublicSecurityScorecardV1(
 
 export const RELEASE_EVIDENCE_MANIFEST_ENGINE_ID =
   'security/release-evidence-manifest/v1' as const
-
-export const RELEASE_EVIDENCE_PROOF_KINDS = [
-  'ARTIFACT_IDENTITY',
-  'CAPABILITY_CONFORMANCE',
-  'WINDOWS_PLATFORM',
-  'LINUX_PLATFORM',
-  'MACOS_PLATFORM',
-  'WORKBENCH',
-  'LIFECYCLE',
-  'FAULT',
-  'RACE',
-  'MUTATION',
-  'RESOURCE',
-  'EFFECTIVENESS',
-  'UTILITY',
-  'NON_INFERIORITY',
-  'DOGFOOD',
-  'SELF_SECURITY',
-  'GROUND_TRUTH_AIR_GAP',
-  'DETERMINISTIC_FAILURES',
-  'SECURITY_SUPPORT_MATRIX',
-  'RISK_ACCEPTANCES',
-  'EVALUATION_RUN_BUNDLE',
-  'PUBLIC_SCORECARD',
-  'RELEASE_CONSTITUTION',
-] as const
-
-export type ReleaseEvidenceProofKind = typeof RELEASE_EVIDENCE_PROOF_KINDS[number]
-
-const releaseEvidenceReportedStatusV1Schema = z.enum(['PASSED', 'FAILED', 'INCONCLUSIVE'])
-
-export const releaseEvidenceProofV1Schema = z.strictObject({
-  proofKind: z.enum(RELEASE_EVIDENCE_PROOF_KINDS),
-  evidenceId: boundedEvaluationIdSchema,
-  evidenceDigest: digestEnvelopeV1Schema,
-  reportedStatus: releaseEvidenceReportedStatusV1Schema,
-  candidateArtifactDigest: digestEnvelopeV1Schema,
-  completedAtEpochMs: evaluationEpochMsSchema,
-})
-
-export type ReleaseEvidenceProofV1 = z.infer<typeof releaseEvidenceProofV1Schema>
 
 const releaseDependencyLockV1Schema = z.strictObject({
   lockKind: z.enum([
