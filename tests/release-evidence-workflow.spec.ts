@@ -25,6 +25,11 @@ describe('exact-artifact release evidence workflow', () => {
     expect(workflow).toContain('DSH_RELEASE_PROOF_OUTPUT:')
   })
 
+  it('writes step outputs without nested shell quoting', () => {
+    expect(workflow).toContain('appendFileSync(process.env.GITHUB_OUTPUT')
+    expect(workflow).not.toContain('node -p \\"')
+  })
+
   it('requires Linux, macOS, and Windows proofs before collection', () => {
     for (const value of [
       'ubuntu-latest',

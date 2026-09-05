@@ -103,8 +103,16 @@ jobs:
         id: versions
         shell: bash
         run: |
-          echo "security_version=$(node -p \"require('./plugin/package.json').version\")" >> "$GITHUB_OUTPUT"
-          echo "control_plane_version=$(node -p \"require('./DSH Engineering Control Plane/package.json').version\")" >> "$GITHUB_OUTPUT"
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs'
+
+          const versionAt = path => JSON.parse(readFileSync(path, 'utf8')).version
+          appendFileSync(process.env.GITHUB_OUTPUT, [
+            `security_version=${versionAt('./plugin/package.json')}`,
+            `control_plane_version=${versionAt('./DSH Engineering Control Plane/package.json')}`,
+            '',
+          ].join('\n'))
+          NODE
 
       - name: Prepare release artifact directory
         run: mkdir release-artifacts
@@ -289,7 +297,13 @@ jobs:
       - name: Resolve candidate version
         id: version
         shell: bash
-        run: echo "security_version=$(node -p \"require('./plugin/package.json').version\")" >> "$GITHUB_OUTPUT"
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs'
+
+          const manifest = JSON.parse(readFileSync('./plugin/package.json', 'utf8'))
+          appendFileSync(process.env.GITHUB_OUTPUT, `security_version=${manifest.version}\n`)
+          NODE
 
       - name: Install the packed collection CLI
         env:
