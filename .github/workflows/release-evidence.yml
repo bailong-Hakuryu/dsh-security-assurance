@@ -161,7 +161,7 @@ jobs:
         working-directory: plugin
 
       - name: Upload immutable candidate files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-candidate-files
           path: release-artifacts
@@ -209,7 +209,7 @@ jobs:
           persist-credentials: false
 
       - name: Download the prepared candidate files
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: release-candidate-files
           path: release-artifacts
@@ -258,7 +258,7 @@ jobs:
           DSH_RELEASE_PROOF_OUTPUT: ${{ github.workspace }}/release-proof/${{ matrix.proof_file }}
 
       - name: Upload platform proof
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: platform-proof-${{ matrix.proof_id }}
           path: release-proof/${{ matrix.proof_file }}
@@ -277,13 +277,13 @@ jobs:
           persist-credentials: false
 
       - name: Download the prepared candidate files
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: release-candidate-files
           path: release-artifacts
 
       - name: Download all required platform proofs
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           pattern: platform-proof-*
           path: proofs
@@ -311,9 +311,10 @@ jobs:
         run: >-
           npm --cache ./plugin/.scratch/release-npm-cache install
           --prefix ./release-tool
-          --ignore-scripts
-          --omit=peer
-          --no-audit
+           --ignore-scripts
+           --omit=peer
+           --legacy-peer-deps
+           --no-audit
           --no-fund
           "$CANDIDATE_PATH"
 
@@ -341,7 +342,7 @@ jobs:
           --output ./release-evidence/release-proof-index.json
 
       - name: Upload release evidence index
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-evidence-index
           path: |

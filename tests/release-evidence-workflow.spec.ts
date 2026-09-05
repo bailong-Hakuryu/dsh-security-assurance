@@ -30,6 +30,17 @@ describe('exact-artifact release evidence workflow', () => {
     expect(workflow).not.toContain('node -p \\"')
   })
 
+  it('installs only the candidate CLI dependency closure without resolving Host peers', () => {
+    expect(workflow).toContain('--omit=peer')
+    expect(workflow).toContain('--legacy-peer-deps')
+  })
+
+  it('uses Node 24 artifact actions with strict transport digest checks', () => {
+    expect(workflow).toContain('actions/upload-artifact@v7')
+    expect(workflow).toContain('actions/download-artifact@v8')
+    expect(workflow).not.toMatch(/actions\/(?:upload|download)-artifact@v[45]/u)
+  })
+
   it('requires Linux, macOS, and Windows proofs before collection', () => {
     for (const value of [
       'ubuntu-latest',
