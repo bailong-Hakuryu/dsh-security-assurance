@@ -31,6 +31,8 @@ describe('exact-artifact release evidence workflow', () => {
   })
 
   it('installs only the candidate CLI dependency closure without resolving Host peers', () => {
+    expect(workflow).toContain("writeFileSync('release-tool/package.json'")
+    expect(workflow).toContain('CANDIDATE_PATH: ${{ github.workspace }}/release-artifacts/')
     expect(workflow).toContain('--omit=peer')
     expect(workflow).toContain('--legacy-peer-deps')
   })
@@ -38,7 +40,9 @@ describe('exact-artifact release evidence workflow', () => {
   it('uses Node 24 artifact actions with strict transport digest checks', () => {
     expect(workflow).toContain('actions/upload-artifact@v7')
     expect(workflow).toContain('actions/download-artifact@v8')
+    expect(workflow).toContain('pnpm/action-setup@v6')
     expect(workflow).not.toMatch(/actions\/(?:upload|download)-artifact@v[45]/u)
+    expect(workflow).not.toContain('pnpm/action-setup@v4')
   })
 
   it('requires Linux, macOS, and Windows proofs before collection', () => {

@@ -61,7 +61,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
 
@@ -215,7 +215,7 @@ jobs:
           path: release-artifacts
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
 
@@ -305,16 +305,29 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `security_version=${manifest.version}\n`)
           NODE
 
+      - name: Prepare isolated collection project
+        shell: bash
+        run: |
+          mkdir release-tool
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs'
+
+          writeFileSync('release-tool/package.json', `${JSON.stringify({
+            name: 'dsh-release-evidence-collector',
+            private: true,
+          }, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' })
+          NODE
+
       - name: Install the packed collection CLI
         env:
-          CANDIDATE_PATH: ./release-artifacts/dsh-security-assurance-${{ steps.version.outputs.security_version }}.tgz
+          CANDIDATE_PATH: ${{ github.workspace }}/release-artifacts/dsh-security-assurance-${{ steps.version.outputs.security_version }}.tgz
         run: >-
           npm --cache ./plugin/.scratch/release-npm-cache install
           --prefix ./release-tool
-           --ignore-scripts
-           --omit=peer
-           --legacy-peer-deps
-           --no-audit
+          --ignore-scripts
+          --omit=peer
+          --legacy-peer-deps
+          --no-audit
           --no-fund
           "$CANDIDATE_PATH"
 
