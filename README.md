@@ -161,6 +161,7 @@ gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.j
 | <code>dsh-security-assurance/evaluation</code> | 纯函数 Metrics Engine |
 | <code>dsh-security-assurance/release-file-bindings</code> | 发布文件绑定的版本化纯契约 |
 | <code>dsh-security-assurance/release-proof</code> | 精确候选证明记录与确定性索引纯契约 |
+| <code>dsh-security-assurance/release-qualification</code> | 资格草案、组装输入与最终输入的严格纯契约 |
 | <code>dsh-security-assurance/host-repository-provider</code> | Host Repository 注册适配器 |
 | <code>dsh-security-assurance/control-plane-provider</code> | 可选 Control Plane 适配器 |
 | <code>dsh-security-assurance/invariant</code> | 启动就绪诊断 |
@@ -195,14 +196,15 @@ pnpm release:check
 ~~~powershell
 pnpm release:bind -- --input .\release-files.json --output .\release-file-bindings.json
 pnpm release:collect -- --input .\release-proof-input.json --output .\release-proof-index.json
+pnpm release:assemble -- --input .\release-qualification-draft.json --output .\release-qualification-input.json
 pnpm release:qualify -- --input .\release-qualification-input.json --output .\release-qualification
 ~~~
 
-第一条命令只记录已复核的文件事实，不制造测试或安全证明；packed smoke 可用 <code>DSH_RELEASE_PROOF_OUTPUT</code> 输出绑定同一 tarball 的严格证明记录，第二条命令验证并按规范顺序收集这些记录，逐字节摘要后生成可直接进入 Manifest 的 proof index；第三条命令重新读取绑定的真实文件，并且只在 Release Constitution 为 <code>PROMOTE</code> 且最终 Manifest 为 <code>VERIFIED</code> 时返回 0，原子生成 Manifest、公开 Scorecard 和资格结论三件套。当前候选依照 ADR 0307 不发布旧 Workbench client，因此真实浏览器记录会诚实标记 <code>WORKBENCH</code> 为 <code>INCONCLUSIVE</code>，不会把通用 Web 外壳冒充成 Workbench。有效但阻断/不完整的证据返回 2 并保留可审计产物；字节摘要、Git HEAD、已跟踪源码或输入不一致时返回 1 且不生成产物。三条 CLI 都不会自动打 tag、上传或发布包。完整输入契约见 [v0.1 发布清单](docs/release-v0.1.md)。
+第一条命令只记录已复核的文件事实，不制造测试或安全证明；packed smoke 可用 <code>DSH_RELEASE_PROOF_OUTPUT</code> 输出绑定同一 tarball 的严格证明记录，第二条命令验证并按规范顺序收集这些记录，逐字节摘要后生成 proof index；第三条命令重新读取 index、binding 与每份 proof record，把状态原样合并到 <code>release:qualify</code> 的严格输入；第四条命令再次读取绑定的真实文件，并且只在 Release Constitution 为 <code>PROMOTE</code> 且最终 Manifest 为 <code>VERIFIED</code> 时返回 0，原子生成 Manifest、公开 Scorecard 和资格结论三件套。当前候选依照 ADR 0307 不发布旧 Workbench client，因此真实浏览器记录会诚实标记 <code>WORKBENCH</code> 为 <code>INCONCLUSIVE</code>，不会把通用 Web 外壳冒充成 Workbench。有效但阻断/不完整的证据返回 2 并保留可审计产物；字节摘要、Git HEAD、已跟踪源码或输入不一致时返回 1 且不生成产物。四条 CLI 都不会自动打 tag、上传或发布包。完整输入契约见 [v0.1 发布清单](docs/release-v0.1.md)。
 
 手动 **Release Candidate Evidence** workflow 会要求一个完整的 40 位 Control Plane commit SHA，只打包并绑定一次候选，然后让 Linux、macOS、Windows 下载同一组 tarball 生成三份平台证明；最终收集任务从候选包安装公开 CLI，生成可下载的 <code>release-evidence-index</code>。该 workflow 不执行资格提升、打 tag、创建 Release 或发布 npm。
 
-当前开发树包含 83 个测试文件、428 个测试，并由发布门禁统一执行静态检查、类型检查、构建、打包和 Harness Profile smoke。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针；每日兼容矩阵另对全部已声明 Harness 版本执行双插件联合 E2E 与打包安装探针。
+当前开发树包含 84 个测试文件、434 个测试，并由发布门禁统一执行静态检查、类型检查、构建、打包和 Harness Profile smoke。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针；每日兼容矩阵另对全部已声明 Harness 版本执行双插件联合 E2E 与打包安装探针。
 
 完整领域模型见 [CONTEXT.md](CONTEXT.md)，安全政策见 [SECURITY.md](SECURITY.md)，候选版审查见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
@@ -332,22 +334,25 @@ release-evidence request against those bindings:
 ~~~powershell
 pnpm release:bind -- --input .\release-files.json --output .\release-file-bindings.json
 pnpm release:collect -- --input .\release-proof-input.json --output .\release-proof-index.json
+pnpm release:assemble -- --input .\release-qualification-draft.json --output .\release-qualification-input.json
 pnpm release:qualify -- --input .\release-qualification-input.json --output .\release-qualification
 ~~~
 
 The first command records verified file facts but manufactures no test or
 security proof. Packed smoke commands can emit strict records for that same
 tarball through `DSH_RELEASE_PROOF_OUTPUT`; the second command validates and
-raw-byte hashes those records into a deterministically ordered, Manifest-ready
-proof index. The third rereads the bound files and exits `0` only when the
+raw-byte hashes those records into a deterministically ordered proof index. The
+third re-verifies the index, binding, and referenced record bytes, then copies
+their unchanged statuses into the strict qualification input. The fourth
+rereads the bound files and exits `0` only when the
 Release Constitution says `PROMOTE` and the assembled Manifest is `VERIFIED`,
 atomically emitting the Manifest, public Scorecard, and qualification verdict.
 Because ADR 0307 excludes the retired Workbench client from the current
 candidate, its real-browser record honestly reports `WORKBENCH` as
 `INCONCLUSIVE`; a generic Web shell is never relabelled as Workbench proof.
 Valid blocked or incomplete evidence exits `2` with auditable output; byte,
-Git `HEAD`, tracked-source, or input mismatches exit `1` without output. Neither
-the CLIs nor the proof emitters tag, upload, or publish a package. See the
+Git `HEAD`, tracked-source, or input mismatches exit `1` without output. None of
+the CLIs or proof emitters tag, upload, or publish a package. See the
 [v0.1 release checklist](docs/release-v0.1.md) for the input contracts.
 
 The manually triggered **Release Candidate Evidence** workflow requires an
@@ -356,7 +361,7 @@ reuses those tarballs for Linux, macOS, and Windows proof runs. Its final job
 installs the public collector from the candidate and uploads a deterministic
 `release-evidence-index`; it does not qualify, tag, release, or publish.
 
-The current development tree contains 83 test files and 428 tests; the release gate runs those tests together with linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
+The current development tree contains 84 test files and 434 tests; the release gate runs those tests together with linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
 
 </details>
 

@@ -116,7 +116,7 @@ pnpm release:collect -- --input ./release-proof-input.json --output ./release-pr
 Collection rejects malformed records, duplicate paths, record IDs or proof
 kinds, and every candidate digest mismatch. It hashes the raw proof-record
 bytes and orders records by the Manifest proof taxonomy, so
-`records[].proof` can be copied without reinterpretation into the complete
+`records[].proof` can be composed without reinterpretation into the complete
 Release Evidence Manifest request. Missing records remain missing, and failed
 or inconclusive records keep their original status.
 
@@ -129,7 +129,26 @@ tarballs, emit one platform record each, and the final job installs
 producing the downloadable `release-evidence-index` artifact. The workflow
 does not run qualification, tag, create a GitHub Release, or publish to npm.
 
-Then reference the binding file from the qualification input and run:
+After the independently produced Release Constitution, Scorecard, and remaining
+proof references are ready, describe the qualification draft with the normal
+qualification fields plus the collected index:
+
+```json
+{
+  "schemaVersion": 1,
+  "releaseProofIndexPath": "./release-proof-index.json",
+  "releaseFileBindingsPath": "./release-file-bindings.json",
+  "releaseEvidence": "<ReleaseEvidenceManifestRequestV1 with non-indexed proofs>"
+}
+```
+
+Proof kinds already present in the index must be omitted from the draft's
+`releaseEvidence.proofs`. Assemble the strict qualification input, then run the
+existing qualification command:
+
+```sh
+pnpm release:assemble -- --input ./release-qualification-draft.json --output ./release-qualification-input.json
+```
 
 ```sh
 pnpm release:qualify -- --input ./release-qualification-input.json --output ./release-qualification
@@ -162,7 +181,10 @@ validation failed and no portfolio is emitted. This command does not tag,
 upload, sign, or publish anything. The side-effect-free
 `dsh-security-assurance/release-file-bindings` exposes the binding schemas and
 `dsh-security-assurance/release-proof` exposes strict record, collection-input,
-and index schemas for external release automation.
+and index schemas. `dsh-security-assurance/release-qualification` exposes the
+strict assembly and qualification-input schemas for external release
+automation. Assembly re-verifies the binding bytes and every indexed record,
+preserves failed and inconclusive status, and neither qualifies nor promotes.
 
 ## Acceptance gates before stable promotion
 

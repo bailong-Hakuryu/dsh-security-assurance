@@ -17,7 +17,6 @@ import { z } from 'zod'
 import { digestEnvelopeV1Schema } from './digest-envelope.ts'
 import {
   assembleReleaseEvidenceManifestV1,
-  releaseEvidenceManifestRequestV1Schema,
   type ReleaseEvidenceManifestV1,
 } from './evaluation.ts'
 import {
@@ -31,20 +30,14 @@ import {
   releaseFileBindingsV1Schema,
   type ReleaseFileBindingsV1,
 } from './release-file-bindings.ts'
+import {
+  releaseQualificationInputV1Schema,
+  type ReleaseQualificationInputV1,
+} from './release-qualification.ts'
 
 const RELEASE_QUALIFICATION_CLI_ENGINE_ID = 'security/release-qualification-cli/v1' as const
 
 const maximumInputBytes = 50 * 1024 * 1024
-const boundedPathSchema = z.string().min(1).max(4_096)
-
-const releaseQualificationInputV1Schema = z.strictObject({
-  schemaVersion: z.literal(1),
-  releaseFileBindingsPath: boundedPathSchema,
-  releaseEvidence: releaseEvidenceManifestRequestV1Schema,
-})
-
-type ReleaseQualificationInputV1 = z.infer<typeof releaseQualificationInputV1Schema>
-
 const releaseQualificationVerdictV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   engineId: z.literal(RELEASE_QUALIFICATION_CLI_ENGINE_ID),

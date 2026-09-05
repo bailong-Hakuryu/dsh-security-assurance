@@ -12,6 +12,7 @@
   "bin": {
     "dsh-security-assurance-release-bind": "./lib/release-bind.js",
     "dsh-security-assurance-release-collect": "./lib/release-collect.js",
+    "dsh-security-assurance-release-assemble": "./lib/release-assemble.js",
     "dsh-security-assurance-release-qualify": "./lib/release-qualify.js"
   },
   "exports": {
@@ -42,6 +43,10 @@
     "./release-proof": {
       "types": "./lib/types/release-proof.d.ts",
       "default": "./lib/release-proof.js"
+    },
+    "./release-qualification": {
+      "types": "./lib/types/release-qualification.d.ts",
+      "default": "./lib/release-qualification.js"
     },
     "./tools": {
       "types": "./lib/types/tools.d.ts",
@@ -83,8 +88,10 @@
     "lib/evaluation.js",
     "lib/release-bind.js",
     "lib/release-collect.js",
+    "lib/release-assemble.js",
     "lib/release-file-bindings.js",
     "lib/release-proof.js",
+    "lib/release-qualification.js",
     "lib/release-qualify.js",
     "lib/tools.js",
     "lib/control-plane-provider.js",
@@ -109,6 +116,8 @@
     "lib/types/release-file-bindings.d.ts.map",
     "lib/types/release-proof.d.ts",
     "lib/types/release-proof.d.ts.map",
+    "lib/types/release-qualification.d.ts",
+    "lib/types/release-qualification.d.ts.map",
     "lib/types/digest-envelope.d.ts",
     "lib/types/digest-envelope.d.ts.map",
     "lib/types/tools.d.ts",
@@ -151,6 +160,7 @@
     "pack:profile-smoke": "pnpm build && node scripts/latest-harness-profile-smoke.mjs",
     "release:bind": "pnpm build && node lib/release-bind.js",
     "release:collect": "pnpm build && node lib/release-collect.js",
+    "release:assemble": "pnpm build && node lib/release-assemble.js",
     "release:qualify": "pnpm build && node lib/release-qualify.js",
     "release:check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm pack:dry-run && pnpm pack:profile-smoke"
   },

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Add a packaged `release:assemble` adapter and side-effect-free qualification
+  input contracts. The adapter re-verifies the deterministic proof index,
+  binding bytes, candidate identity, and referenced proof-record bytes before
+  merging proofs without status reinterpretation into the exact input consumed
+  by the existing qualification CLI. It does not qualify or promote a release.
+
 ## [0.1.0-rc.11] - 2026-09-05
 
 - Add a manual exact-artifact release-evidence workflow that packs and binds
