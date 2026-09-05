@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.11] - 2026-09-05
+
 - Admit DeepSeek Harness `0.1.3-alpha.1` into the closed verified compatibility
   set after its dual-plugin semantic matrix passed outside the exact-version
   invariant; keep peer declarations and bilingual support documentation aligned.

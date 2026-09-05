@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 
+import { SECURITY_ASSURANCE_PRODUCT_VERSION } from '../src/contracts.js'
 import type { DigestEnvelopeV1 } from '../src/digest-envelope.js'
 import { releaseProofIndexV1Schema } from '../src/release-proof.js'
 
@@ -34,11 +35,11 @@ function proofRecord(
     schemaVersion: 1,
     engineId: 'security/release-proof-record/v1',
     proofRecordId: workbench
-      ? 'proof/packed-browser/windows/0.1.0-rc.10'
-      : 'proof/packed-profile/windows/0.1.0-rc.10',
+      ? `proof/packed-browser/windows/${SECURITY_ASSURANCE_PRODUCT_VERSION}`
+      : `proof/packed-profile/windows/${SECURITY_ASSURANCE_PRODUCT_VERSION}`,
     proofKind,
     producer: workbench ? 'PACKED_BROWSER_E2E' : 'PACKED_HARNESS_PROFILE_SMOKE',
-    producerVersion: '0.1.0-rc.10',
+    producerVersion: SECURITY_ASSURANCE_PRODUCT_VERSION,
     reportedStatus: workbench ? 'INCONCLUSIVE' : 'PASSED',
     candidateArtifactDigest,
     completedAtEpochMs: workbench ? 1_788_516_100_000 : 1_788_516_000_000,

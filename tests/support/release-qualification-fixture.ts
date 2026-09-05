@@ -1,4 +1,5 @@
 import type { DigestEnvelopeV1 } from '../../src/digest-envelope.js'
+import { SECURITY_ASSURANCE_PRODUCT_VERSION } from '../../src/contracts.js'
 import {
   DETERMINISTIC_RELEASE_PROOF_KINDS,
   RELEASE_EVIDENCE_PROOF_KINDS,
@@ -238,7 +239,7 @@ export function releaseQualificationFixture(input: {
       },
     },
     candidate: {
-      releaseCandidateId: 'security-assurance-0.1.0-rc.10',
+      releaseCandidateId: `security-assurance-${SECURITY_ASSURANCE_PRODUCT_VERSION}`,
       candidateArmId: 'candidate-arm',
       priorStableArmId: 'baseline-arm',
       evidenceSetId: 'release-evidence-set-v1',
@@ -282,7 +283,7 @@ export function releaseQualificationFixture(input: {
     engineId: 'security/public-scorecard/v1',
     publication: {
       publishedAtEpochMs: 400,
-      releaseVersion: '0.1.0-rc.10',
+      releaseVersion: SECURITY_ASSURANCE_PRODUCT_VERSION,
       harnessTargetVersion: '0.1.2-rc.1',
       supportMatrixVersion: 'support-matrix-v1',
       policyVersion: 'security-policy-v1',

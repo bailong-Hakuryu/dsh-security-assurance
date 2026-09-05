@@ -7,6 +7,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runtimeHealthSnapshotSchema } from '../src/index.ts'
 import type { GetHealthRequest, SecurityInvocation } from '../src/index.ts'
+import { SECURITY_ASSURANCE_PRODUCT_VERSION } from '../src/contracts.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 
 const liveContexts: Context[] = []
@@ -43,7 +44,7 @@ describe('SecurityAssuranceService health tracer', () => {
       schemaVersion: 1,
       product: {
         name: 'dsh-security-assurance',
-        version: '0.1.0-rc.10',
+        version: SECURITY_ASSURANCE_PRODUCT_VERSION,
       },
       compatibility: {
         targetHarnessVersion: '0.1.2-alpha.1',

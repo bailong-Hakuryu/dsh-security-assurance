@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { SECURITY_ASSURANCE_PRODUCT_VERSION } from '../src/contracts.js'
 import { releaseProofRecordV1Schema } from '../src/release-proof.js'
 
 const candidateArtifactDigest = {
@@ -14,10 +15,10 @@ const candidateArtifactDigest = {
 const validRecord = {
   schemaVersion: 1,
   engineId: 'security/release-proof-record/v1',
-  proofRecordId: 'proof/packed-profile/linux/0.1.0-rc.10',
+  proofRecordId: `proof/packed-profile/linux/${SECURITY_ASSURANCE_PRODUCT_VERSION}`,
   proofKind: 'LINUX_PLATFORM',
   producer: 'PACKED_HARNESS_PROFILE_SMOKE',
-  producerVersion: '0.1.0-rc.10',
+  producerVersion: SECURITY_ASSURANCE_PRODUCT_VERSION,
   reportedStatus: 'PASSED',
   candidateArtifactDigest,
   completedAtEpochMs: 1_788_516_000_000,
@@ -58,7 +59,7 @@ describe('Release Proof Record v1', () => {
   it('accepts an inconclusive browser record when the candidate ships no Workbench client', () => {
     const record = {
       ...validRecord,
-      proofRecordId: 'proof/packed-browser/windows/0.1.0-rc.10',
+      proofRecordId: `proof/packed-browser/windows/${SECURITY_ASSURANCE_PRODUCT_VERSION}`,
       proofKind: 'WORKBENCH',
       producer: 'PACKED_BROWSER_E2E',
       reportedStatus: 'INCONCLUSIVE',
@@ -75,7 +76,7 @@ describe('Release Proof Record v1', () => {
   it('rejects a passed Workbench record without an explicit shipped-client assertion', () => {
     expect(releaseProofRecordV1Schema.safeParse({
       ...validRecord,
-      proofRecordId: 'proof/packed-browser/windows/0.1.0-rc.10',
+      proofRecordId: `proof/packed-browser/windows/${SECURITY_ASSURANCE_PRODUCT_VERSION}`,
       proofKind: 'WORKBENCH',
       producer: 'PACKED_BROWSER_E2E',
       environment: { ...validRecord.environment, platform: 'WINDOWS' },

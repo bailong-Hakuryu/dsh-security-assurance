@@ -19,11 +19,35 @@ const ciWorkflow = readFileSync(
   new URL('../.github/workflows/ci.yml', import.meta.url),
   'utf8',
 )
+const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8')
+const changelog = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8')
+const releaseChecklist = readFileSync(
+  new URL('../docs/release-v0.1.md', import.meta.url),
+  'utf8',
+)
+const implementationSpecification = readFileSync(
+  new URL('../docs/implementation-specification.md', import.meta.url),
+  'utf8',
+)
 
 describe('v0.1 release candidate package', () => {
   it('binds runtime and package identity to the candidate version', () => {
-    expect(packageJson.version).toBe('0.1.0-rc.10')
+    expect(packageJson.version).toBe('0.1.0-rc.11')
     expect(SECURITY_ASSURANCE_PRODUCT_VERSION).toBe(packageJson.version)
+  })
+
+  it('keeps every current-candidate identity carrier aligned', () => {
+    const version = packageJson.version
+
+    expect(readme).toContain(`- Version: <code>${version}</code>`)
+    expect(changelog).toContain(`## [${version}] -`)
+    expect(releaseChecklist).toContain(`- Candidate version: \`${version}\``)
+    expect(implementationSpecification).toContain(
+      `| current candidate package version | \`${version}\` |`,
+    )
+    expect(implementationSpecification).toContain(
+      `The qualified candidate uses \`${version}\``,
+    )
   })
 
   it('is explicitly publishable under the reviewed license', () => {

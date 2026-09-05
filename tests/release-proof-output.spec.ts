@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
+import { SECURITY_ASSURANCE_PRODUCT_VERSION } from '../src/contracts.js'
 import { writeReleaseProofRecord } from '../src/release-proof-output.js'
 import { releaseProofRecordV1Schema } from '../src/release-proof.js'
 
@@ -20,10 +21,10 @@ describe('release proof output', () => {
       outputPath,
       candidateArtifactPath: artifactPath,
       candidateArtifactMediaType: 'application/gzip',
-      proofRecordId: 'proof/packed-profile/linux/0.1.0-rc.10',
+      proofRecordId: `proof/packed-profile/linux/${SECURITY_ASSURANCE_PRODUCT_VERSION}`,
       proofKind: 'LINUX_PLATFORM',
       producer: 'PACKED_HARNESS_PROFILE_SMOKE',
-      producerVersion: '0.1.0-rc.10',
+      producerVersion: SECURITY_ASSURANCE_PRODUCT_VERSION,
       completedAtEpochMs: 1_788_516_000_000,
       environment: {
         platform: 'LINUX',
@@ -61,7 +62,7 @@ describe('release proof output', () => {
       proofRecordId: 'proof/packed-profile/linux/existing',
       proofKind: 'LINUX_PLATFORM',
       producer: 'PACKED_HARNESS_PROFILE_SMOKE',
-      producerVersion: '0.1.0-rc.10',
+      producerVersion: SECURITY_ASSURANCE_PRODUCT_VERSION,
       completedAtEpochMs: 1_788_516_000_000,
       environment: {
         platform: 'LINUX',
@@ -91,7 +92,7 @@ describe('release proof output', () => {
       proofRecordId: 'proof/packed-profile/linux/drift',
       proofKind: 'LINUX_PLATFORM',
       producer: 'PACKED_HARNESS_PROFILE_SMOKE',
-      producerVersion: '0.1.0-rc.10',
+      producerVersion: SECURITY_ASSURANCE_PRODUCT_VERSION,
       completedAtEpochMs: 1_788_516_000_000,
       environment: {
         platform: 'LINUX',
