@@ -120,6 +120,15 @@ bytes and orders records by the Manifest proof taxonomy, so
 Release Evidence Manifest request. Missing records remain missing, and failed
 or inconclusive records keep their original status.
 
+For repeatable cross-platform collection, manually run the repository's
+**Release Candidate Evidence** workflow and provide the exact 40-character
+Control Plane commit SHA to pack. Its preparation job packs both plugins once and
+creates the binding. Linux, macOS, and Windows jobs download those same
+tarballs, emit one platform record each, and the final job installs
+`dsh-security-assurance-release-collect` from the packed candidate before
+producing the downloadable `release-evidence-index` artifact. The workflow
+does not run qualification, tag, create a GitHub Release, or publish to npm.
+
 Then reference the binding file from the qualification input and run:
 
 ```sh

@@ -1,0 +1,341 @@
+name: Release Candidate Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      control_plane_ref:
+        description: Full 40-character Engineering Control Plane commit SHA to pack
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-evidence-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  HARNESS_REF: dsh-v0.1.2-alpha.1
+  NODE_VERSION: 22.20.0
+  PNPM_VERSION: 11.7.0
+
+jobs:
+  prepare:
+    name: Pack and bind one candidate
+    runs-on: ubuntu-latest
+    outputs:
+      security_version: ${{ steps.versions.outputs.security_version }}
+      control_plane_version: ${{ steps.versions.outputs.control_plane_version }}
+    steps:
+      - name: Check out Security Assurance
+        uses: actions/checkout@v6
+        with:
+          path: plugin
+          persist-credentials: false
+
+      - name: Validate exact Control Plane revision
+        shell: bash
+        env:
+          CONTROL_PLANE_REF: ${{ inputs.control_plane_ref }}
+        run: |
+          if [[ ! "$CONTROL_PLANE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "control_plane_ref must be one full lowercase commit SHA" >&2
+            exit 1
+          fi
+
+      - name: Check out qualified Harness
+        uses: actions/checkout@v6
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ env.HARNESS_REF }}
+          path: deepseek-harness-latest
+          persist-credentials: false
+
+      - name: Check out exact Control Plane ref
+        uses: actions/checkout@v6
+        with:
+          repository: bailong-Hakuryu/dsh-engineering-control-plane
+          ref: ${{ inputs.control_plane_ref }}
+          path: DSH Engineering Control Plane
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            plugin/pnpm-lock.yaml
+            deepseek-harness-latest/pnpm-lock.yaml
+            DSH Engineering Control Plane/pnpm-lock.yaml
+
+      - name: Install Harness dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: deepseek-harness-latest
+
+      - name: Build Harness
+        run: pnpm build
+        working-directory: deepseek-harness-latest
+
+      - name: Install Control Plane dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: DSH Engineering Control Plane
+
+      - name: Build Control Plane
+        run: pnpm build
+        working-directory: DSH Engineering Control Plane
+
+      - name: Install Security Assurance dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: plugin
+
+      - name: Build Security Assurance
+        run: pnpm build
+        working-directory: plugin
+
+      - name: Resolve candidate versions
+        id: versions
+        shell: bash
+        run: |
+          echo "security_version=$(node -p \"require('./plugin/package.json').version\")" >> "$GITHUB_OUTPUT"
+          echo "control_plane_version=$(node -p \"require('./DSH Engineering Control Plane/package.json').version\")" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release artifact directory
+        run: mkdir release-artifacts
+
+      - name: Pack Security Assurance once
+        run: npm --cache .scratch/npm-cache pack --pack-destination ../release-artifacts
+        working-directory: plugin
+
+      - name: Pack Control Plane once
+        run: npm --cache .scratch/npm-cache pack --pack-destination ../release-artifacts
+        working-directory: DSH Engineering Control Plane
+
+      - name: Describe exact release files
+        shell: bash
+        env:
+          SECURITY_VERSION: ${{ steps.versions.outputs.security_version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs'
+
+          const input = {
+            schemaVersion: 1,
+            sourceRepositoryPath: '../plugin',
+            candidateArtifact: {
+              path: `./dsh-security-assurance-${process.env.SECURITY_VERSION}.tgz`,
+              mediaType: 'application/gzip',
+            },
+            dependencyLockFiles: [{
+              lockKind: 'PNPM_LOCK',
+              path: '../plugin/pnpm-lock.yaml',
+              mediaType: 'application/yaml',
+            }],
+          }
+          writeFileSync(
+            'release-artifacts/release-files.json',
+            `${JSON.stringify(input, null, 2)}\n`,
+            { encoding: 'utf8', flag: 'wx' },
+          )
+          NODE
+
+      - name: Bind candidate, source, and lock bytes
+        run: >-
+          pnpm release:bind --
+          --input ../release-artifacts/release-files.json
+          --output ../release-artifacts/release-file-bindings.json
+        working-directory: plugin
+
+      - name: Upload immutable candidate files
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-files
+          path: release-artifacts
+          if-no-files-found: error
+          retention-days: 30
+
+  prove:
+    name: Prove exact candidate (${{ matrix.proof_id }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            proof_id: linux
+            proof_file: linux-platform.json
+          - os: macos-latest
+            proof_id: macos
+            proof_file: macos-platform.json
+          - os: windows-latest
+            proof_id: windows
+            proof_file: windows-platform.json
+    steps:
+      - name: Check out Security Assurance runner
+        uses: actions/checkout@v6
+        with:
+          path: plugin
+          persist-credentials: false
+
+      - name: Check out qualified Harness
+        uses: actions/checkout@v6
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ env.HARNESS_REF }}
+          path: deepseek-harness-latest
+          persist-credentials: false
+
+      - name: Check out exact Control Plane ref
+        uses: actions/checkout@v6
+        with:
+          repository: bailong-Hakuryu/dsh-engineering-control-plane
+          ref: ${{ inputs.control_plane_ref }}
+          path: DSH Engineering Control Plane
+          persist-credentials: false
+
+      - name: Download the prepared candidate files
+        uses: actions/download-artifact@v5
+        with:
+          name: release-candidate-files
+          path: release-artifacts
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            plugin/pnpm-lock.yaml
+            deepseek-harness-latest/pnpm-lock.yaml
+            DSH Engineering Control Plane/pnpm-lock.yaml
+
+      - name: Install Harness dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: deepseek-harness-latest
+
+      - name: Build Harness
+        run: pnpm build
+        working-directory: deepseek-harness-latest
+
+      - name: Install Control Plane dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: DSH Engineering Control Plane
+
+      - name: Build Control Plane
+        run: pnpm build
+        working-directory: DSH Engineering Control Plane
+
+      - name: Install Security Assurance runner dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: plugin
+
+      - name: Run packed profile proof
+        run: pnpm pack:profile-smoke
+        working-directory: plugin
+        env:
+          DSH_SECURITY_PACKED_ARTIFACT: ${{ github.workspace }}/release-artifacts/dsh-security-assurance-${{ needs.prepare.outputs.security_version }}.tgz
+          DSH_CONTROL_PLANE_PACKED_ARTIFACT: ${{ github.workspace }}/release-artifacts/dsh-engineering-control-plane-${{ needs.prepare.outputs.control_plane_version }}.tgz
+          DSH_RELEASE_PROOF_OUTPUT: ${{ github.workspace }}/release-proof/${{ matrix.proof_file }}
+
+      - name: Upload platform proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-proof-${{ matrix.proof_id }}
+          path: release-proof/${{ matrix.proof_file }}
+          if-no-files-found: error
+          retention-days: 30
+
+  collect:
+    name: Collect exact candidate proofs
+    needs: prove
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Security Assurance
+        uses: actions/checkout@v6
+        with:
+          path: plugin
+          persist-credentials: false
+
+      - name: Download the prepared candidate files
+        uses: actions/download-artifact@v5
+        with:
+          name: release-candidate-files
+          path: release-artifacts
+
+      - name: Download all required platform proofs
+        uses: actions/download-artifact@v5
+        with:
+          pattern: platform-proof-*
+          path: proofs
+          merge-multiple: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Resolve candidate version
+        id: version
+        shell: bash
+        run: echo "security_version=$(node -p \"require('./plugin/package.json').version\")" >> "$GITHUB_OUTPUT"
+
+      - name: Install the packed collection CLI
+        env:
+          CANDIDATE_PATH: ./release-artifacts/dsh-security-assurance-${{ steps.version.outputs.security_version }}.tgz
+        run: >-
+          npm --cache ./plugin/.scratch/release-npm-cache install
+          --prefix ./release-tool
+          --ignore-scripts
+          --omit=peer
+          --no-audit
+          --no-fund
+          "$CANDIDATE_PATH"
+
+      - name: Describe the three required proofs
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs'
+
+          writeFileSync('release-proof-input.json', `${JSON.stringify({
+            schemaVersion: 1,
+            releaseFileBindingsPath: './release-artifacts/release-file-bindings.json',
+            proofFiles: [
+              './proofs/linux-platform.json',
+              './proofs/macos-platform.json',
+              './proofs/windows-platform.json',
+            ],
+          }, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' })
+          NODE
+
+      - name: Collect and validate platform proofs
+        run: >-
+          ./release-tool/node_modules/.bin/dsh-security-assurance-release-collect
+          --input ./release-proof-input.json
+          --output ./release-evidence/release-proof-index.json
+
+      - name: Upload release evidence index
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-index
+          path: |
+            release-artifacts/*.tgz
+            release-artifacts/release-files.json
+            release-artifacts/release-file-bindings.json
+            proofs/*.json
+            release-proof-input.json
+            release-evidence/release-proof-index.json
+          if-no-files-found: error
+          retention-days: 30

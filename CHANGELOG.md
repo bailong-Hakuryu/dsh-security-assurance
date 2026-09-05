@@ -4,6 +4,10 @@
 
 ## [0.1.0-rc.11] - 2026-09-05
 
+- Add a manual exact-artifact release-evidence workflow that packs and binds
+  one candidate, reuses its retained tarballs for Linux, macOS, and Windows
+  profile proofs, and collects the three records with the packaged CLI without
+  tagging or publishing.
 - Admit DeepSeek Harness `0.1.3-alpha.1` into the closed verified compatibility
   set after its dual-plugin semantic matrix passed outside the exact-version
   invariant; keep peer declarations and bilingual support documentation aligned.
