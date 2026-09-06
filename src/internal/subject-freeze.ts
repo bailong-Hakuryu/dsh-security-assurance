@@ -1085,3 +1085,149 @@ export async function readVerifiedExternalToolReportSlices(
   }
   return slices
 }
+
+/**
+ * Reverify one Subject Snapshot and expose only selected GitHub Actions
+ * workflow files to the package-owned Pure supply-chain Analyzer.
+ */
+export async function readVerifiedGitHubWorkflowSlices(
+  securityRoot: string,
+  subjectDigest: DigestEnvelopeV1,
+  signal?: AbortSignal,
+): Promise<readonly VerifiedSubjectTextSliceV1[]> {
+  canceled(signal)
+  if (
+    subjectDigest.algorithm !== 'sha256'
+    || subjectDigest.mediaType !== 'application/vnd.dsh.security.subject-manifest+json'
+    || !/^[0-9a-f]{64}$/u.test(subjectDigest.value)
+  ) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject identity is not a supported Manifest digest')
+  }
+  const publishedRoot = join(securityRoot, 'subjects', subjectDigest.value)
+  const manifest = await verifyPublishedSnapshot(publishedRoot, subjectDigest)
+  if (!Array.isArray(manifest.entries)) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject Manifest entries are invalid')
+  }
+  const target = assessmentTargetSelectorV1Schema.parse(manifest.target)
+  const workflowEntries = manifest.entries.map(recordValue).filter(entry => (
+    entry.kind === 'file'
+    && typeof entry.path === 'string'
+    && /^\.github\/workflows\/[^/]+\.ya?ml$/iu.test(entry.path)
+    && targetIncludesPath(target, entry.path)
+  ))
+  if (workflowEntries.length > MAX_ANALYZER_SOURCE_SLICES) {
+    throw new SubjectFreezeError('resource_limit', 'GitHub Actions workflow count exceeds the Analyzer input limit')
+  }
+  let totalBytes = 0
+  const slices: VerifiedSubjectTextSliceV1[] = []
+  for (const entry of workflowEntries) {
+    canceled(signal)
+    const path = entry.path as string
+    const digest = digestEnvelopeV1Schema.parse(entry.digest)
+    const captured = await stableFile(join(publishedRoot, 'content', ...path.split('/')))
+    if (captured.bytes.byteLength > MAX_ANALYZER_SLICE_BYTES) {
+      throw new SubjectFreezeError('resource_limit', 'GitHub Actions workflow exceeds the Analyzer slice limit')
+    }
+    totalBytes += captured.bytes.byteLength
+    if (totalBytes > MAX_ANALYZER_SOURCE_BYTES) {
+      throw new SubjectFreezeError('resource_limit', 'GitHub Actions workflows exceed the Analyzer input budget')
+    }
+    const observed = binaryDigest('application/octet-stream', captured.bytes)
+    if (canonicalJson(digest) !== canonicalJson(observed)) {
+      throw new SubjectFreezeError('integrity_failure', 'GitHub Actions workflow slice failed digest verification')
+    }
+    slices.push({ path, digest: observed, text: decodeUtf8(captured.bytes) })
+  }
+  return slices
+}
+
+/**
+ * Reverify one Subject Snapshot and expose only the root Node manifest and
+ * pnpm lockfile required by the package-owned lock integrity Analyzer.
+ */
+export async function readVerifiedPnpmLockfileSlices(
+  securityRoot: string,
+  subjectDigest: DigestEnvelopeV1,
+  signal?: AbortSignal,
+): Promise<readonly VerifiedSubjectTextSliceV1[]> {
+  canceled(signal)
+  if (
+    subjectDigest.algorithm !== 'sha256'
+    || subjectDigest.mediaType !== 'application/vnd.dsh.security.subject-manifest+json'
+    || !/^[0-9a-f]{64}$/u.test(subjectDigest.value)
+  ) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject identity is not a supported Manifest digest')
+  }
+  const publishedRoot = join(securityRoot, 'subjects', subjectDigest.value)
+  const manifest = await verifyPublishedSnapshot(publishedRoot, subjectDigest)
+  if (!Array.isArray(manifest.entries)) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject Manifest entries are invalid')
+  }
+  const accepted = new Set(['package.json', 'pnpm-lock.yaml'])
+  const lockEntries = manifest.entries.map(recordValue).filter(entry => (
+    entry.kind === 'file'
+    && typeof entry.path === 'string'
+    && accepted.has(entry.path)
+  ))
+  let totalBytes = 0
+  const slices: VerifiedSubjectTextSliceV1[] = []
+  for (const entry of lockEntries) {
+    canceled(signal)
+    const path = entry.path as string
+    const digest = digestEnvelopeV1Schema.parse(entry.digest)
+    const captured = await stableFile(join(publishedRoot, 'content', path))
+    if (captured.bytes.byteLength > MAX_ANALYZER_SLICE_BYTES) {
+      throw new SubjectFreezeError('resource_limit', 'pnpm lock integrity source exceeds the Analyzer slice limit')
+    }
+    totalBytes += captured.bytes.byteLength
+    if (totalBytes > MAX_ANALYZER_SOURCE_BYTES) {
+      throw new SubjectFreezeError('resource_limit', 'pnpm lock integrity sources exceed the Analyzer input budget')
+    }
+    const observed = binaryDigest('application/octet-stream', captured.bytes)
+    if (canonicalJson(digest) !== canonicalJson(observed)) {
+      throw new SubjectFreezeError('integrity_failure', 'pnpm lock integrity slice failed digest verification')
+    }
+    slices.push({ path, digest: observed, text: decodeUtf8(captured.bytes) })
+  }
+  return slices
+}
+
+/**
+ * Reverify one Subject Snapshot and expose only the root package manifest
+ * required by the package-owned npm publish surface Analyzer.
+ */
+export async function readVerifiedNpmPublishSurfaceSlices(
+  securityRoot: string,
+  subjectDigest: DigestEnvelopeV1,
+  signal?: AbortSignal,
+): Promise<readonly VerifiedSubjectTextSliceV1[]> {
+  canceled(signal)
+  if (
+    subjectDigest.algorithm !== 'sha256'
+    || subjectDigest.mediaType !== 'application/vnd.dsh.security.subject-manifest+json'
+    || !/^[0-9a-f]{64}$/u.test(subjectDigest.value)
+  ) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject identity is not a supported Manifest digest')
+  }
+  const publishedRoot = join(securityRoot, 'subjects', subjectDigest.value)
+  const manifest = await verifyPublishedSnapshot(publishedRoot, subjectDigest)
+  if (!Array.isArray(manifest.entries)) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject Manifest entries are invalid')
+  }
+  const packageEntry = manifest.entries.map(recordValue).find(entry => (
+    entry.kind === 'file' && entry.path === 'package.json'
+  ))
+  if (packageEntry === undefined) return []
+  canceled(signal)
+  const path = 'package.json'
+  const digest = digestEnvelopeV1Schema.parse(packageEntry.digest)
+  const captured = await stableFile(join(publishedRoot, 'content', path))
+  if (captured.bytes.byteLength > MAX_ANALYZER_SLICE_BYTES) {
+    throw new SubjectFreezeError('resource_limit', 'npm publish surface manifest exceeds the Analyzer slice limit')
+  }
+  const observed = binaryDigest('application/octet-stream', captured.bytes)
+  if (canonicalJson(digest) !== canonicalJson(observed)) {
+    throw new SubjectFreezeError('integrity_failure', 'npm publish surface manifest failed digest verification')
+  }
+  return [{ path, digest: observed, text: decodeUtf8(captured.bytes) }]
+}

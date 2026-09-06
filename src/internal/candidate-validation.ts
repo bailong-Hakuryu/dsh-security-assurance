@@ -47,6 +47,50 @@ import {
   npmAuditSeveritySchema,
   unescapeJsonPointerSegment,
 } from './npm-audit-analyzer.ts'
+import {
+  analyzeGitHubActionsWorkflows,
+  GITHUB_ACTIONS_ANALYZER_ID,
+  GITHUB_ACTIONS_ANALYZER_VERSION,
+  GITHUB_ACTIONS_COVERAGE_OBLIGATION_ID,
+  GITHUB_ACTIONS_DESCRIPTOR,
+  GITHUB_ACTIONS_EVIDENCE_MEDIA_TYPE,
+  GITHUB_ACTIONS_EVIDENCE_SCHEMA_ID,
+  GITHUB_ACTIONS_PERMISSION_CONTROL_ID,
+  GITHUB_ACTIONS_PERMISSION_WEAKNESS_ID,
+  GITHUB_ACTIONS_POLICY_ID,
+  GITHUB_ACTIONS_QUALIFICATION,
+  GITHUB_ACTIONS_REFERENCE_CONTROL_ID,
+  GITHUB_ACTIONS_REFERENCE_WEAKNESS_ID,
+  githubActionsSupplyChainEvidenceV1Schema,
+} from './github-actions-supply-chain-analyzer.ts'
+import {
+  analyzePnpmLockfileIntegrity,
+  PNPM_LOCKFILE_ANALYZER_ID,
+  PNPM_LOCKFILE_ANALYZER_VERSION,
+  PNPM_LOCKFILE_CONTROL_ID,
+  PNPM_LOCKFILE_COVERAGE_OBLIGATION_ID,
+  PNPM_LOCKFILE_DESCRIPTOR,
+  PNPM_LOCKFILE_EVIDENCE_MEDIA_TYPE,
+  PNPM_LOCKFILE_EVIDENCE_SCHEMA_ID,
+  PNPM_LOCKFILE_POLICY_ID,
+  PNPM_LOCKFILE_QUALIFICATION,
+  PNPM_LOCKFILE_WEAKNESS_ID,
+  pnpmLockfileIntegrityEvidenceV1Schema,
+} from './pnpm-lockfile-integrity-analyzer.ts'
+import {
+  analyzeNpmPublishSurface,
+  NPM_PUBLISH_SURFACE_ANALYZER_ID,
+  NPM_PUBLISH_SURFACE_ANALYZER_VERSION,
+  NPM_PUBLISH_SURFACE_CONTROL_ID,
+  NPM_PUBLISH_SURFACE_COVERAGE_OBLIGATION_ID,
+  NPM_PUBLISH_SURFACE_DESCRIPTOR,
+  NPM_PUBLISH_SURFACE_EVIDENCE_MEDIA_TYPE,
+  NPM_PUBLISH_SURFACE_EVIDENCE_SCHEMA_ID,
+  NPM_PUBLISH_SURFACE_POLICY_ID,
+  NPM_PUBLISH_SURFACE_QUALIFICATION,
+  NPM_PUBLISH_SURFACE_WEAKNESS_ID,
+  npmPublishSurfaceEvidenceV1Schema,
+} from './npm-publish-surface-analyzer.ts'
 import type { VerifiedSubjectTextSliceV1 } from './subject-freeze.ts'
 
 const VALIDATION_CONTRACT_ID = 'dsh/conformance/reference-control-validation-v1'
@@ -55,6 +99,46 @@ const CONTROL_ID = 'dsh/conformance/reference-control'
 const SECURITY_CLAIM = 'The conformance reference security control is explicitly violated.'
 const EVIDENCE_SCHEMA_ID = 'fixture/reference-validation-evidence'
 const JSON_POINTER = '/dshSecurity/referenceControl'
+
+const GITHUB_ACTIONS_VALIDATION_CONTRACT_ID
+  = 'dsh/security/github-actions-supply-chain-validation/v1'
+const GITHUB_ACTIONS_NEGATIVE_CONTROLS = [
+  'verified-subject-digest',
+  'exact-workflow-slice-digest',
+  'yaml-1.2-unique-key-parse',
+  'yaml-alias-expansion-disabled',
+  'candidate-identity-rederived',
+  'candidate-security-claim-match',
+  'candidate-evidence-binding',
+  'complete-contribution-rederived',
+] as const
+
+const PNPM_LOCKFILE_VALIDATION_CONTRACT_ID
+  = 'dsh/security/pnpm-lockfile-integrity-validation/v1'
+const PNPM_LOCKFILE_NEGATIVE_CONTROLS = [
+  'verified-subject-digest',
+  'exact-root-manifest-digest',
+  'exact-pnpm-lockfile-digest',
+  'unique-json-key-parse',
+  'yaml-1.2-unique-key-parse',
+  'yaml-alias-expansion-disabled',
+  'root-importer-specifiers-rederived',
+  'package-sri-presence-rederived',
+  'candidate-identity-rederived',
+  'complete-contribution-rederived',
+] as const
+
+const NPM_PUBLISH_SURFACE_VALIDATION_CONTRACT_ID
+  = 'dsh/security/npm-publish-surface-validation/v1'
+const NPM_PUBLISH_SURFACE_NEGATIVE_CONTROLS = [
+  'verified-subject-digest',
+  'exact-root-manifest-digest',
+  'unique-json-key-parse',
+  'manifest-entry-point-rederived',
+  'files-allowlist-containment-rederived',
+  'candidate-identity-rederived',
+  'complete-contribution-rederived',
+] as const
 
 const sourceAnchorSchema = z.strictObject({
   path: z.literal('package.json'),
@@ -1057,6 +1141,746 @@ function validateGitleaksCandidate(
   }
 }
 
+function githubActionsWorkflowSlices(
+  slices: readonly VerifiedSubjectTextSliceV1[],
+): readonly VerifiedSubjectTextSliceV1[] {
+  return slices.filter(slice => /^\.github\/workflows\/[^/]+\.ya?ml$/iu.test(slice.path))
+}
+
+function githubActionsContributionMatchesFrozenSubject(
+  input: CandidateValidationInputV1,
+): boolean {
+  const expected = analyzeGitHubActionsWorkflows({
+    subjectDigest: input.contribution.subjectDigest,
+    slices: githubActionsWorkflowSlices(input.subjectSlices),
+  })
+  return canonicalJson(expected) === canonicalJson(input.contribution)
+}
+
+/** Re-run the package-owned parser before workflow Coverage can bear a Verdict. */
+export function githubActionsCoverageIsIndependentlyVerified(
+  input: CandidateValidationInputV1,
+): boolean {
+  const { descriptor, qualification, eligibility } = input.portfolioEntry
+  if (
+    input.policyId !== GITHUB_ACTIONS_POLICY_ID
+    || canonicalJson(descriptor) !== canonicalJson(GITHUB_ACTIONS_DESCRIPTOR)
+    || qualification === null
+    || qualification.qualificationId !== GITHUB_ACTIONS_QUALIFICATION.qualificationId
+    || canonicalJson(qualification.qualificationDigest)
+      !== canonicalJson(GITHUB_ACTIONS_QUALIFICATION.qualificationDigest)
+    || eligibility.decision !== 'ELIGIBLE'
+    || input.contribution.completionDisposition !== 'COMPLETE'
+    || input.contribution.coverageClaims.length !== 1
+    || input.contribution.coverageClaims[0]?.obligationId
+      !== GITHUB_ACTIONS_COVERAGE_OBLIGATION_ID
+  ) return false
+  try {
+    return githubActionsContributionMatchesFrozenSubject(input)
+  } catch {
+    return false
+  }
+}
+
+function validateGitHubActionsCandidate(
+  input: CandidateValidationInputV1,
+  candidate: AnalyzerCandidateFindingV1,
+): {
+  readonly finding?: NonNullable<SecuritySubmissionJsonV1>
+  readonly evidence: readonly EvidencePublicationInputV1[]
+  readonly unresolved: boolean
+} {
+  const prefix = candidatePrefix(candidate.candidateId)
+  const admissionArtifactId = `candidate-admission-${prefix}`
+  const resolutionArtifactId = `validation-contract-${prefix}`
+  const eligibilityArtifactId = `validation-eligibility-${prefix}`
+  const outcomeArtifactId = `validation-outcome-${prefix}`
+  const workflowSlices = githubActionsWorkflowSlices(input.subjectSlices)
+  let expectedContribution: AnalyzerContributionV1 | undefined
+  try {
+    expectedContribution = analyzeGitHubActionsWorkflows({
+      subjectDigest: input.contribution.subjectDigest,
+      slices: workflowSlices,
+    })
+  } catch {
+    expectedContribution = undefined
+  }
+  const expectedCandidate = expectedContribution?.candidateFindings.find(item => (
+    item.candidateId === candidate.candidateId
+  ))
+  const expectedEvidence = expectedContribution?.evidence.find(item => (
+    item.schemaId === GITHUB_ACTIONS_EVIDENCE_SCHEMA_ID
+    && item.mediaType === GITHUB_ACTIONS_EVIDENCE_MEDIA_TYPE
+  ))
+  const parsedEvidence = githubActionsSupplyChainEvidenceV1Schema.safeParse(expectedEvidence?.value)
+  const evidenceEntry = parsedEvidence.success
+    ? parsedEvidence.data.entries.find(item => item.candidateId === candidate.candidateId)
+    : undefined
+  const sourceSlice = workflowSlices.find(slice => (
+    slice.path === candidate.sourceAnchor.path
+    && canonicalJson(slice.digest) === canonicalJson(candidate.sourceAnchor.fileDigest)
+  ))
+  const knownWeakness = candidate.weaknessClassification.secondary.length === 1 && (
+    (candidate.weaknessClassification.primary === GITHUB_ACTIONS_PERMISSION_WEAKNESS_ID
+      && candidate.weaknessClassification.secondary[0] === 'cwe/250'
+      && candidate.affectedControlId === GITHUB_ACTIONS_PERMISSION_CONTROL_ID)
+    || (candidate.weaknessClassification.primary === GITHUB_ACTIONS_REFERENCE_WEAKNESS_ID
+      && candidate.weaknessClassification.secondary[0] === 'cwe/829'
+      && candidate.affectedControlId === GITHUB_ACTIONS_REFERENCE_CONTROL_ID)
+  )
+  const contractResolved = input.policyId === GITHUB_ACTIONS_POLICY_ID
+    && input.contribution.analyzerIdentity.analyzerId === GITHUB_ACTIONS_ANALYZER_ID
+    && input.contribution.analyzerIdentity.analyzerVersion === GITHUB_ACTIONS_ANALYZER_VERSION
+    && canonicalJson(input.portfolioEntry.descriptor) === canonicalJson(GITHUB_ACTIONS_DESCRIPTOR)
+    && input.portfolioEntry.qualification !== null
+    && canonicalJson(input.portfolioEntry.qualification.qualificationDigest)
+      === canonicalJson(GITHUB_ACTIONS_QUALIFICATION.qualificationDigest)
+    && knownWeakness
+  const contributionMatches = expectedContribution !== undefined
+    && canonicalJson(expectedContribution) === canonicalJson(input.contribution)
+  const evidenceEligible = input.portfolioEntry.eligibility.decision === 'ELIGIBLE'
+    && contractResolved
+    && contributionMatches
+    && expectedCandidate !== undefined
+    && canonicalJson(expectedCandidate) === canonicalJson(candidate)
+    && evidenceEntry !== undefined
+    && sourceSlice !== undefined
+    && canonicalJson(evidenceEntry.sourceAnchor) === canonicalJson(candidate.sourceAnchor)
+  const safeCandidate = expectedCandidate === undefined
+    ? null
+    : {
+        weaknessClassification: expectedCandidate.weaknessClassification,
+        affectedControlId: expectedCandidate.affectedControlId,
+        securityClaim: expectedCandidate.securityClaim,
+        sourceAnchor: expectedCandidate.sourceAnchor,
+        evidenceArtifactIds: expectedCandidate.evidenceArtifactIds,
+      }
+  const unresolvedReason = input.portfolioEntry.eligibility.reason
+    ?? (!contractResolved
+      ? 'VALIDATION_CONTRACT_UNAVAILABLE'
+      : sourceSlice === undefined
+        ? 'SOURCE_ANCHOR_UNBOUND'
+        : !contributionMatches || expectedCandidate === undefined || evidenceEntry === undefined
+          ? 'VALIDATION_EVIDENCE_CONTRADICTS_SUBJECT'
+          : 'VALIDATION_EVIDENCE_INELIGIBLE')
+  const commonEvidence: EvidencePublicationInputV1[] = [{
+    artifactId: admissionArtifactId,
+    schemaId: 'dsh/security-candidate-admission',
+    mediaType: 'application/vnd.dsh.security.candidate-admission+json',
+    value: json({
+      schemaVersion: 1,
+      state: 'ADMITTED',
+      candidateId: candidate.candidateId,
+      producer: {
+        analyzerId: GITHUB_ACTIONS_ANALYZER_ID,
+        analyzerVersion: GITHUB_ACTIONS_ANALYZER_VERSION,
+        descriptorSchemaVersion: GITHUB_ACTIONS_DESCRIPTOR.descriptorSchemaVersion,
+        buildDigest: GITHUB_ACTIONS_DESCRIPTOR.buildDigest,
+      },
+      subjectDigest: input.contribution.subjectDigest,
+      ...(safeCandidate === null
+        ? { projectionState: 'REJECTED_UNVERIFIED' }
+        : safeCandidate),
+    }),
+  }, {
+    artifactId: resolutionArtifactId,
+    schemaId: 'dsh/security-validation-contract-resolution',
+    mediaType: 'application/vnd.dsh.security.validation-contract-resolution+json',
+    value: json({
+      schemaVersion: 1,
+      candidateId: candidate.candidateId,
+      state: contractResolved ? 'RESOLVED' : 'UNRESOLVED',
+      contractId: contractResolved ? GITHUB_ACTIONS_VALIDATION_CONTRACT_ID : null,
+      contractVersion: contractResolved ? 1 : null,
+      policyDigest: input.policyDigest,
+      alternativesConsidered: [GITHUB_ACTIONS_VALIDATION_CONTRACT_ID],
+    }),
+  }, {
+    artifactId: eligibilityArtifactId,
+    schemaId: 'dsh/security-validation-evidence-eligibility-decision',
+    mediaType: 'application/vnd.dsh.security.validation-evidence-eligibility-decision+json',
+    value: json({
+      schemaVersion: 1,
+      decision: evidenceEligible ? 'ELIGIBLE' : 'INELIGIBLE',
+      reason: evidenceEligible ? null : unresolvedReason,
+      purpose: 'VALIDATION_EVIDENCE',
+      candidateId: candidate.candidateId,
+      securityClaim: expectedCandidate?.securityClaim
+        ?? 'The contributed workflow candidate could not be independently re-derived.',
+      contractId: contractResolved ? GITHUB_ACTIONS_VALIDATION_CONTRACT_ID : null,
+      subjectDigest: input.contribution.subjectDigest,
+      evidenceArtifactIds: evidenceEligible ? expectedCandidate?.evidenceArtifactIds ?? [] : [],
+      producerEligibility: input.portfolioEntry.eligibility,
+      negativeControls: [...GITHUB_ACTIONS_NEGATIVE_CONTROLS],
+    }),
+  }]
+  if (!evidenceEligible || evidenceEntry === undefined) {
+    return {
+      unresolved: true,
+      evidence: [...commonEvidence, {
+        artifactId: outcomeArtifactId,
+        schemaId: 'dsh/security-validation-outcome',
+        mediaType: 'application/vnd.dsh.security.validation-outcome+json',
+        value: json({
+          schemaVersion: 1,
+          candidateId: candidate.candidateId,
+          state: 'UNRESOLVED',
+          contractId: contractResolved ? GITHUB_ACTIONS_VALIDATION_CONTRACT_ID : null,
+          evidenceEligibilityArtifactId: eligibilityArtifactId,
+          proofGaps: [unresolvedReason],
+        }),
+      }],
+    }
+  }
+  const validationOutcome = {
+    schemaVersion: 1,
+    candidateId: candidate.candidateId,
+    state: 'VALIDATED',
+    contractId: GITHUB_ACTIONS_VALIDATION_CONTRACT_ID,
+    contractVersion: 1,
+    evidenceEligibilityArtifactId: eligibilityArtifactId,
+    evidenceArtifactIds: candidate.evidenceArtifactIds,
+    proofGaps: [],
+    negativeControls: [...GITHUB_ACTIONS_NEGATIVE_CONTROLS],
+  }
+  return {
+    unresolved: false,
+    finding: json({
+      schemaVersion: 1,
+      findingId: `finding-${sha256Hex(canonicalJson({
+        candidateId: candidate.candidateId,
+        contractId: GITHUB_ACTIONS_VALIDATION_CONTRACT_ID,
+        subjectDigest: input.contribution.subjectDigest,
+      }))}`,
+      candidateId: candidate.candidateId,
+      weaknessClassification: candidate.weaknessClassification,
+      affectedControlId: candidate.affectedControlId,
+      sourceAnchor: candidate.sourceAnchor,
+      securityClaim: candidate.securityClaim,
+      validation: validationOutcome,
+      technicalSeverity: {
+        value: evidenceEntry.severity,
+        methodVersion: 'dsh/github-actions/supply-chain-severity-v1',
+        vector: {
+          ruleId: evidenceEntry.ruleId,
+          affectedScope: 'CI_WORKFLOW',
+        },
+      },
+      evidenceConfidence: {
+        value: 'HIGH',
+        methodVersion: 'dsh/github-actions/deterministic-source-confidence-v1',
+        rubric: {
+          producerQualification: 'PASS',
+          subjectBinding: 'PASS',
+          reproducibility: 'PASS',
+          negativeControls: 'PASS',
+          proofGaps: 0,
+        },
+      },
+      policySignificance: 'BLOCKING',
+      policySignificanceTrace: {
+        ruleId: 'github-actions-supply-chain-violation-blocks-v1',
+        policyDigest: input.policyDigest,
+        matched: true,
+      },
+    }),
+    evidence: [...commonEvidence, {
+      artifactId: outcomeArtifactId,
+      schemaId: 'dsh/security-validation-outcome',
+      mediaType: 'application/vnd.dsh.security.validation-outcome+json',
+      value: json(validationOutcome),
+    }],
+  }
+}
+
+function pnpmLockfileSlices(
+  slices: readonly VerifiedSubjectTextSliceV1[],
+): readonly VerifiedSubjectTextSliceV1[] {
+  return slices.filter(slice => slice.path === 'package.json' || slice.path === 'pnpm-lock.yaml')
+}
+
+function pnpmLockfileContributionMatchesFrozenSubject(
+  input: CandidateValidationInputV1,
+): boolean {
+  const expected = analyzePnpmLockfileIntegrity({
+    subjectDigest: input.contribution.subjectDigest,
+    slices: pnpmLockfileSlices(input.subjectSlices),
+  })
+  return canonicalJson(expected) === canonicalJson(input.contribution)
+}
+
+/** Re-run the package-owned parser before lockfile Coverage can bear a Verdict. */
+export function pnpmLockfileCoverageIsIndependentlyVerified(
+  input: CandidateValidationInputV1,
+): boolean {
+  const { descriptor, qualification, eligibility } = input.portfolioEntry
+  if (
+    input.policyId !== PNPM_LOCKFILE_POLICY_ID
+    || canonicalJson(descriptor) !== canonicalJson(PNPM_LOCKFILE_DESCRIPTOR)
+    || qualification === null
+    || qualification.qualificationId !== PNPM_LOCKFILE_QUALIFICATION.qualificationId
+    || canonicalJson(qualification.qualificationDigest)
+      !== canonicalJson(PNPM_LOCKFILE_QUALIFICATION.qualificationDigest)
+    || eligibility.decision !== 'ELIGIBLE'
+    || input.contribution.completionDisposition !== 'COMPLETE'
+    || input.contribution.coverageClaims.length !== 1
+    || input.contribution.coverageClaims[0]?.obligationId
+      !== PNPM_LOCKFILE_COVERAGE_OBLIGATION_ID
+  ) return false
+  try {
+    return pnpmLockfileContributionMatchesFrozenSubject(input)
+  } catch {
+    return false
+  }
+}
+
+function validatePnpmLockfileCandidate(
+  input: CandidateValidationInputV1,
+  candidate: AnalyzerCandidateFindingV1,
+): {
+  readonly finding?: NonNullable<SecuritySubmissionJsonV1>
+  readonly evidence: readonly EvidencePublicationInputV1[]
+  readonly unresolved: boolean
+} {
+  const prefix = candidatePrefix(candidate.candidateId)
+  const admissionArtifactId = `candidate-admission-${prefix}`
+  const resolutionArtifactId = `validation-contract-${prefix}`
+  const eligibilityArtifactId = `validation-eligibility-${prefix}`
+  const outcomeArtifactId = `validation-outcome-${prefix}`
+  const sourceSlices = pnpmLockfileSlices(input.subjectSlices)
+  let expectedContribution: AnalyzerContributionV1 | undefined
+  try {
+    expectedContribution = analyzePnpmLockfileIntegrity({
+      subjectDigest: input.contribution.subjectDigest,
+      slices: sourceSlices,
+    })
+  } catch {
+    expectedContribution = undefined
+  }
+  const expectedCandidate = expectedContribution?.candidateFindings.find(item => (
+    item.candidateId === candidate.candidateId
+  ))
+  const expectedEvidence = expectedContribution?.evidence.find(item => (
+    item.schemaId === PNPM_LOCKFILE_EVIDENCE_SCHEMA_ID
+    && item.mediaType === PNPM_LOCKFILE_EVIDENCE_MEDIA_TYPE
+  ))
+  const parsedEvidence = pnpmLockfileIntegrityEvidenceV1Schema.safeParse(expectedEvidence?.value)
+  const evidenceEntry = parsedEvidence.success
+    ? parsedEvidence.data.entries.find(item => item.candidateId === candidate.candidateId)
+    : undefined
+  const sourceSlice = sourceSlices.find(slice => (
+    slice.path === candidate.sourceAnchor.path
+    && canonicalJson(slice.digest) === canonicalJson(candidate.sourceAnchor.fileDigest)
+  ))
+  const knownWeakness = candidate.weaknessClassification.primary === PNPM_LOCKFILE_WEAKNESS_ID
+    && candidate.weaknessClassification.secondary.length === 1
+    && candidate.weaknessClassification.secondary[0] === 'cwe/353'
+    && candidate.affectedControlId === PNPM_LOCKFILE_CONTROL_ID
+  const contractResolved = input.policyId === PNPM_LOCKFILE_POLICY_ID
+    && input.contribution.analyzerIdentity.analyzerId === PNPM_LOCKFILE_ANALYZER_ID
+    && input.contribution.analyzerIdentity.analyzerVersion === PNPM_LOCKFILE_ANALYZER_VERSION
+    && canonicalJson(input.portfolioEntry.descriptor) === canonicalJson(PNPM_LOCKFILE_DESCRIPTOR)
+    && input.portfolioEntry.qualification !== null
+    && canonicalJson(input.portfolioEntry.qualification.qualificationDigest)
+      === canonicalJson(PNPM_LOCKFILE_QUALIFICATION.qualificationDigest)
+    && knownWeakness
+  const contributionMatches = expectedContribution !== undefined
+    && canonicalJson(expectedContribution) === canonicalJson(input.contribution)
+  const evidenceEligible = input.portfolioEntry.eligibility.decision === 'ELIGIBLE'
+    && contractResolved
+    && contributionMatches
+    && expectedCandidate !== undefined
+    && canonicalJson(expectedCandidate) === canonicalJson(candidate)
+    && evidenceEntry !== undefined
+    && sourceSlice !== undefined
+    && canonicalJson(evidenceEntry.sourceAnchor) === canonicalJson(candidate.sourceAnchor)
+  const safeCandidate = expectedCandidate === undefined
+    ? null
+    : {
+        weaknessClassification: expectedCandidate.weaknessClassification,
+        affectedControlId: expectedCandidate.affectedControlId,
+        securityClaim: expectedCandidate.securityClaim,
+        sourceAnchor: expectedCandidate.sourceAnchor,
+        evidenceArtifactIds: expectedCandidate.evidenceArtifactIds,
+      }
+  const unresolvedReason = input.portfolioEntry.eligibility.reason
+    ?? (!contractResolved
+      ? 'VALIDATION_CONTRACT_UNAVAILABLE'
+      : sourceSlice === undefined
+        ? 'SOURCE_ANCHOR_UNBOUND'
+        : !contributionMatches || expectedCandidate === undefined || evidenceEntry === undefined
+          ? 'VALIDATION_EVIDENCE_CONTRADICTS_SUBJECT'
+          : 'VALIDATION_EVIDENCE_INELIGIBLE')
+  const commonEvidence: EvidencePublicationInputV1[] = [{
+    artifactId: admissionArtifactId,
+    schemaId: 'dsh/security-candidate-admission',
+    mediaType: 'application/vnd.dsh.security.candidate-admission+json',
+    value: json({
+      schemaVersion: 1,
+      state: 'ADMITTED',
+      candidateId: candidate.candidateId,
+      producer: {
+        analyzerId: PNPM_LOCKFILE_ANALYZER_ID,
+        analyzerVersion: PNPM_LOCKFILE_ANALYZER_VERSION,
+        descriptorSchemaVersion: PNPM_LOCKFILE_DESCRIPTOR.descriptorSchemaVersion,
+        buildDigest: PNPM_LOCKFILE_DESCRIPTOR.buildDigest,
+      },
+      subjectDigest: input.contribution.subjectDigest,
+      ...(safeCandidate === null
+        ? { projectionState: 'REJECTED_UNVERIFIED' }
+        : safeCandidate),
+    }),
+  }, {
+    artifactId: resolutionArtifactId,
+    schemaId: 'dsh/security-validation-contract-resolution',
+    mediaType: 'application/vnd.dsh.security.validation-contract-resolution+json',
+    value: json({
+      schemaVersion: 1,
+      candidateId: candidate.candidateId,
+      state: contractResolved ? 'RESOLVED' : 'UNRESOLVED',
+      contractId: contractResolved ? PNPM_LOCKFILE_VALIDATION_CONTRACT_ID : null,
+      contractVersion: contractResolved ? 1 : null,
+      policyDigest: input.policyDigest,
+      alternativesConsidered: [PNPM_LOCKFILE_VALIDATION_CONTRACT_ID],
+    }),
+  }, {
+    artifactId: eligibilityArtifactId,
+    schemaId: 'dsh/security-validation-evidence-eligibility-decision',
+    mediaType: 'application/vnd.dsh.security.validation-evidence-eligibility-decision+json',
+    value: json({
+      schemaVersion: 1,
+      decision: evidenceEligible ? 'ELIGIBLE' : 'INELIGIBLE',
+      reason: evidenceEligible ? null : unresolvedReason,
+      purpose: 'VALIDATION_EVIDENCE',
+      candidateId: candidate.candidateId,
+      securityClaim: expectedCandidate?.securityClaim
+        ?? 'The contributed pnpm lockfile candidate could not be independently re-derived.',
+      contractId: contractResolved ? PNPM_LOCKFILE_VALIDATION_CONTRACT_ID : null,
+      subjectDigest: input.contribution.subjectDigest,
+      evidenceArtifactIds: evidenceEligible ? expectedCandidate?.evidenceArtifactIds ?? [] : [],
+      producerEligibility: input.portfolioEntry.eligibility,
+      negativeControls: [...PNPM_LOCKFILE_NEGATIVE_CONTROLS],
+    }),
+  }]
+  if (!evidenceEligible || evidenceEntry === undefined) {
+    return {
+      unresolved: true,
+      evidence: [...commonEvidence, {
+        artifactId: outcomeArtifactId,
+        schemaId: 'dsh/security-validation-outcome',
+        mediaType: 'application/vnd.dsh.security.validation-outcome+json',
+        value: json({
+          schemaVersion: 1,
+          candidateId: candidate.candidateId,
+          state: 'UNRESOLVED',
+          contractId: contractResolved ? PNPM_LOCKFILE_VALIDATION_CONTRACT_ID : null,
+          evidenceEligibilityArtifactId: eligibilityArtifactId,
+          proofGaps: [unresolvedReason],
+        }),
+      }],
+    }
+  }
+  const validationOutcome = {
+    schemaVersion: 1,
+    candidateId: candidate.candidateId,
+    state: 'VALIDATED',
+    contractId: PNPM_LOCKFILE_VALIDATION_CONTRACT_ID,
+    contractVersion: 1,
+    evidenceEligibilityArtifactId: eligibilityArtifactId,
+    evidenceArtifactIds: candidate.evidenceArtifactIds,
+    proofGaps: [],
+    negativeControls: [...PNPM_LOCKFILE_NEGATIVE_CONTROLS],
+  }
+  return {
+    unresolved: false,
+    finding: json({
+      schemaVersion: 1,
+      findingId: `finding-${sha256Hex(canonicalJson({
+        candidateId: candidate.candidateId,
+        contractId: PNPM_LOCKFILE_VALIDATION_CONTRACT_ID,
+        subjectDigest: input.contribution.subjectDigest,
+      }))}`,
+      candidateId: candidate.candidateId,
+      weaknessClassification: candidate.weaknessClassification,
+      affectedControlId: candidate.affectedControlId,
+      sourceAnchor: candidate.sourceAnchor,
+      securityClaim: candidate.securityClaim,
+      validation: validationOutcome,
+      technicalSeverity: {
+        value: evidenceEntry.severity,
+        methodVersion: 'dsh/pnpm/lockfile-integrity-severity-v1',
+        vector: {
+          ruleId: evidenceEntry.ruleId,
+          affectedScope: 'DEPENDENCY_RESOLUTION',
+        },
+      },
+      evidenceConfidence: {
+        value: 'HIGH',
+        methodVersion: 'dsh/pnpm/deterministic-lockfile-confidence-v1',
+        rubric: {
+          producerQualification: 'PASS',
+          subjectBinding: 'PASS',
+          reproducibility: 'PASS',
+          negativeControls: 'PASS',
+          proofGaps: 0,
+        },
+      },
+      policySignificance: 'BLOCKING',
+      policySignificanceTrace: {
+        ruleId: 'pnpm-lockfile-integrity-violation-blocks-v1',
+        policyDigest: input.policyDigest,
+        matched: true,
+      },
+    }),
+    evidence: [...commonEvidence, {
+      artifactId: outcomeArtifactId,
+      schemaId: 'dsh/security-validation-outcome',
+      mediaType: 'application/vnd.dsh.security.validation-outcome+json',
+      value: json(validationOutcome),
+    }],
+  }
+}
+
+function npmPublishSurfaceSlices(
+  slices: readonly VerifiedSubjectTextSliceV1[],
+): readonly VerifiedSubjectTextSliceV1[] {
+  return slices.filter(slice => slice.path === 'package.json')
+}
+
+/** Re-run the package-owned publish-surface parser before Coverage can bear a Verdict. */
+export function npmPublishSurfaceCoverageIsIndependentlyVerified(
+  input: CandidateValidationInputV1,
+): boolean {
+  const { descriptor, qualification, eligibility } = input.portfolioEntry
+  if (
+    input.policyId !== NPM_PUBLISH_SURFACE_POLICY_ID
+    || canonicalJson(descriptor) !== canonicalJson(NPM_PUBLISH_SURFACE_DESCRIPTOR)
+    || qualification === null
+    || qualification.qualificationId !== NPM_PUBLISH_SURFACE_QUALIFICATION.qualificationId
+    || canonicalJson(qualification.qualificationDigest)
+      !== canonicalJson(NPM_PUBLISH_SURFACE_QUALIFICATION.qualificationDigest)
+    || eligibility.decision !== 'ELIGIBLE'
+    || input.contribution.completionDisposition !== 'COMPLETE'
+    || input.contribution.coverageClaims.length !== 1
+    || input.contribution.coverageClaims[0]?.obligationId
+      !== NPM_PUBLISH_SURFACE_COVERAGE_OBLIGATION_ID
+  ) return false
+  try {
+    const expected = analyzeNpmPublishSurface({
+      subjectDigest: input.contribution.subjectDigest,
+      slices: npmPublishSurfaceSlices(input.subjectSlices),
+    })
+    return canonicalJson(expected) === canonicalJson(input.contribution)
+  } catch {
+    return false
+  }
+}
+
+function validateNpmPublishSurfaceCandidate(
+  input: CandidateValidationInputV1,
+  candidate: AnalyzerCandidateFindingV1,
+): {
+  readonly finding?: NonNullable<SecuritySubmissionJsonV1>
+  readonly evidence: readonly EvidencePublicationInputV1[]
+  readonly unresolved: boolean
+} {
+  const prefix = candidatePrefix(candidate.candidateId)
+  const admissionArtifactId = `candidate-admission-${prefix}`
+  const resolutionArtifactId = `validation-contract-${prefix}`
+  const eligibilityArtifactId = `validation-eligibility-${prefix}`
+  const outcomeArtifactId = `validation-outcome-${prefix}`
+  const sourceSlices = npmPublishSurfaceSlices(input.subjectSlices)
+  let expectedContribution: AnalyzerContributionV1 | undefined
+  try {
+    expectedContribution = analyzeNpmPublishSurface({
+      subjectDigest: input.contribution.subjectDigest,
+      slices: sourceSlices,
+    })
+  } catch {
+    expectedContribution = undefined
+  }
+  const expectedCandidate = expectedContribution?.candidateFindings.find(item => (
+    item.candidateId === candidate.candidateId
+  ))
+  const expectedEvidence = expectedContribution?.evidence.find(item => (
+    item.schemaId === NPM_PUBLISH_SURFACE_EVIDENCE_SCHEMA_ID
+    && item.mediaType === NPM_PUBLISH_SURFACE_EVIDENCE_MEDIA_TYPE
+  ))
+  const parsedEvidence = npmPublishSurfaceEvidenceV1Schema.safeParse(expectedEvidence?.value)
+  const evidenceEntry = parsedEvidence.success
+    ? parsedEvidence.data.entries.find(item => item.candidateId === candidate.candidateId)
+    : undefined
+  const sourceSlice = sourceSlices.find(slice => (
+    slice.path === candidate.sourceAnchor.path
+    && canonicalJson(slice.digest) === canonicalJson(candidate.sourceAnchor.fileDigest)
+  ))
+  const knownWeakness = candidate.weaknessClassification.primary === NPM_PUBLISH_SURFACE_WEAKNESS_ID
+    && candidate.weaknessClassification.secondary.length === 1
+    && candidate.weaknessClassification.secondary[0] === 'cwe/16'
+    && candidate.affectedControlId === NPM_PUBLISH_SURFACE_CONTROL_ID
+  const contractResolved = input.policyId === NPM_PUBLISH_SURFACE_POLICY_ID
+    && input.contribution.analyzerIdentity.analyzerId === NPM_PUBLISH_SURFACE_ANALYZER_ID
+    && input.contribution.analyzerIdentity.analyzerVersion === NPM_PUBLISH_SURFACE_ANALYZER_VERSION
+    && canonicalJson(input.portfolioEntry.descriptor) === canonicalJson(NPM_PUBLISH_SURFACE_DESCRIPTOR)
+    && input.portfolioEntry.qualification !== null
+    && canonicalJson(input.portfolioEntry.qualification.qualificationDigest)
+      === canonicalJson(NPM_PUBLISH_SURFACE_QUALIFICATION.qualificationDigest)
+    && knownWeakness
+  const contributionMatches = expectedContribution !== undefined
+    && canonicalJson(expectedContribution) === canonicalJson(input.contribution)
+  const evidenceEligible = input.portfolioEntry.eligibility.decision === 'ELIGIBLE'
+    && contractResolved
+    && contributionMatches
+    && expectedCandidate !== undefined
+    && canonicalJson(expectedCandidate) === canonicalJson(candidate)
+    && evidenceEntry !== undefined
+    && sourceSlice !== undefined
+    && canonicalJson(evidenceEntry.sourceAnchor) === canonicalJson(candidate.sourceAnchor)
+  const safeCandidate = expectedCandidate === undefined
+    ? null
+    : {
+        weaknessClassification: expectedCandidate.weaknessClassification,
+        affectedControlId: expectedCandidate.affectedControlId,
+        securityClaim: expectedCandidate.securityClaim,
+        sourceAnchor: expectedCandidate.sourceAnchor,
+        evidenceArtifactIds: expectedCandidate.evidenceArtifactIds,
+      }
+  const unresolvedReason = input.portfolioEntry.eligibility.reason
+    ?? (!contractResolved
+      ? 'VALIDATION_CONTRACT_UNAVAILABLE'
+      : sourceSlice === undefined
+        ? 'SOURCE_ANCHOR_UNBOUND'
+        : !contributionMatches || expectedCandidate === undefined || evidenceEntry === undefined
+          ? 'VALIDATION_EVIDENCE_CONTRADICTS_SUBJECT'
+          : 'VALIDATION_EVIDENCE_INELIGIBLE')
+  const commonEvidence: EvidencePublicationInputV1[] = [{
+    artifactId: admissionArtifactId,
+    schemaId: 'dsh/security-candidate-admission',
+    mediaType: 'application/vnd.dsh.security.candidate-admission+json',
+    value: json({
+      schemaVersion: 1,
+      state: 'ADMITTED',
+      candidateId: candidate.candidateId,
+      producer: {
+        analyzerId: NPM_PUBLISH_SURFACE_ANALYZER_ID,
+        analyzerVersion: NPM_PUBLISH_SURFACE_ANALYZER_VERSION,
+        descriptorSchemaVersion: NPM_PUBLISH_SURFACE_DESCRIPTOR.descriptorSchemaVersion,
+        buildDigest: NPM_PUBLISH_SURFACE_DESCRIPTOR.buildDigest,
+      },
+      subjectDigest: input.contribution.subjectDigest,
+      ...(safeCandidate === null ? { projectionState: 'REJECTED_UNVERIFIED' } : safeCandidate),
+    }),
+  }, {
+    artifactId: resolutionArtifactId,
+    schemaId: 'dsh/security-validation-contract-resolution',
+    mediaType: 'application/vnd.dsh.security.validation-contract-resolution+json',
+    value: json({
+      schemaVersion: 1,
+      candidateId: candidate.candidateId,
+      state: contractResolved ? 'RESOLVED' : 'UNRESOLVED',
+      contractId: contractResolved ? NPM_PUBLISH_SURFACE_VALIDATION_CONTRACT_ID : null,
+      contractVersion: contractResolved ? 1 : null,
+      policyDigest: input.policyDigest,
+      alternativesConsidered: [NPM_PUBLISH_SURFACE_VALIDATION_CONTRACT_ID],
+    }),
+  }, {
+    artifactId: eligibilityArtifactId,
+    schemaId: 'dsh/security-validation-evidence-eligibility-decision',
+    mediaType: 'application/vnd.dsh.security.validation-evidence-eligibility-decision+json',
+    value: json({
+      schemaVersion: 1,
+      decision: evidenceEligible ? 'ELIGIBLE' : 'INELIGIBLE',
+      reason: evidenceEligible ? null : unresolvedReason,
+      purpose: 'VALIDATION_EVIDENCE',
+      candidateId: candidate.candidateId,
+      securityClaim: expectedCandidate?.securityClaim
+        ?? 'The contributed npm publish surface candidate could not be independently re-derived.',
+      contractId: contractResolved ? NPM_PUBLISH_SURFACE_VALIDATION_CONTRACT_ID : null,
+      subjectDigest: input.contribution.subjectDigest,
+      evidenceArtifactIds: evidenceEligible ? expectedCandidate?.evidenceArtifactIds ?? [] : [],
+      producerEligibility: input.portfolioEntry.eligibility,
+      negativeControls: [...NPM_PUBLISH_SURFACE_NEGATIVE_CONTROLS],
+    }),
+  }]
+  if (!evidenceEligible || evidenceEntry === undefined) {
+    return {
+      unresolved: true,
+      evidence: [...commonEvidence, {
+        artifactId: outcomeArtifactId,
+        schemaId: 'dsh/security-validation-outcome',
+        mediaType: 'application/vnd.dsh.security.validation-outcome+json',
+        value: json({
+          schemaVersion: 1,
+          candidateId: candidate.candidateId,
+          state: 'UNRESOLVED',
+          contractId: contractResolved ? NPM_PUBLISH_SURFACE_VALIDATION_CONTRACT_ID : null,
+          evidenceEligibilityArtifactId: eligibilityArtifactId,
+          proofGaps: [unresolvedReason],
+        }),
+      }],
+    }
+  }
+  const validationOutcome = {
+    schemaVersion: 1,
+    candidateId: candidate.candidateId,
+    state: 'VALIDATED',
+    contractId: NPM_PUBLISH_SURFACE_VALIDATION_CONTRACT_ID,
+    contractVersion: 1,
+    evidenceEligibilityArtifactId: eligibilityArtifactId,
+    evidenceArtifactIds: candidate.evidenceArtifactIds,
+    proofGaps: [],
+    negativeControls: [...NPM_PUBLISH_SURFACE_NEGATIVE_CONTROLS],
+  }
+  return {
+    unresolved: false,
+    finding: json({
+      schemaVersion: 1,
+      findingId: `finding-${sha256Hex(canonicalJson({
+        candidateId: candidate.candidateId,
+        contractId: NPM_PUBLISH_SURFACE_VALIDATION_CONTRACT_ID,
+        subjectDigest: input.contribution.subjectDigest,
+      }))}`,
+      candidateId: candidate.candidateId,
+      weaknessClassification: candidate.weaknessClassification,
+      affectedControlId: candidate.affectedControlId,
+      sourceAnchor: candidate.sourceAnchor,
+      securityClaim: candidate.securityClaim,
+      validation: validationOutcome,
+      technicalSeverity: {
+        value: evidenceEntry.severity,
+        methodVersion: 'dsh/npm/publish-surface-severity-v1',
+        vector: {
+          ruleId: evidenceEntry.ruleId,
+          affectedScope: 'PACKAGE_PUBLISH_SURFACE',
+        },
+      },
+      evidenceConfidence: {
+        value: 'HIGH',
+        methodVersion: 'dsh/npm/deterministic-publish-surface-confidence-v1',
+        rubric: {
+          producerQualification: 'PASS',
+          subjectBinding: 'PASS',
+          reproducibility: 'PASS',
+          negativeControls: 'PASS',
+          proofGaps: 0,
+        },
+      },
+      policySignificance: 'BLOCKING',
+      policySignificanceTrace: {
+        ruleId: 'npm-publish-surface-violation-blocks-v1',
+        policyDigest: input.policyDigest,
+        matched: true,
+      },
+    }),
+    evidence: [...commonEvidence, {
+      artifactId: outcomeArtifactId,
+      schemaId: 'dsh/security-validation-outcome',
+      mediaType: 'application/vnd.dsh.security.validation-outcome+json',
+      value: json(validationOutcome),
+    }],
+  }
+}
+
 function validateCandidate(
   input: CandidateValidationInputV1,
   candidate: AnalyzerCandidateFindingV1,
@@ -1070,6 +1894,15 @@ function validateCandidate(
   }
   if (input.policyId === GITLEAKS_POLICY_ID) {
     return validateGitleaksCandidate(input, candidate)
+  }
+  if (input.policyId === GITHUB_ACTIONS_POLICY_ID) {
+    return validateGitHubActionsCandidate(input, candidate)
+  }
+  if (input.policyId === PNPM_LOCKFILE_POLICY_ID) {
+    return validatePnpmLockfileCandidate(input, candidate)
+  }
+  if (input.policyId === NPM_PUBLISH_SURFACE_POLICY_ID) {
+    return validateNpmPublishSurfaceCandidate(input, candidate)
   }
   const prefix = candidatePrefix(candidate.candidateId)
   const admissionArtifactId = `candidate-admission-${prefix}`

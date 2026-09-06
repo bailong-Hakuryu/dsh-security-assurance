@@ -165,12 +165,30 @@ import {
   GITLEAKS_REPORT_BASE_NAME,
 } from './internal/gitleaks-analyzer.ts'
 import {
+  createGitHubActionsSupplyChainAnalyzer,
+  GITHUB_ACTIONS_ANALYZER_ID,
+  GITHUB_ACTIONS_DESCRIPTOR,
+  GITHUB_ACTIONS_QUALIFICATION,
+} from './internal/github-actions-supply-chain-analyzer.ts'
+import {
   createNpmAuditAnalyzer,
   NPM_AUDIT_ANALYZER_ID,
   NPM_AUDIT_DESCRIPTOR,
   NPM_AUDIT_QUALIFICATION,
   NPM_AUDIT_REPORT_BASE_NAME,
 } from './internal/npm-audit-analyzer.ts'
+import {
+  createPnpmLockfileIntegrityAnalyzer,
+  PNPM_LOCKFILE_ANALYZER_ID,
+  PNPM_LOCKFILE_DESCRIPTOR,
+  PNPM_LOCKFILE_QUALIFICATION,
+} from './internal/pnpm-lockfile-integrity-analyzer.ts'
+import {
+  createNpmPublishSurfaceAnalyzer,
+  NPM_PUBLISH_SURFACE_ANALYZER_ID,
+  NPM_PUBLISH_SURFACE_DESCRIPTOR,
+  NPM_PUBLISH_SURFACE_QUALIFICATION,
+} from './internal/npm-publish-surface-analyzer.ts'
 import {
   checkSealReadiness,
   evaluateDeterministicAssessment,
@@ -199,7 +217,10 @@ import {
   freezeSubject,
   reapSubjectStaging,
   readVerifiedExternalToolReportSlices,
+  readVerifiedGitHubWorkflowSlices,
   readVerifiedNodePackageManifestSlices,
+  readVerifiedNpmPublishSurfaceSlices,
+  readVerifiedPnpmLockfileSlices,
   SubjectFreezeError,
 } from './internal/subject-freeze.ts'
 
@@ -223,6 +244,27 @@ export {
   gitleaksReportSchema,
 } from './internal/gitleaks-analyzer.ts'
 export {
+  analyzeGitHubActionsWorkflows,
+  createGitHubActionsSupplyChainAnalyzer,
+  GITHUB_ACTIONS_ANALYSIS_CONTRACT_ID,
+  GITHUB_ACTIONS_ANALYZER_ID,
+  GITHUB_ACTIONS_ANALYZER_VERSION,
+  GITHUB_ACTIONS_COVERAGE_OBLIGATION_ID,
+  GITHUB_ACTIONS_DESCRIPTOR,
+  GITHUB_ACTIONS_EVIDENCE_MEDIA_TYPE,
+  GITHUB_ACTIONS_EVIDENCE_SCHEMA_ID,
+  GITHUB_ACTIONS_PERMISSION_CONTROL_ID,
+  GITHUB_ACTIONS_PERMISSION_WEAKNESS_ID,
+  GITHUB_ACTIONS_POLICY_ID,
+  GITHUB_ACTIONS_QUALIFICATION,
+  GITHUB_ACTIONS_REFERENCE_CONTROL_ID,
+  GITHUB_ACTIONS_REFERENCE_WEAKNESS_ID,
+  GITHUB_ACTIONS_RULE_IDS,
+  githubActionsSupplyChainEvidenceV1Schema,
+  type GitHubActionsRuleId,
+  type GitHubActionsSupplyChainEvidenceV1,
+} from './internal/github-actions-supply-chain-analyzer.ts'
+export {
   analyzeNpmAuditReport,
   createNpmAuditAnalyzer,
   escapeJsonPointerSegment,
@@ -238,6 +280,44 @@ export {
   npmAuditReportEvidenceV1Schema,
   npmAuditSeveritySchema,
 } from './internal/npm-audit-analyzer.ts'
+export {
+  analyzePnpmLockfileIntegrity,
+  createPnpmLockfileIntegrityAnalyzer,
+  PNPM_LOCKFILE_ANALYSIS_CONTRACT_ID,
+  PNPM_LOCKFILE_ANALYZER_ID,
+  PNPM_LOCKFILE_ANALYZER_VERSION,
+  PNPM_LOCKFILE_CONTROL_ID,
+  PNPM_LOCKFILE_COVERAGE_OBLIGATION_ID,
+  PNPM_LOCKFILE_DESCRIPTOR,
+  PNPM_LOCKFILE_EVIDENCE_MEDIA_TYPE,
+  PNPM_LOCKFILE_EVIDENCE_SCHEMA_ID,
+  PNPM_LOCKFILE_POLICY_ID,
+  PNPM_LOCKFILE_QUALIFICATION,
+  PNPM_LOCKFILE_RULE_IDS,
+  PNPM_LOCKFILE_WEAKNESS_ID,
+  pnpmLockfileIntegrityEvidenceV1Schema,
+  type PnpmLockfileIntegrityEvidenceV1,
+  type PnpmLockfileRuleId,
+} from './internal/pnpm-lockfile-integrity-analyzer.ts'
+export {
+  analyzeNpmPublishSurface,
+  createNpmPublishSurfaceAnalyzer,
+  NPM_PUBLISH_SURFACE_ANALYSIS_CONTRACT_ID,
+  NPM_PUBLISH_SURFACE_ANALYZER_ID,
+  NPM_PUBLISH_SURFACE_ANALYZER_VERSION,
+  NPM_PUBLISH_SURFACE_CONTROL_ID,
+  NPM_PUBLISH_SURFACE_COVERAGE_OBLIGATION_ID,
+  NPM_PUBLISH_SURFACE_DESCRIPTOR,
+  NPM_PUBLISH_SURFACE_EVIDENCE_MEDIA_TYPE,
+  NPM_PUBLISH_SURFACE_EVIDENCE_SCHEMA_ID,
+  NPM_PUBLISH_SURFACE_POLICY_ID,
+  NPM_PUBLISH_SURFACE_QUALIFICATION,
+  NPM_PUBLISH_SURFACE_RULE_IDS,
+  NPM_PUBLISH_SURFACE_WEAKNESS_ID,
+  npmPublishSurfaceEvidenceV1Schema,
+  type NpmPublishSurfaceEvidenceV1,
+  type NpmPublishSurfaceRuleId,
+} from './internal/npm-publish-surface-analyzer.ts'
 
 const EXPORT_DELIVERY_IDLE_SCAN_MS = 30_000
 const EXPORT_DELIVERY_WORKER_ERROR_RETRY_MS = 1_000
@@ -489,6 +569,21 @@ export class SecurityAssuranceService extends Service {
     this.analyzerRegistry.registerQualification(NPM_AUDIT_QUALIFICATION)
     this.analyzerRegistry.register(GITLEAKS_DESCRIPTOR, createGitleaksAnalyzer)
     this.analyzerRegistry.registerQualification(GITLEAKS_QUALIFICATION)
+    this.analyzerRegistry.register(
+      GITHUB_ACTIONS_DESCRIPTOR,
+      createGitHubActionsSupplyChainAnalyzer,
+    )
+    this.analyzerRegistry.registerQualification(GITHUB_ACTIONS_QUALIFICATION)
+    this.analyzerRegistry.register(
+      PNPM_LOCKFILE_DESCRIPTOR,
+      createPnpmLockfileIntegrityAnalyzer,
+    )
+    this.analyzerRegistry.registerQualification(PNPM_LOCKFILE_QUALIFICATION)
+    this.analyzerRegistry.register(
+      NPM_PUBLISH_SURFACE_DESCRIPTOR,
+      createNpmPublishSurfaceAnalyzer,
+    )
+    this.analyzerRegistry.registerQualification(NPM_PUBLISH_SURFACE_QUALIFICATION)
     Object.defineProperty(this, RESOLVE_TRUSTED_INVOCATION, {
       configurable: false,
       enumerable: false,
@@ -2093,8 +2188,17 @@ export class SecurityAssuranceService extends Service {
       runningRevision = running.assessmentRevision
       if (signal.aborted) throw new Error('assessment execution canceled')
       const sealedAt = new Date().toISOString()
+      const analyzersWithDedicatedSlices: ReadonlySet<string> = new Set([
+        NPM_AUDIT_ANALYZER_ID,
+        GITLEAKS_ANALYZER_ID,
+        GITHUB_ACTIONS_ANALYZER_ID,
+        PNPM_LOCKFILE_ANALYZER_ID,
+        NPM_PUBLISH_SURFACE_ANALYZER_ID,
+      ])
       const needsSourceSlices = running.contract.policy.policyId === 'security/node-package-lifecycle'
-        || running.contract.analyzerPortfolio.length > 0
+        || running.contract.analyzerPortfolio.some(entry => (
+          !analyzersWithDedicatedSlices.has(entry.descriptor.analyzerId)
+        ))
       const sourceSlices = needsSourceSlices
         ? await readVerifiedNodePackageManifestSlices(
             this.securityRoot,
@@ -2124,7 +2228,45 @@ export class SecurityAssuranceService extends Service {
             signal,
           )
         : []
-      const analyzerSlices = [...sourceSlices, ...npmAuditSlices, ...gitleaksSlices]
+      const needsGitHubActionsSlices = running.contract.analyzerPortfolio.some(entry => (
+        entry.descriptor.analyzerId === GITHUB_ACTIONS_ANALYZER_ID
+      ))
+      const githubActionsSlices = needsGitHubActionsSlices
+        ? await readVerifiedGitHubWorkflowSlices(
+            this.securityRoot,
+            running.subject.digest,
+            signal,
+          )
+        : []
+      const needsPnpmLockfileSlices = running.contract.analyzerPortfolio.some(entry => (
+        entry.descriptor.analyzerId === PNPM_LOCKFILE_ANALYZER_ID
+      ))
+      const pnpmLockfileSlices = needsPnpmLockfileSlices
+        ? await readVerifiedPnpmLockfileSlices(
+            this.securityRoot,
+            running.subject.digest,
+            signal,
+          )
+        : []
+      const needsNpmPublishSurfaceSlices = running.contract.analyzerPortfolio.some(entry => (
+        entry.descriptor.analyzerId === NPM_PUBLISH_SURFACE_ANALYZER_ID
+      ))
+      const npmPublishSurfaceSlices = needsNpmPublishSurfaceSlices
+        ? await readVerifiedNpmPublishSurfaceSlices(
+            this.securityRoot,
+            running.subject.digest,
+            signal,
+          )
+        : []
+      const analyzerSlices = [...new Map([
+        ...sourceSlices,
+        ...npmAuditSlices,
+        ...gitleaksSlices,
+        ...githubActionsSlices,
+        ...pnpmLockfileSlices,
+        ...npmPublishSurfaceSlices,
+      ].map(slice => [slice.path, slice] as const)).values()]
+        .sort((left, right) => left.path.localeCompare(right.path))
       const analysis = running.contract.policy.policyId === 'security/node-package-lifecycle'
         ? {
             expectedSubjectDigest: running.subject.digest,
@@ -2147,7 +2289,10 @@ export class SecurityAssuranceService extends Service {
               digest: running.subject.digest,
               textSlices: analyzerSlices.map(slice => ({
                 path: slice.path,
-                mediaType: 'application/json',
+                mediaType: /^\.github\/workflows\/[^/]+\.ya?ml$/iu.test(slice.path)
+                  || slice.path === 'pnpm-lock.yaml'
+                  ? 'application/yaml'
+                  : 'application/json',
                 digest: slice.digest,
                 text: slice.text,
               })),

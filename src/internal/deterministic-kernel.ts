@@ -19,11 +19,17 @@ import {
 import { canonicalJson, sha256Hex, structuredDigest } from './canonical.ts'
 import {
   gitleaksCoverageIsIndependentlyVerified,
+  githubActionsCoverageIsIndependentlyVerified,
   npmAuditCoverageIsIndependentlyVerified,
+  npmPublishSurfaceCoverageIsIndependentlyVerified,
+  pnpmLockfileCoverageIsIndependentlyVerified,
   validateExternalAnalyzerCandidates,
 } from './candidate-validation.ts'
 import { GITLEAKS_POLICY_ID } from './gitleaks-analyzer.ts'
+import { GITHUB_ACTIONS_POLICY_ID } from './github-actions-supply-chain-analyzer.ts'
 import { NPM_AUDIT_POLICY_ID } from './npm-audit-analyzer.ts'
+import { NPM_PUBLISH_SURFACE_POLICY_ID } from './npm-publish-surface-analyzer.ts'
+import { PNPM_LOCKFILE_POLICY_ID } from './pnpm-lockfile-integrity-analyzer.ts'
 import {
   BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR,
   BUILTIN_NODE_PACKAGE_LIFECYCLE_QUALIFICATION,
@@ -142,11 +148,48 @@ function externalAnalyzerEvidence(
         policyId: contract.policy.policyId,
         policyDigest: contract.policy.digest,
       })
+    const githubActionsEvidenceEligible
+      = contract.policy.policyId === GITHUB_ACTIONS_POLICY_ID
+        && structurallyBoundCoverage
+        && githubActionsCoverageIsIndependentlyVerified({
+          portfolioEntry: analysis.portfolioEntry,
+          contribution: analysis.contribution,
+          subjectSlices: analysis.subjectSlices,
+          policyId: contract.policy.policyId,
+          policyDigest: contract.policy.digest,
+        })
+    const pnpmLockfileEvidenceEligible
+      = contract.policy.policyId === PNPM_LOCKFILE_POLICY_ID
+        && structurallyBoundCoverage
+        && pnpmLockfileCoverageIsIndependentlyVerified({
+          portfolioEntry: analysis.portfolioEntry,
+          contribution: analysis.contribution,
+          subjectSlices: analysis.subjectSlices,
+          policyId: contract.policy.policyId,
+          policyDigest: contract.policy.digest,
+        })
+    const npmPublishSurfaceEvidenceEligible
+      = contract.policy.policyId === NPM_PUBLISH_SURFACE_POLICY_ID
+        && structurallyBoundCoverage
+        && npmPublishSurfaceCoverageIsIndependentlyVerified({
+          portfolioEntry: analysis.portfolioEntry,
+          contribution: analysis.contribution,
+          subjectSlices: analysis.subjectSlices,
+          policyId: contract.policy.policyId,
+          policyDigest: contract.policy.digest,
+        })
     // A rejected Gitleaks Contribution may contain attacker-controlled values
     // in fields that the real normalizer would redact. Keep it inside the Pure
     // validation boundary and publish only fixed rejection metadata.
-    const publishContribution = contract.policy.policyId !== GITLEAKS_POLICY_ID
-      || gitleaksEvidenceEligible
+    const publishContribution = (
+      contract.policy.policyId !== GITLEAKS_POLICY_ID || gitleaksEvidenceEligible
+    ) && (
+      contract.policy.policyId !== GITHUB_ACTIONS_POLICY_ID || githubActionsEvidenceEligible
+    ) && (
+      contract.policy.policyId !== PNPM_LOCKFILE_POLICY_ID || pnpmLockfileEvidenceEligible
+    ) && (
+      contract.policy.policyId !== NPM_PUBLISH_SURFACE_POLICY_ID || npmPublishSurfaceEvidenceEligible
+    )
     if (publishContribution) {
       for (const item of analysis.contribution.evidence) {
         if (artifactIds.has(item.artifactId)) throw new TypeError('External Analyzer Evidence identity collides')
@@ -192,6 +235,9 @@ function externalAnalyzerEvidence(
     const evidenceEligible = conformanceEvidenceEligible
       || npmAuditEvidenceEligible
       || gitleaksEvidenceEligible
+      || githubActionsEvidenceEligible
+      || pnpmLockfileEvidenceEligible
+      || npmPublishSurfaceEvidenceEligible
     const eligibilityReason = evidenceEligible
       ? null
       : analysis.portfolioEntry.eligibility.reason
@@ -430,11 +476,14 @@ export function evaluateDeterministicAssessment(
       // validation contracts after every contributed Candidate is
       // independently validated or rejected against the frozen Subject.
       // The conformance contract additionally requires at least one
-      // Candidate; the npm audit contract treats a clean report (zero
-      // Candidates) as complete Coverage.
+      // Candidate; package-owned npm audit, Gitleaks, GitHub Actions, and pnpm
+      // contracts may prove complete Coverage with zero Candidates.
       const gateBearingPolicy = contract.policy.policyId === 'security/reference-validation'
         || contract.policy.policyId === NPM_AUDIT_POLICY_ID
         || contract.policy.policyId === GITLEAKS_POLICY_ID
+        || contract.policy.policyId === GITHUB_ACTIONS_POLICY_ID
+        || contract.policy.policyId === PNPM_LOCKFILE_POLICY_ID
+        || contract.policy.policyId === NPM_PUBLISH_SURFACE_POLICY_ID
       const completeCoverage = gateBearingPolicy
         && candidateValidation.unresolvedCandidateIds.length === 0
         && externalAnalyses.some(analysis => (
@@ -451,6 +500,30 @@ export function evaluateDeterministicAssessment(
             }))
           && (contract.policy.policyId !== GITLEAKS_POLICY_ID
             || gitleaksCoverageIsIndependentlyVerified({
+              portfolioEntry: analysis.portfolioEntry,
+              contribution: analysis.contribution,
+              subjectSlices: analysis.subjectSlices,
+              policyId: contract.policy.policyId,
+              policyDigest: contract.policy.digest,
+            }))
+          && (contract.policy.policyId !== GITHUB_ACTIONS_POLICY_ID
+            || githubActionsCoverageIsIndependentlyVerified({
+              portfolioEntry: analysis.portfolioEntry,
+              contribution: analysis.contribution,
+              subjectSlices: analysis.subjectSlices,
+              policyId: contract.policy.policyId,
+              policyDigest: contract.policy.digest,
+            }))
+          && (contract.policy.policyId !== PNPM_LOCKFILE_POLICY_ID
+            || pnpmLockfileCoverageIsIndependentlyVerified({
+              portfolioEntry: analysis.portfolioEntry,
+              contribution: analysis.contribution,
+              subjectSlices: analysis.subjectSlices,
+              policyId: contract.policy.policyId,
+              policyDigest: contract.policy.digest,
+            }))
+          && (contract.policy.policyId !== NPM_PUBLISH_SURFACE_POLICY_ID
+            || npmPublishSurfaceCoverageIsIndependentlyVerified({
               portfolioEntry: analysis.portfolioEntry,
               contribution: analysis.contribution,
               subjectSlices: analysis.subjectSlices,

@@ -303,6 +303,24 @@ gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.j
 
 Bind the Repository to <code>security/secret-leak-audit</code>. The PURE adapter retains only the rule ID, affected relative path, and location. It never projects <code>Secret</code>, <code>Match</code>, source lines, secret hashes, author email, or commit messages into Candidates, Findings, Evidence, Seals, or exports. A complete empty report yields <code>SATISFIED</code>; any independently re-derived report entry yields a HIGH blocking Finding and <code>FAILED</code>; missing, malformed, tampered, or incomplete input yields <code>INDETERMINATE</code>. The Host or CI owns scan configuration, report freshness, Git history breadth, and allowlist correctness.
 
+## GitHub Actions supply-chain policy
+
+Bind the Repository to <code>security/github-actions-supply-chain</code> to evaluate only <code>.github/workflows/*.yml</code> and <code>*.yaml</code> files selected from the frozen Subject and current Target. The PURE Analyzer does not execute workflows or contact GitHub. It requires an explicit read-only or empty top-level <code>permissions</code> boundary, rejects job-level write permissions, requires a full 40-hex commit SHA for external Actions and reusable workflows, and requires a <code>sha256</code> image digest for container Actions. Local <code>./</code> Actions are accepted.
+
+The complete parse is repeated by an independent Validation Contract. A safe or empty selected workflow set yields <code>SATISFIED</code>; verified violations yield blocking Findings and <code>FAILED</code>; duplicate keys, aliases, malformed or unsupported YAML, and tampered Contributions yield <code>INDETERMINATE</code>. This strict Policy does not decide whether write authority is operationally justified. A release workflow that needs write permission requires another reviewed Policy rather than a silent exception in this one.
+
+## npm publish surface policy
+
+Bind the Repository to <code>security/npm-publish-surface</code> to verify the frozen root <code>package.json</code> publish declaration entirely offline: public package identity, public access, an explicit <code>files</code> allowlist, and <code>exports</code>, <code>main</code>, <code>types</code>, and <code>bin</code> targets contained by that allowlist. It never runs <code>npm pack</code>, enumerates the filesystem, contacts the Registry, or claims that files exist, provenance is trusted, or dependencies are safe.
+
+A consistent manifest yields <code>SATISFIED</code>. Private packages, restricted access, missing or broad allowlists, and uncontained entry points yield independently re-derived blocking Findings and <code>FAILED</code>; malformed, duplicate-key, invalid-target, or tampered input yields <code>INDETERMINATE</code>. Version 1 supports only <code>REPOSITORY</code> and <code>CHANGE</code> and proves manifest consistency rather than the contents of a real packed artifact.
+
+## pnpm lockfile integrity policy
+
+Bind the Repository to <code>security/pnpm-lockfile-integrity</code> to compare the root <code>package.json</code> and <code>pnpm-lock.yaml</code> from the frozen Subject entirely offline. The PURE Analyzer requires <code>packageManager</code> to pin one exact pnpm semantic version, requires the pnpm v9 root importer to match all three dependency sections exactly, and requires valid SRI on every external package resolution. It never runs pnpm, installs dependencies, contacts the Registry, or claims that dependencies are vulnerability-free.
+
+Consistent input yields <code>SATISFIED</code>. A missing lockfile, importer drift, unpinned package manager, or missing SRI yields independently re-derived blocking Findings and <code>FAILED</code>. Duplicate JSON keys, YAML aliases, malformed input, an unknown lockfile version, a non-pnpm manager, or a tampered Contribution yields <code>INDETERMINATE</code>. Version 1 covers only the root importer and supports <code>REPOSITORY</code> and <code>CHANGE</code>; it does not misrepresent workspace child packages as covered.
+
 ## Results and safety
 
 All public operations return a typed <code>SecurityResult&lt;T&gt;</code> envelope. Commands return immutable versioned Receipts; queries return identity- and revision-bound Snapshots. Host authority resolves identity and permissions; model arguments never carry credentials, paths, database handles, or executable objects. Missing authorization, conflicts, timeouts, cancellation, and external failures fail closed.

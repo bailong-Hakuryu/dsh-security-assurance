@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+- Add the bundled PURE `security/npm-publish-surface` Policy for
+  `REPOSITORY` and `CHANGE` Assessments. It verifies the frozen root
+  `package.json` publish identity, public access, explicit files allowlist,
+  and containment of `exports`, `main`, `types`, and `bin` targets.
+- Independently re-derive the complete npm publish surface Contribution before
+  Coverage or Findings become verdict-bearing. Malformed, duplicate, broad, or
+  tampered manifest input fails closed; v1 does not claim actual `npm pack`
+  contents, file existence, provenance, or dependency safety.
+- Add the bundled PURE `security/pnpm-lockfile-integrity` Policy for
+  `REPOSITORY` and `CHANGE` Assessments. It verifies the frozen root
+  `package.json` and pnpm v9 lockfile, requires an exact package-manager pin,
+  exact importer specifier parity, and valid SRI for every package resolution.
+- Independently re-derive the complete lockfile Contribution before Coverage
+  or Findings become verdict-bearing. Missing or drifted locks produce
+  blocking Findings, while malformed, aliased, unsupported, or tampered input
+  fails closed without publishing contributed prose or private package names.
+- Add the bundled PURE `security/github-actions-supply-chain` Policy for
+  `REPOSITORY`, `CHANGE`, and `TARGETED` Assessments. It reads only verified
+  frozen workflow YAML, requires explicit read-only token permissions, full
+  commit pins for external Actions and reusable workflows, and SHA-256 digest
+  pins for container Actions.
+- Re-run the complete YAML analysis in an independent package-owned Validation
+  Contract before Coverage or Findings become verdict-bearing. Malformed,
+  aliased, structurally unsupported, or tampered input fails closed without
+  publishing attacker-controlled workflow prose.
 - Add a packaged `release:assemble` adapter and side-effect-free qualification
   input contracts. The adapter re-verifies the deterministic proof index,
   binding bytes, candidate identity, and referenced proof-record bytes before

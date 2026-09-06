@@ -108,6 +108,10 @@ _Avoid_: Analyzer checklist, coverage percentage, optional suggestions
 The versioned, host-selected set of mandatory security obligations and verdict rules frozen for one Security Assessment; permitted repository policy may strengthen but never weaken its baseline.
 _Avoid_: Model-generated checklist, scanner defaults, mutable configuration
 
+**Workflow Supply-Chain Policy**:
+The strict repository policy requiring automation authority to be explicitly bounded and every external execution dependency to have an immutable identity within the Assessment Subject.
+_Avoid_: Workflow linter, CI execution, moving-tag allowlist
+
 **Baseline Policy Profile**:
 The default Policy mapping that blocks Critical and High Findings, conditionally blocks security-significant Medium Findings, reports lower severities, and treats material unresolved candidates as indeterminate.
 _Avoid_: Strict Policy Profile, severity score alone, permissive mode
@@ -355,6 +359,14 @@ _Avoid_: Prompt trust, repository-owned Analyzer, documentation authority
 **Dependency Advisory Snapshot**:
 The signed, versioned, locally available vulnerability intelligence dataset explicitly updated outside an Assessment and digest-frozen into Provider Composition for reproducible dependency analysis.
 _Avoid_: Live latest API, package-manager warning, unversioned cache
+
+**Lockfile Integrity**:
+The reproducibility property that one frozen package-manager identity, root dependency declaration, resolved importer, and package integrity set agree without consulting mutable external state.
+_Avoid_: Successful install, vulnerability-free dependencies, latest registry state
+
+**Npm Publish Surface**:
+The manifest-declared public release boundary formed by package identity, publication access, explicit files allowlist, and exported, executable, and type entry points that are contained by that allowlist.
+_Avoid_: Actual npm packlist, file existence proof, package provenance, dependency security
 
 **Export Profile**:
 The versioned field and redaction contract for producing Internal, Team, or Public portable Views from sealed security records for a declared audience and purpose.
