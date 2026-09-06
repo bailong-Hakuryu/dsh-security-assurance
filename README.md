@@ -16,7 +16,7 @@
 
 <code>dsh-security-assurance</code> 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供证据驱动的仓库安全评估。它通过公开的 Harness/Cordis 接口接入，不修改 Harness Core，并把评估过程封装为可查询、可恢复、可审计的版本化结果。
 
-这是一个安全保障插件，不是通用漏洞扫描器。当前内建能力包括 Node 项目的 <code>package.json</code> 安装生命周期检查，以及对冻结 <code>npm-audit.json</code> 和 Gitleaks v8 JSON 报告的纯归一化与独立验证。
+这是一个安全保障插件，不是通用漏洞扫描器。当前内建能力包括 Node 项目的 <code>package.json</code> 安装生命周期检查、npm 发布面、pnpm 锁文件完整性、GitHub Actions 权限与不可变依赖检查，以及对冻结 <code>npm-audit.json</code> 和 Gitleaks v8 JSON 报告的纯归一化与独立验证。
 
 ### 评估如何形成可信结论
 
@@ -40,10 +40,13 @@ Service 先解析授权 Catalog 选择并冻结完整 Subject，再把已验证 
 | 评估模式 | <code>REPOSITORY</code>、精确提交或 Mission 产出工作区的 <code>CHANGE</code>，以及默认策略的 <code>TARGETED</code> |
 | 支持 Subject | <code>git_revision</code>、<code>workspace_snapshot</code>、<code>change</code>（精确 base/head）；Control Plane 可使用 Host 专用 <code>workspace_change</code> |
 | <code>CHANGE</code> 模式 | 支持精确已提交的 base→head，以及 Control Plane 冻结的 baseline→produced workspace；均扫描完整结果树 |
-| <code>TARGETED</code> 模式 | <code>security/node-package-lifecycle</code> 支持 <code>git_revision</code> 与 <code>workspace_snapshot</code> 的明确相对文件/目录；只评估目标内的 <code>package.json</code> |
+| <code>TARGETED</code> 模式 | 内建 Node 生命周期与 GitHub Actions 策略支持 <code>git_revision</code>、<code>workspace_snapshot</code> 的明确相对文件/目录；只读取目标内的相关清单或 workflow |
 | 默认策略 | <code>security/node-package-lifecycle</code> |
 | 可选 npm audit 策略 | <code>security/npm-dependency-audit</code> |
 | 可选 Gitleaks 策略 | <code>security/secret-leak-audit</code> |
+| 可选 GitHub Actions 策略 | <code>security/github-actions-supply-chain</code> |
+| 可选 npm 发布面策略 | <code>security/npm-publish-surface</code> |
+| 可选 pnpm 锁文件策略 | <code>security/pnpm-lockfile-integrity</code> |
 | 默认档案 | <code>security/standard</code> |
 | Harness 版本 | <code>0.1.2-alpha.1</code>（主）、<code>0.1.2-alpha.2</code>、<code>0.1.2-alpha.3</code>、<code>0.1.2-alpha.4</code>、<code>0.1.2-alpha.5</code>、<code>0.1.2-rc.1</code>、<code>0.1.3-alpha.1</code> |
 | Node.js | <code>^22.19.0 \|\| >=24.0.0</code>（CI 覆盖 22 与 24） |
@@ -51,7 +54,7 @@ Service 先解析授权 Catalog 选择并冻结完整 Subject，再把已验证 
 
 评估会先读取当前 Host 注册的 Repository 和 Catalog；只有 Service 返回的精确 ID、模式、Subject、Target、Profile 和强化控制才能用于启动，不允许模型猜测路径或标识符。
 
-<code>TARGETED</code> 仍会冻结并摘要绑定完整 Subject，但只把明确目标内的已验证 <code>package.json</code> slice 交给内建分析器。每个目标必须对应一个现有条目或目录前缀；不存在的目标会在创建 Assessment 前被拒绝，存在但没有可分析清单的目标会得到 <code>INDETERMINATE</code>。npm audit 与 Gitleaks 报告策略暂不声明 <code>TARGETED</code> 支持，因为外部报告目前不能独立证明其扫描范围与目标完全一致。
+<code>TARGETED</code> 仍会冻结并摘要绑定完整 Subject，但只把明确目标内、经过验证的相关 slice 交给内建分析器：Node 生命周期策略读取 <code>package.json</code>，GitHub Actions 策略读取 <code>.github/workflows/*.yml|yaml</code>。每个目标必须对应一个现有条目或目录前缀；不存在的目标会在创建 Assessment 前被拒绝。npm 发布面、npm audit、Gitleaks 与 pnpm 锁文件策略暂不声明 <code>TARGETED</code> 支持，因为它们的根部或外部输入目前不能独立证明与目标完全一致。
 
 Harness 支持窗口是一个显式的已验证集合：每日 [Harness Compatibility](https://github.com/bailong-Hakuryu/dsh-security-assurance/actions/workflows/harness-compat.yml) 工作流自动发现官方仓库标签，对主目标在 Ubuntu、macOS、Windows 上、对其余版本在 Ubuntu 上执行双插件联合 E2E（Mission → Developer 工作区变更 → CHANGE Assessment → sealed submission → Quality Gate）和打包 fresh Profile 安装加 Web 探针。新标签会自动进入验证，但未通过矩阵验证前不会被声明支持（ADR 0310）。
 
@@ -119,6 +122,24 @@ gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.j
 
 将 Repository 的策略绑定设为 <code>security/secret-leak-audit</code>。PURE 适配器只保留规则 ID、受影响相对路径和位置；<code>Secret</code>、<code>Match</code>、源代码行、秘密哈希、作者邮箱与提交消息不会进入 Candidate、Finding、Evidence、Seal 或导出。完整空报告得到 <code>SATISFIED</code>；独立复核的任意报告项得到 HIGH、阻塞 Finding 和 <code>FAILED</code>；缺失、无效、被篡改或不完整的报告得到 <code>INDETERMINATE</code>。扫描配置、报告新鲜度、Git 历史范围和 allowlist 正确性仍由 Host/CI 负责。
 
+### GitHub Actions 供应链策略
+
+将 Repository 绑定到 <code>security/github-actions-supply-chain</code> 后，插件只读取冻结 Subject 中、当前 Target 选中的 <code>.github/workflows/*.yml</code> 与 <code>*.yaml</code>。PURE 分析器不会执行 workflow 或访问 GitHub；它要求顶层 <code>permissions</code> 显式为只读或空权限，拒绝 job 级写权限，并要求外部 Action/可复用 workflow 使用完整 40 位提交 SHA、container Action 使用 <code>sha256</code> 镜像摘要。本地 <code>./</code> Action 不会被误报。
+
+完整解析会在独立验证契约中重新执行。安全或空的目标 workflow 集得到 <code>SATISFIED</code>；已验证违规得到阻塞 Finding 和 <code>FAILED</code>；重复键、alias、无效/不支持的 YAML 或被篡改的 Contribution 得到 <code>INDETERMINATE</code>。该严格策略不判断写权限是否“业务上合理”；确需写权限的发布 workflow 应使用另一份经过评审的 Policy，而不是在本策略里静默放行。
+
+### npm 发布面策略
+
+将 Repository 绑定到 <code>security/npm-publish-surface</code>，即可离线验证冻结根部 <code>package.json</code> 的发布声明：公开包身份、公开访问、显式 <code>files</code> allowlist，以及 <code>exports</code>、<code>main</code>、<code>types</code>、<code>bin</code> 目标都必须被该 allowlist 包含。它不会运行 <code>npm pack</code>、枚举文件系统、访问 Registry，也不声称文件真实存在、包来源可信或依赖安全。
+
+一致清单得到 <code>SATISFIED</code>；私有包、受限发布、缺少显式 allowlist、过宽模式或未被 allowlist 包含的入口得到经独立重导验证的阻塞 Finding 和 <code>FAILED</code>；格式错误、重复 JSON 键、非法入口或被篡改的 Contribution 得到 <code>INDETERMINATE</code>。v1 只支持 <code>REPOSITORY</code> 与 <code>CHANGE</code>，并且只证明清单自洽，不替代真实打包工件证明。
+
+### pnpm 锁文件完整性策略
+
+将 Repository 绑定到 <code>security/pnpm-lockfile-integrity</code>，即可离线比较冻结 Subject 根部的 <code>package.json</code> 与 <code>pnpm-lock.yaml</code>。PURE Analyzer 要求 <code>packageManager</code> 精确固定到一个 pnpm 语义版本、pnpm v9 根 importer 与三类依赖声明逐项一致，并要求每个外部 package resolution 带有效 SRI。它不会运行 pnpm、安装依赖、访问 Registry 或声称依赖无漏洞。
+
+一致输入得到 <code>SATISFIED</code>；缺失锁文件、清单漂移、未固定包管理器或缺失 SRI 得到经独立重导验证的阻塞 Finding 和 <code>FAILED</code>；重复 JSON 键、YAML 别名、格式错误、未知 lockfile 版本、非 pnpm 包管理器或被篡改的 Contribution 得到 <code>INDETERMINATE</code>。v1 只覆盖根 importer，并且只支持 <code>REPOSITORY</code> 与 <code>CHANGE</code>，不会把 workspace 子包冒充成已检查范围。
+
 ### 工具工作流
 
 | 顺序 | 工具 | 作用 |
@@ -154,7 +175,7 @@ gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.j
 
 | 入口 | 作用 |
 | --- | --- |
-| <code>dsh-security-assurance</code> | 根 Security Assurance Service；同时导出 npm audit 与 Gitleaks 归一化契约 |
+| <code>dsh-security-assurance</code> | 根 Security Assurance Service；同时导出内建 GitHub Actions、npm 发布面、pnpm 锁文件策略及 npm audit、Gitleaks 归一化契约 |
 | <code>dsh-security-assurance/tools</code> | 八个严格模型工具 |
 | <code>dsh-security-assurance/contracts</code> | 版本化公共契约 |
 | <code>dsh-security-assurance/analyzer</code> | 内建分析器接口 |
@@ -162,6 +183,7 @@ gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.j
 | <code>dsh-security-assurance/release-file-bindings</code> | 发布文件绑定的版本化纯契约 |
 | <code>dsh-security-assurance/release-proof</code> | 精确候选证明记录与确定性索引纯契约 |
 | <code>dsh-security-assurance/release-qualification</code> | 资格草案、组装输入与最终输入的严格纯契约 |
+| <code>dsh-security-assurance/release-promotion</code> | RC → stable 行为等价交接收据纯契约（不授予发布权限） |
 | <code>dsh-security-assurance/host-repository-provider</code> | Host Repository 注册适配器 |
 | <code>dsh-security-assurance/control-plane-provider</code> | 可选 Control Plane 适配器 |
 | <code>dsh-security-assurance/invariant</code> | 启动就绪诊断 |
@@ -171,7 +193,7 @@ gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.j
 
 **仓库列表为空**：从目标 Git 仓库目录启动 Harness，并确认 Host Repository Provider 已加载；不要手工编造 Repository ID。
 
-**Catalog 显示 UNSUPPORTED**：确认使用的是已授权仓库、<code>security/standard</code> Profile，以及 Catalog 为当前策略返回的模式。独立启动的 <code>CHANGE</code> 接受精确已提交的 base/head；未提交工作区只由 Control Plane 的 Host 专用 Subject 接入。<code>TARGETED</code> 当前只支持 <code>security/node-package-lifecycle</code>，npm audit 与 Gitleaks 报告策略仍显示 <code>UNSUPPORTED</code>。
+**Catalog 显示 UNSUPPORTED**：确认使用的是已授权仓库、<code>security/standard</code> Profile，以及 Catalog 为当前策略返回的模式。独立启动的 <code>CHANGE</code> 接受精确已提交的 base/head；未提交工作区只由 Control Plane 的 Host 专用 Subject 接入。<code>TARGETED</code> 支持 <code>security/node-package-lifecycle</code> 与 <code>security/github-actions-supply-chain</code>；npm 发布面、npm audit、Gitleaks 与 pnpm 锁文件策略仍显示 <code>UNSUPPORTED</code>。
 
 **端口冲突**：关闭占用端口的旧 Harness 进程，或在 Web Profile 中改用空闲端口后重新启动。
 
@@ -198,13 +220,14 @@ pnpm release:bind -- --input .\release-files.json --output .\release-file-bindin
 pnpm release:collect -- --input .\release-proof-input.json --output .\release-proof-index.json
 pnpm release:assemble -- --input .\release-qualification-draft.json --output .\release-qualification-input.json
 pnpm release:qualify -- --input .\release-qualification-input.json --output .\release-qualification
+pnpm release:handoff -- --input .\release-handoff-input.json --output .\release-promotion-handoff.json
 ~~~
 
-第一条命令只记录已复核的文件事实，不制造测试或安全证明；packed smoke 可用 <code>DSH_RELEASE_PROOF_OUTPUT</code> 输出绑定同一 tarball 的严格证明记录，第二条命令验证并按规范顺序收集这些记录，逐字节摘要后生成 proof index；第三条命令重新读取 index、binding 与每份 proof record，把状态原样合并到 <code>release:qualify</code> 的严格输入；第四条命令再次读取绑定的真实文件，并且只在 Release Constitution 为 <code>PROMOTE</code> 且最终 Manifest 为 <code>VERIFIED</code> 时返回 0，原子生成 Manifest、公开 Scorecard 和资格结论三件套。当前候选依照 ADR 0307 不发布旧 Workbench client，因此真实浏览器记录会诚实标记 <code>WORKBENCH</code> 为 <code>INCONCLUSIVE</code>，不会把通用 Web 外壳冒充成 Workbench。有效但阻断/不完整的证据返回 2 并保留可审计产物；字节摘要、Git HEAD、已跟踪源码或输入不一致时返回 1 且不生成产物。四条 CLI 都不会自动打 tag、上传或发布包。完整输入契约见 [v0.1 发布清单](docs/release-v0.1.md)。
+第一条命令只记录已复核的文件事实，不制造测试或安全证明；packed smoke 可用 <code>DSH_RELEASE_PROOF_OUTPUT</code> 输出绑定同一 tarball 的严格证明记录，第二条命令验证并按规范顺序收集这些记录，逐字节摘要后生成 proof index；第三条命令重新读取 index、binding 与每份 proof record，把状态原样合并到 <code>release:qualify</code> 的严格输入；第四条命令再次读取绑定的真实文件，并且只在 Release Constitution 为 <code>PROMOTE</code> 且最终 Manifest 为 <code>VERIFIED</code> 时返回 0，原子生成 Manifest、公开 Scorecard 和资格结论三件套；第五条命令绑定这三件套与原 RC tarball，逐项比较拟发布 stable tarball，只允许同基线版本替换及 README/CHANGELOG 发布元数据变化，并输出明确写有 <code>authorization: NOT_GRANTED</code> 的交接收据。当前候选依照 ADR 0307 不发布旧 Workbench client，因此真实浏览器记录会诚实标记 <code>WORKBENCH</code> 为 <code>INCONCLUSIVE</code>，不会把通用 Web 外壳冒充成 Workbench。有效但阻断/不完整的证据返回 2 并保留可审计产物；字节摘要、Git HEAD、已跟踪源码、资格组合或包行为不一致时返回 1 且不生成对应产物。所有 CLI 都不会自动打 tag、签名、上传或发布包。完整输入契约见 [v0.1 发布清单](docs/release-v0.1.md)。
 
 手动 **Release Candidate Evidence** workflow 会要求一个完整的 40 位 Control Plane commit SHA，只打包并绑定一次候选，然后让 Linux、macOS、Windows 下载同一组 tarball 生成三份平台证明；最终收集任务从候选包安装公开 CLI，生成可下载的 <code>release-evidence-index</code>。该 workflow 不执行资格提升、打 tag、创建 Release 或发布 npm。
 
-当前开发树包含 84 个测试文件、434 个测试，并由发布门禁统一执行静态检查、类型检查、构建、打包和 Harness Profile smoke。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针；每日兼容矩阵另对全部已声明 Harness 版本执行双插件联合 E2E 与打包安装探针。
+当前开发树包含 88 个测试文件、468 个测试，并由发布门禁统一执行静态检查、类型检查、构建、打包和 Harness Profile smoke。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针；每日兼容矩阵另对全部已声明 Harness 版本执行双插件联合 E2E 与打包安装探针。
 
 完整领域模型见 [CONTEXT.md](CONTEXT.md)，安全政策见 [SECURITY.md](SECURITY.md)，候选版审查见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
@@ -215,7 +238,7 @@ pnpm release:qualify -- --input .\release-qualification-input.json --output .\re
 
 <code>dsh-security-assurance</code> is an evidence-backed repository security assessment plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It integrates through public Harness and Cordis seams without modifying Harness Core, and exposes versioned, queryable, recoverable assessment results.
 
-This is an assurance plugin, not a general vulnerability scanner. Built-in capabilities include the Node <code>package.json</code> install-lifecycle check and pure normalization plus independent validation of frozen <code>npm-audit.json</code> and Gitleaks v8 JSON reports.
+This is an assurance plugin, not a general vulnerability scanner. Built-in capabilities include the Node <code>package.json</code> install-lifecycle check, npm publish surface, pnpm lockfile integrity, GitHub Actions permission and immutable-dependency checks, and pure normalization plus independent validation of frozen <code>npm-audit.json</code> and Gitleaks v8 JSON reports.
 
 ## Assessment at a glance
 
@@ -236,13 +259,16 @@ The Service resolves an authorized Catalog selection and freezes the complete Su
 
 | Item | Status |
 | --- | --- |
-| Assessment mode | <code>REPOSITORY</code>; exact-commit or Mission-produced-workspace <code>CHANGE</code>; and <code>TARGETED</code> for the default policy |
+| Assessment mode | <code>REPOSITORY</code>; exact-commit or Mission-produced-workspace <code>CHANGE</code>; and <code>TARGETED</code> for the bundled source policies |
 | Subjects | <code>git_revision</code>, <code>workspace_snapshot</code>, exact base/head <code>change</code>; Host-only Control Plane <code>workspace_change</code> |
 | <code>CHANGE</code> | Exact committed base-to-head pairs or Control Plane-frozen baseline-to-produced workspaces; scans the complete resulting tree |
-| <code>TARGETED</code> | <code>security/node-package-lifecycle</code> supports explicit relative files/directories in <code>git_revision</code> and <code>workspace_snapshot</code> Subjects; only in-target <code>package.json</code> files are evaluated |
+| <code>TARGETED</code> | The bundled Node lifecycle and GitHub Actions policies support explicit relative files/directories in <code>git_revision</code> and <code>workspace_snapshot</code> Subjects; only relevant manifests or workflows inside the Target are evaluated |
 | Default policy | <code>security/node-package-lifecycle</code> |
 | Optional npm audit policy | <code>security/npm-dependency-audit</code> |
 | Optional Gitleaks policy | <code>security/secret-leak-audit</code> |
+| Optional GitHub Actions policy | <code>security/github-actions-supply-chain</code> |
+| Optional npm publish surface policy | <code>security/npm-publish-surface</code> |
+| Optional pnpm lockfile policy | <code>security/pnpm-lockfile-integrity</code> |
 | Default profile | <code>security/standard</code> |
 | Harness versions | <code>0.1.2-alpha.1</code> (primary), <code>0.1.2-alpha.2</code>, <code>0.1.2-alpha.3</code>, <code>0.1.2-alpha.4</code>, <code>0.1.2-alpha.5</code>, <code>0.1.2-rc.1</code>, <code>0.1.3-alpha.1</code> |
 | Node.js | <code>^22.19.0 \|\| >=24.0.0</code> (CI covers 22 and 24) |
@@ -250,7 +276,7 @@ The Service resolves an authorized Catalog selection and freezes the complete Su
 
 The Service resolves authorized repositories and catalog choices first. Models must use the exact returned identifiers; paths and IDs are never guessed.
 
-<code>TARGETED</code> still freezes and digest-binds the complete Subject, then exposes only verified <code>package.json</code> slices inside the explicit Target to the bundled analyzer. Every Target path must name an existing entry or directory prefix. A nonexistent path is rejected before Assessment creation; an existing Target without an analyzable manifest seals <code>INDETERMINATE</code>. The npm audit and Gitleaks report policies do not yet claim <code>TARGETED</code> support because their external reports cannot independently prove an exact Target scan scope.
+<code>TARGETED</code> still freezes and digest-binds the complete Subject, then exposes only verified relevant slices inside the explicit Target: <code>package.json</code> for the Node lifecycle policy and <code>.github/workflows/*.yml|yaml</code> for the GitHub Actions policy. Every Target path must name an existing entry or directory prefix. A nonexistent path is rejected before Assessment creation. The npm publish surface, npm audit, Gitleaks, and pnpm lockfile policies do not yet claim <code>TARGETED</code> support because their root or external inputs cannot independently prove an exact Target scan scope.
 
 The Harness support window is an explicit, verified set: a daily [Harness Compatibility](https://github.com/bailong-Hakuryu/dsh-security-assurance/actions/workflows/harness-compat.yml) workflow discovers official repository tags, then runs the dual-plugin joint E2E (Mission → Developer workspace change → CHANGE Assessment → sealed submission → Quality Gate) and a packed fresh-profile installation with a live Web probe — on Ubuntu, macOS, and Windows for the primary target, and on Ubuntu for the remaining versions. New tags enter verification automatically but are not claimed as supported until the matrix passes (ADR 0310).
 
@@ -354,6 +380,7 @@ pnpm release:bind -- --input .\release-files.json --output .\release-file-bindin
 pnpm release:collect -- --input .\release-proof-input.json --output .\release-proof-index.json
 pnpm release:assemble -- --input .\release-qualification-draft.json --output .\release-qualification-input.json
 pnpm release:qualify -- --input .\release-qualification-input.json --output .\release-qualification
+pnpm release:handoff -- --input .\release-handoff-input.json --output .\release-promotion-handoff.json
 ~~~
 
 The first command records verified file facts but manufactures no test or
@@ -365,12 +392,17 @@ their unchanged statuses into the strict qualification input. The fourth
 rereads the bound files and exits `0` only when the
 Release Constitution says `PROMOTE` and the assembled Manifest is `VERIFIED`,
 atomically emitting the Manifest, public Scorecard, and qualification verdict.
+The fifth binds those three files and the retained RC tarball, compares every
+entry in the proposed stable tarball, permits only the same-base stable version
+transition plus README/CHANGELOG release metadata, and emits a receipt whose
+`authorization` is explicitly `NOT_GRANTED`.
 Because ADR 0307 excludes the retired Workbench client from the current
 candidate, its real-browser record honestly reports `WORKBENCH` as
 `INCONCLUSIVE`; a generic Web shell is never relabelled as Workbench proof.
 Valid blocked or incomplete evidence exits `2` with auditable output; byte,
-Git `HEAD`, tracked-source, or input mismatches exit `1` without output. None of
-the CLIs or proof emitters tag, upload, or publish a package. See the
+Git `HEAD`, tracked-source, portfolio, or package-behavior mismatches exit `1`
+without output. None of the CLIs or proof emitters tag, sign, upload, or publish
+a package. See the
 [v0.1 release checklist](docs/release-v0.1.md) for the input contracts.
 
 The manually triggered **Release Candidate Evidence** workflow requires an
@@ -379,7 +411,7 @@ reuses those tarballs for Linux, macOS, and Windows proof runs. Its final job
 installs the public collector from the candidate and uploads a deterministic
 `release-evidence-index`; it does not qualify, tag, release, or publish.
 
-The current development tree contains 84 test files and 434 tests; the release gate runs those tests together with linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
+The current development tree contains 88 test files and 468 tests; the release gate runs those tests together with linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
 
 </details>
 

@@ -1010,6 +1010,10 @@ _Avoid_: Average duration, provider bill, informal profiling
 The machine-readable digest-bound index connecting one exact candidate artifact to every required proof result, Support Matrix claim, limitation, and exception.
 _Avoid_: CI badge, README checklist, latest test run
 
+**Stable Promotion Handoff**:
+A non-authorizing digest-bound receipt proving that one proposed stable package preserves the behavior of an exactly qualified release candidate while identifying only permitted version and release-metadata changes.
+_Avoid_: Release approval, qualification verdict, publish action
+
 **Diagnostic Rerun**:
 A repetition used only to investigate an existing deterministic failure and incapable of replacing or erasing its release impact.
 _Avoid_: Flake retry, new qualified run, stochastic Evaluation repetition

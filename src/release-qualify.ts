@@ -12,9 +12,6 @@ import {
 } from 'node:fs/promises'
 import { basename, dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { z } from 'zod'
-
-import { digestEnvelopeV1Schema } from './digest-envelope.ts'
 import {
   assembleReleaseEvidenceManifestV1,
   type ReleaseEvidenceManifestV1,
@@ -31,29 +28,14 @@ import {
   type ReleaseFileBindingsV1,
 } from './release-file-bindings.ts'
 import {
+  RELEASE_QUALIFICATION_CLI_ENGINE_ID,
+  releaseQualificationVerdictV1Schema,
   releaseQualificationInputV1Schema,
   type ReleaseQualificationInputV1,
+  type ReleaseQualificationVerdictV1,
 } from './release-qualification.ts'
 
-const RELEASE_QUALIFICATION_CLI_ENGINE_ID = 'security/release-qualification-cli/v1' as const
-
 const maximumInputBytes = 50 * 1024 * 1024
-const releaseQualificationVerdictV1Schema = z.strictObject({
-  schemaVersion: z.literal(1),
-  engineId: z.literal(RELEASE_QUALIFICATION_CLI_ENGINE_ID),
-  evaluatedAtEpochMs: z.number().int().nonnegative(),
-  sourceRevision: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
-  manifestId: z.string().min(1).max(128),
-  releaseCandidateId: z.string().min(1).max(128),
-  candidateArtifactDigest: digestEnvelopeV1Schema,
-  releaseDecision: z.enum(['PROMOTE', 'BLOCKED', 'INCONCLUSIVE']),
-  manifestVerification: z.enum(['VERIFIED', 'BLOCKED', 'INCONCLUSIVE']),
-  qualification: z.enum(['PROMOTE', 'BLOCKED', 'INCONCLUSIVE']),
-})
-
-type ReleaseQualificationVerdictV1 = z.infer<
-  typeof releaseQualificationVerdictV1Schema
->
 
 type ReleaseQualificationIo = {
   readonly stdout: { write(value: string): unknown }

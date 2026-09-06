@@ -186,6 +186,49 @@ strict assembly and qualification-input schemas for external release
 automation. Assembly re-verifies the binding bytes and every indexed record,
 preserves failed and inconclusive status, and neither qualifies nor promotes.
 
+## Stable-promotion handoff
+
+After qualification exits `0`, build the proposed stable tarball from the same
+candidate while changing only the prerelease version token and bounded release
+documentation. Describe the retained RC tarball, the proposed stable tarball,
+and the exact qualification output directory:
+
+```json
+{
+  "schemaVersion": 1,
+  "qualificationOutputPath": "./release-qualification",
+  "qualifiedCandidateArtifact": {
+    "path": "./dsh-security-assurance-0.1.0-rc.11.tgz",
+    "mediaType": "application/gzip"
+  },
+  "proposedStableArtifact": {
+    "path": "./dsh-security-assurance-0.1.0.tgz",
+    "mediaType": "application/gzip"
+  },
+  "expectedStableVersion": "0.1.0"
+}
+```
+
+```sh
+pnpm release:handoff -- --input ./release-handoff-input.json --output ./release-promotion-handoff.json
+```
+
+The verifier strictly rereads and cross-checks the Manifest, public Scorecard
+reference, and verdict; requires `PROMOTE` plus `VERIFIED`; rehashes the
+retained RC tarball; and compares both bounded gzip/tar inventories. Paths,
+entry types, modes, and package name cannot change. `package.json` may change
+only its version, other package text may change only by exact replacement of
+the complete RC version token, and only README/CHANGELOG may contain other
+release-documentation edits. Added files, executable or binary drift, invalid
+archives, another semantic version line, or a tampered portfolio fail closed
+without a receipt.
+
+Success writes a deterministic `ReleasePromotionHandoffV1` receipt binding all
+five raw inputs and enumerating the permitted changes. The receipt always says
+`authorization: NOT_GRANTED`; it is evidence for the separate human release
+action, not permission to perform that action. The public schema is exported
+from `dsh-security-assurance/release-promotion`.
+
 ## Acceptance gates before stable promotion
 
 - Verify the delivered tarball digest and install it without workspace links.
@@ -200,10 +243,13 @@ preserves failed and inconclusive status, and neither qualifies nor promotes.
   any accepted Medium risk with explicit scope and expiry.
 - Confirm package ownership, npm authentication/2FA, GitHub destination, and
   final release notes.
+- Require a valid stable-promotion handoff receipt for the exact tarball selected
+  by the human release action.
 
 ## Promotion rule
 
 After every gate passes, promote the exact qualified code to `0.1.0` by changing
 only version, signature, and release metadata. Any behavior or configuration
-change creates a new release candidate and reruns qualification. Tagging,
-GitHub upload, and npm publication happen only after acceptance.
+change creates a new release candidate and reruns qualification. The handoff
+receipt proves package equivalence but grants no authority. Tagging, detached
+signature, GitHub upload, and npm publication happen only after acceptance.

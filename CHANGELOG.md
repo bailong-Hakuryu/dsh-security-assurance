@@ -27,6 +27,12 @@
   Contract before Coverage or Findings become verdict-bearing. Malformed,
   aliased, structurally unsupported, or tampered input fails closed without
   publishing attacker-controlled workflow prose.
+- Add a packaged `release:handoff` verifier and a versioned public promotion
+  receipt contract. It binds a verified `PROMOTE` qualification portfolio to
+  the retained RC tarball, compares a proposed stable tarball entry by entry,
+  permits only the exact RC-to-stable version-token transition plus bounded
+  README/CHANGELOG release metadata, and emits an explicitly non-authorizing
+  receipt without tagging, signing, uploading, or publishing.
 - Add a packaged `release:assemble` adapter and side-effect-free qualification
   input contracts. The adapter re-verifies the deterministic proof index,
   binding bytes, candidate identity, and referenced proof-record bytes before

@@ -82,6 +82,9 @@ describe('v0.1 release candidate package', () => {
     expect(packageJson.scripts?.['release:assemble']).toBe(
       'pnpm build && node lib/release-assemble.js',
     )
+    expect(packageJson.scripts?.['release:handoff']).toBe(
+      'pnpm build && node lib/release-handoff.js',
+    )
     expect(packageJson.bin?.['dsh-security-assurance-release-qualify']).toBe(
       './lib/release-qualify.js',
     )
@@ -93,6 +96,9 @@ describe('v0.1 release candidate package', () => {
     )
     expect(packageJson.bin?.['dsh-security-assurance-release-assemble']).toBe(
       './lib/release-assemble.js',
+    )
+    expect(packageJson.bin?.['dsh-security-assurance-release-handoff']).toBe(
+      './lib/release-handoff.js',
     )
     expect(packageJson.exports?.['./release-file-bindings']).toEqual({
       types: './lib/types/release-file-bindings.d.ts',
@@ -106,6 +112,10 @@ describe('v0.1 release candidate package', () => {
       types: './lib/types/release-qualification.d.ts',
       default: './lib/release-qualification.js',
     })
+    expect(packageJson.exports?.['./release-promotion']).toEqual({
+      types: './lib/types/release-promotion.d.ts',
+      default: './lib/release-promotion.js',
+    })
     expect(packageJson.files).toEqual(expect.arrayContaining([
       'lib/release-bind.js',
       'lib/release-collect.js',
@@ -114,12 +124,16 @@ describe('v0.1 release candidate package', () => {
       'lib/release-file-bindings.js',
       'lib/release-proof.js',
       'lib/release-qualification.js',
+      'lib/release-promotion.js',
+      'lib/release-handoff.js',
       'lib/types/release-file-bindings.d.ts',
       'lib/types/release-file-bindings.d.ts.map',
       'lib/types/release-proof.d.ts',
       'lib/types/release-proof.d.ts.map',
       'lib/types/release-qualification.d.ts',
       'lib/types/release-qualification.d.ts.map',
+      'lib/types/release-promotion.d.ts',
+      'lib/types/release-promotion.d.ts.map',
     ]))
   })
 

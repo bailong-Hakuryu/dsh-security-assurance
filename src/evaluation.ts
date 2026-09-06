@@ -3920,7 +3920,7 @@ const releaseEvidenceManifestReasonCodeSchema = z.enum(
   RELEASE_EVIDENCE_MANIFEST_REASON_CODES,
 )
 
-const releaseEvidenceScorecardReferenceV1Schema = z.strictObject({
+export const releaseEvidenceScorecardReferenceV1Schema = z.strictObject({
   engineId: z.literal(PUBLIC_SECURITY_SCORECARD_ENGINE_ID),
   publishedAtEpochMs: evaluationEpochMsSchema,
   releaseVersion: publicSemanticVersionSchema,

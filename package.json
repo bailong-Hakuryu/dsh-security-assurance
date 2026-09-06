@@ -13,7 +13,8 @@
     "dsh-security-assurance-release-bind": "./lib/release-bind.js",
     "dsh-security-assurance-release-collect": "./lib/release-collect.js",
     "dsh-security-assurance-release-assemble": "./lib/release-assemble.js",
-    "dsh-security-assurance-release-qualify": "./lib/release-qualify.js"
+    "dsh-security-assurance-release-qualify": "./lib/release-qualify.js",
+    "dsh-security-assurance-release-handoff": "./lib/release-handoff.js"
   },
   "exports": {
     ".": {
@@ -47,6 +48,10 @@
     "./release-qualification": {
       "types": "./lib/types/release-qualification.d.ts",
       "default": "./lib/release-qualification.js"
+    },
+    "./release-promotion": {
+      "types": "./lib/types/release-promotion.d.ts",
+      "default": "./lib/release-promotion.js"
     },
     "./tools": {
       "types": "./lib/types/tools.d.ts",
@@ -93,6 +98,8 @@
     "lib/release-proof.js",
     "lib/release-qualification.js",
     "lib/release-qualify.js",
+    "lib/release-promotion.js",
+    "lib/release-handoff.js",
     "lib/tools.js",
     "lib/control-plane-provider.js",
     "lib/host-repository-provider.js",
@@ -118,6 +125,8 @@
     "lib/types/release-proof.d.ts.map",
     "lib/types/release-qualification.d.ts",
     "lib/types/release-qualification.d.ts.map",
+    "lib/types/release-promotion.d.ts",
+    "lib/types/release-promotion.d.ts.map",
     "lib/types/digest-envelope.d.ts",
     "lib/types/digest-envelope.d.ts.map",
     "lib/types/tools.d.ts",
@@ -162,6 +171,7 @@
     "release:collect": "pnpm build && node lib/release-collect.js",
     "release:assemble": "pnpm build && node lib/release-assemble.js",
     "release:qualify": "pnpm build && node lib/release-qualify.js",
+    "release:handoff": "pnpm build && node lib/release-handoff.js",
     "release:check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm pack:dry-run && pnpm pack:profile-smoke"
   },
   "peerDependencies": {
