@@ -203,13 +203,37 @@ function pointerSegment(value: string): string {
   return value.replaceAll('~', '~0').replaceAll('/', '~1')
 }
 
-function permissionsAreReadOnly(value: unknown): boolean {
-  if (value === 'read-all') return true
+interface ReadOnlyPermissionBoundary {
+  readonly all: boolean
+  readonly values: ReadonlyMap<string, 'read' | 'none'>
+}
+
+function readOnlyPermissionBoundary(value: unknown): ReadOnlyPermissionBoundary | undefined {
+  if (value === 'read-all') return { all: true, values: new Map() }
   const permissionMap = record(value)
-  if (permissionMap === undefined) return false
-  return Object.values(permissionMap).every(permission => (
-    permission === 'read' || permission === 'none'
-  ))
+  if (permissionMap === undefined) return undefined
+  const values = new Map<string, 'read' | 'none'>()
+  for (const [name, permission] of Object.entries(permissionMap)) {
+    if (permission !== 'read' && permission !== 'none') return undefined
+    values.set(name, permission)
+  }
+  return { all: false, values }
+}
+
+function permissionsAreReadOnly(value: unknown): boolean {
+  return readOnlyPermissionBoundary(value) !== undefined
+}
+
+function permissionBoundaryIsWithin(
+  parent: ReadOnlyPermissionBoundary,
+  child: ReadOnlyPermissionBoundary,
+): boolean {
+  if (child.all) return parent.all
+  if (parent.all) return true
+  for (const [name, permission] of child.values) {
+    if (permission === 'read' && parent.values.get(name) !== 'read') return false
+  }
+  return true
 }
 
 function permissionViolations(workflow: JsonRecord): readonly DetectedViolation[] {
@@ -235,12 +259,19 @@ function permissionViolations(workflow: JsonRecord): readonly DetectedViolation[
       securityClaim: 'The workflow grants GitHub token permissions that are not statically read-only.',
     })
   }
+  const topLevelBoundary = Object.hasOwn(workflow, 'permissions')
+    ? readOnlyPermissionBoundary(workflow.permissions)
+    : undefined
   const jobs = record(workflow.jobs)
   if (jobs === undefined) return violations
   for (const jobId of Object.keys(jobs).sort()) {
     const job = record(jobs[jobId])
     if (job === undefined || !Object.hasOwn(job, 'permissions')) continue
-    if (!permissionsAreReadOnly(job.permissions)) {
+    const jobBoundary = readOnlyPermissionBoundary(job.permissions)
+    if (
+      jobBoundary === undefined
+      || (topLevelBoundary !== undefined && !permissionBoundaryIsWithin(topLevelBoundary, jobBoundary))
+    ) {
       violations.push({
         ruleId: 'JOB_PERMISSIONS_NOT_READ_ONLY',
         severity: 'HIGH',
@@ -357,6 +388,15 @@ function parseWorkflow(text: string): JsonRecord | undefined {
     },
   })
   if (hasAlias) return undefined
+  let hasMergeKey = false
+  visit(document, (key, node) => {
+    if (key !== 'key' || typeof node !== 'object' || node === null || !('value' in node)) return
+    if ((node as { readonly value?: unknown }).value === '<<') {
+      hasMergeKey = true
+      return visit.BREAK
+    }
+  })
+  if (hasMergeKey) return undefined
   return record(document.toJS({ maxAliasCount: 0 }))
 }
 

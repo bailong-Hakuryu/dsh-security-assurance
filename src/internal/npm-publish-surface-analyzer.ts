@@ -51,7 +51,7 @@ const NPM_PUBLISH_SURFACE_METHOD = {
   analyzerVersion: NPM_PUBLISH_SURFACE_ANALYZER_VERSION,
   methodVersion: 'dsh-npm-publish-surface-v1',
   input: 'the exact frozen root package.json text slice',
-  rule: 'publish identity, public access, explicit files allowlist, and declared entry-point containment',
+  rule: 'publish identity, explicit public access, strict SemVer, explicit files allowlist, and declared entry-point containment',
   exclusions: 'npm pack execution, filesystem enumeration, registry lookup, package provenance, and dependency security',
 } as const
 
@@ -202,6 +202,14 @@ function record(value: unknown): JsonRecord | undefined {
     : undefined
 }
 
+const SEMVER_IDENTIFIER = '(?:0|[1-9]\\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+const STRICT_SEMVER = new RegExp(
+  `^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)`
+  + `(?:-(?:${SEMVER_IDENTIFIER})(?:\\.(?:${SEMVER_IDENTIFIER}))*)?`
+  + `(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`,
+  'u',
+)
+
 function hasDuplicateJsonKey(text: string): boolean {
   type Frame = { readonly kind: 'OBJECT' | 'ARRAY'; readonly keys: Set<string> }
   const stack: Frame[] = []
@@ -344,7 +352,7 @@ function parseManifest(text: string): ParsedManifest | undefined {
   return {
     privateState,
     packageNameState: typeof name === 'string' && name.length > 0 ? 'PRESENT' : 'MISSING',
-    packageVersionState: typeof version === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u.test(version)
+    packageVersionState: typeof version === 'string' && STRICT_SEMVER.test(version)
       ? 'PRESENT'
       : 'MISSING',
     publishAccess: access === 'public' ? 'PUBLIC' : access === 'restricted' ? 'RESTRICTED' : 'DEFAULT',
@@ -437,8 +445,8 @@ export function analyzeNpmPublishSurface(input: {
     if (manifest.packageVersionState === 'MISSING') {
       add('NPM_PACKAGE_VERSION_MISSING', 'HIGH', '/version', 'The package manifest does not declare a valid publishable npm version.')
     }
-    if (manifest.publishAccess === 'RESTRICTED') {
-      add('NPM_PUBLISH_ACCESS_NOT_PUBLIC', 'MEDIUM', '/publishConfig/access', 'The package manifest restricts npm publication instead of declaring public access.')
+    if (manifest.publishAccess !== 'PUBLIC') {
+      add('NPM_PUBLISH_ACCESS_NOT_PUBLIC', 'MEDIUM', '/publishConfig/access', 'The package manifest does not explicitly declare public npm access.')
     }
     const broadFiles = manifest.files.some(pattern => pattern === '*' || pattern === '**' || pattern === '.' || pattern === './' || pattern.startsWith('/'))
     if (manifest.files.length === 0) {

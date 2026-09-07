@@ -250,6 +250,36 @@ jobs:
     })
     expect(emptyJobs.completionDisposition).toBe('INCOMPLETE')
     expect(emptyJobs.diagnostics).toContain('GITHUB_ACTIONS_WORKFLOW_INVALID_SHAPE')
+
+    const mergeKey = analyzeGitHubActionsWorkflows({
+      subjectDigest: subjectDigestFixture(),
+      slices: [workflowSlice('permissions: read-all\njobs:\n  test:\n    permissions:\n      <<: {contents: none}\n')],
+    })
+    expect(mergeKey.completionDisposition).toBe('INCOMPLETE')
+    expect(mergeKey.coverageClaims).toEqual([])
+    expect(mergeKey.diagnostics).toContain('GITHUB_ACTIONS_WORKFLOW_INVALID_YAML')
+  })
+
+  it('rejects a job permission map that widens an explicit top-level boundary', () => {
+    const contribution = analyzeGitHubActionsWorkflows({
+      subjectDigest: subjectDigestFixture(),
+      slices: [workflowSlice(`name: Narrow boundary
+on: push
+permissions: {}
+jobs:
+  test:
+    permissions: read-all
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo unsafe
+`)],
+    })
+    expect(contribution.completionDisposition).toBe('COMPLETE')
+    expect(contribution.candidateFindings).toHaveLength(1)
+    expect(contribution.evidence[0]?.value).toMatchObject({
+      entries: [{ ruleId: 'JOB_PERMISSIONS_NOT_READ_ONLY' }],
+    })
+    expect(contribution.candidateFindings[0]?.sourceAnchor.locator.value).toBe('/jobs/test/permissions')
   })
 
   it('independently re-derives Coverage and rejects a tampered Contribution', () => {

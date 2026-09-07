@@ -179,6 +179,29 @@ describe('npm publish surface Analyzer (unit)', () => {
     })
   })
 
+  it('requires explicit public access and strict SemVer syntax', () => {
+    const missingAccess = analyzeNpmPublishSurface({
+      subjectDigest: subjectDigestFixture(),
+      slices: [textSlice(CLEAN_MANIFEST.replace('{ "access": "public" }', '{}'))],
+    })
+    expect(missingAccess.candidateFindings).toHaveLength(1)
+    expect(missingAccess.evidence[0]?.value).toMatchObject({
+      manifest: { publishAccess: 'DEFAULT' },
+      entries: [{ ruleId: 'NPM_PUBLISH_ACCESS_NOT_PUBLIC' }],
+    })
+
+    for (const version of ['01.2.3', '1.2.3-..']) {
+      const invalidVersion = analyzeNpmPublishSurface({
+        subjectDigest: subjectDigestFixture(),
+        slices: [textSlice(CLEAN_MANIFEST.replace('1.0.0', version))],
+      })
+      expect(invalidVersion.candidateFindings).toHaveLength(1)
+      expect(invalidVersion.evidence[0]?.value).toMatchObject({
+        entries: [{ ruleId: 'NPM_PACKAGE_VERSION_MISSING' }],
+      })
+    }
+  })
+
   it('fails closed on malformed JSON, duplicate keys, invalid targets, and broad files patterns', () => {
     const duplicate = analyzeNpmPublishSurface({
       subjectDigest: subjectDigestFixture(),

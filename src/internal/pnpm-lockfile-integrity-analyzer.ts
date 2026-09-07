@@ -199,7 +199,14 @@ const DEPENDENCY_SECTIONS: readonly DependencySection[] = [
   'optionalDependencies',
 ]
 const EXACT_PNPM = /^pnpm@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u
-const SRI = /^(?:sha256|sha384|sha512)-[A-Za-z0-9+/]+={0,2}$/u
+
+function validSriDigest(value: string): boolean {
+  const match = /^(sha256|sha384|sha512)-([A-Za-z0-9+/]+={0,2})$/u.exec(value)
+  if (match === null) return false
+  const expectedLength = match[1] === 'sha256' ? 32 : match[1] === 'sha384' ? 48 : 64
+  const digest = Buffer.from(match[2]!, 'base64')
+  return digest.length === expectedLength && digest.toString('base64') === match[2]
+}
 
 function analyzerIdentity() {
   return {
@@ -345,6 +352,15 @@ function parseLockfile(text: string, manifest: ParsedManifest): ParsedLockfile |
       },
     })
     if (hasAlias) return undefined
+    let hasMergeKey = false
+    visit(document, (key, node) => {
+      if (key !== 'key' || typeof node !== 'object' || node === null || !('value' in node)) return
+      if ((node as { readonly value?: unknown }).value === '<<') {
+        hasMergeKey = true
+        return visit.BREAK
+      }
+    })
+    if (hasMergeKey) return undefined
     value = document.toJS({ maxAliasCount: 0 })
   } catch {
     return undefined
@@ -369,7 +385,7 @@ function parseLockfile(text: string, manifest: ParsedManifest): ParsedLockfile |
     const packageRecord = record(packageValue)
     if (packageRecord === undefined) return undefined
     const resolution = record(packageRecord.resolution)
-    if (resolution === undefined || typeof resolution.integrity !== 'string' || !SRI.test(resolution.integrity)) {
+    if (resolution === undefined || typeof resolution.integrity !== 'string' || !validSriDigest(resolution.integrity)) {
       missingIntegrityCount += 1
     }
   }

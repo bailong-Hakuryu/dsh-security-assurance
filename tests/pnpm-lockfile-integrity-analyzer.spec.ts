@@ -51,10 +51,12 @@ importers:
         version: 1.0.0
 packages:
   alpha@1.0.0:
-    resolution: {integrity: sha512-QUJDRA==}
+    resolution: {integrity: sha512-q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urqw==}
 snapshots:
   alpha@1.0.0: {}
 `
+
+const INVALID_LENGTH_SRI_LOCKFILE = CLEAN_LOCKFILE.replace('sha512-q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urqw==', 'sha512-a')
 const DRIFTED_LOCKFILE = `lockfileVersion: '9.0'
 importers:
   .:
@@ -229,11 +231,24 @@ describe('pnpm lockfile integrity Analyzer (unit)', () => {
     expect(otherManager.completionDisposition).toBe('INCOMPLETE')
     expect(otherManager.candidateFindings).toEqual([])
     expect(otherManager.diagnostics).toContain('PNPM_PACKAGE_MANAGER_UNSUPPORTED')
+
+    const invalidSri = analyzePnpmLockfileIntegrity({
+      subjectDigest: subjectDigestFixture(),
+      slices: [
+        textSlice('package.json', MANIFEST),
+        textSlice('pnpm-lock.yaml', INVALID_LENGTH_SRI_LOCKFILE),
+      ],
+    })
+    expect(invalidSri.candidateFindings).toHaveLength(1)
+    expect(invalidSri.evidence[0]?.value).toMatchObject({
+      lockfile: { missingIntegrityCount: 1 },
+      entries: [{ ruleId: 'PNPM_PACKAGE_INTEGRITY_MISSING' }],
+    })
   })
 
   it('independently re-derives Coverage and never publishes a tampered claim', () => {
     const subjectDigest = subjectDigestFixture()
-    const driftOnlyLockfile = DRIFTED_LOCKFILE.replace('resolution: {}', 'resolution: {integrity: sha512-QUJDRA==}')
+    const driftOnlyLockfile = DRIFTED_LOCKFILE.replace('resolution: {}', 'resolution: {integrity: sha512-q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urqw==}')
     const slices = [
       textSlice('package.json', MANIFEST),
       textSlice('pnpm-lock.yaml', driftOnlyLockfile),
