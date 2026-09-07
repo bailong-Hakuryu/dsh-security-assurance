@@ -18,6 +18,8 @@
 
 这是一个安全保障插件，不是通用漏洞扫描器。当前内建能力包括 Node 项目的 <code>package.json</code> 安装生命周期检查、npm 发布面、pnpm 锁文件完整性、GitHub Actions 权限与不可变依赖检查，以及对冻结 <code>npm-audit.json</code> 和 Gitleaks v8 JSON 报告的纯归一化与独立验证。
 
+一次扫描发现不等于可审计的安全结论：输入可能被篡改、截断，或与冻结仓库不一致。Security Assurance 只接收冻结 Subject 上的已验证 slice，并在独立验证和 sealed submission 后给出 verdict。
+
 ### 评估如何形成可信结论
 
 <p align="center">
@@ -60,9 +62,13 @@ Harness 支持窗口是一个显式的已验证集合：每日 [Harness Compatib
 
 独立工具与 Workbench 的 Catalog 契约保持不变，只向模型提供精确提交 <code>change</code>。当 Control Plane 完成 Developer 与 Implementation Evidence 后，Provider 会从不可伪造的执行上下文接收 Host 专用 <code>workspace_change</code>，同时核对分支、baseline HEAD、Git 状态指纹、逐字节产出变更指纹与完整结果树；任何漂移都会在创建 Assessment 前 fail closed。
 
-### 安装（Harness Web）
+### 3 分钟最短安装（Harness Web）
 
 兼容 DeepSeek Harness <code>0.1.2-alpha.1</code> 至 <code>0.1.2-rc.1</code> 及 <code>0.1.3-alpha.1</code>（显式已验证集合，见上方支持范围），要求 Node.js <code>^22.19.0 || >=24.0.0</code> 和 Harness CLI。将终端当前目录设为要评估的 Git 仓库，然后直接安装 GitHub Release 中已经构建的包：
+
+1. 下载对应 Release 的 tarball。
+2. 在目标仓库目录安装插件并检查最终组合。
+3. 启动 Harness Web，然后运行一个明确的 <code>/security</code> 评估。
 
 ~~~powershell
 dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.11/dsh-security-assurance-0.1.0-rc.11.tgz
@@ -240,6 +246,8 @@ pnpm release:handoff -- --input .\release-handoff-input.json --output .\release-
 
 This is an assurance plugin, not a general vulnerability scanner. Built-in capabilities include the Node <code>package.json</code> install-lifecycle check, npm publish surface, pnpm lockfile integrity, GitHub Actions permission and immutable-dependency checks, and pure normalization plus independent validation of frozen <code>npm-audit.json</code> and Gitleaks v8 JSON reports.
 
+A scan finding is not automatically an auditable security conclusion: input may be tampered with, truncated, or detached from the frozen repository. Security Assurance accepts only verified slices from a frozen Subject, then emits a verdict after independent validation and sealed submission.
+
 ## Assessment at a glance
 
 <p align="center">
@@ -284,9 +292,13 @@ Exact-commit <code>CHANGE</code> mode freezes the resolved base and head identit
 
 The standalone tool and Workbench catalog remains backward compatible and exposes only exact-commit <code>change</code> to models. After a Control Plane Developer run publishes Implementation Evidence, its Provider receives a Host-only <code>workspace_change</code> from the unforgeable execution context. Security Assurance independently matches branch, baseline HEAD, Git-status fingerprint, byte-exact produced-change fingerprint, and the complete resulting tree before creating an Assessment; any drift fails closed.
 
-## Install in Harness Web
+## Three-minute install in Harness Web
 
 Compatible with DeepSeek Harness <code>0.1.2-alpha.1</code> through <code>0.1.2-rc.1</code> and <code>0.1.3-alpha.1</code> (an explicit, verified set; see the support matrix above). Requires Node.js <code>^22.19.0 || >=24.0.0</code> and the Harness CLI. Install the prebuilt GitHub Release package directly:
+
+1. Download the tarball from the matching Release.
+2. Install it from the repository you want to assess and inspect the composed profile.
+3. Start Harness Web and run an explicit <code>/security</code> assessment.
 
 ~~~powershell
 dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.11/dsh-security-assurance-0.1.0-rc.11.tgz
