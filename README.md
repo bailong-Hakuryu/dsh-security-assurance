@@ -227,7 +227,7 @@ pnpm release:handoff -- --input .\release-handoff-input.json --output .\release-
 
 手动 **Release Candidate Evidence** workflow 会要求一个完整的 40 位 Control Plane commit SHA，只打包并绑定一次候选，然后让 Linux、macOS、Windows 下载同一组 tarball 生成三份平台证明；最终收集任务从候选包安装公开 CLI，生成可下载的 <code>release-evidence-index</code>。该 workflow 不执行资格提升、打 tag、创建 Release 或发布 npm。
 
-当前开发树包含 88 个测试文件、468 个测试，并由发布门禁统一执行静态检查、类型检查、构建、打包和 Harness Profile smoke。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针；每日兼容矩阵另对全部已声明 Harness 版本执行双插件联合 E2E 与打包安装探针。
+当前开发树包含 88 个测试文件、470 个测试，并由发布门禁统一执行静态检查、类型检查、构建、打包和 Harness Profile smoke。公开 CI 在 Ubuntu、macOS 和 Windows 上从两个 tarball 重建 fresh Profile 并执行 Web 探针；每日兼容矩阵另对全部已声明 Harness 版本执行双插件联合 E2E 与打包安装探针。
 
 完整领域模型见 [CONTEXT.md](CONTEXT.md)，安全政策见 [SECURITY.md](SECURITY.md)，候选版审查见 [SECURITY-REVIEW.md](SECURITY-REVIEW.md)。
 
@@ -411,7 +411,7 @@ reuses those tarballs for Linux, macOS, and Windows proof runs. Its final job
 installs the public collector from the candidate and uploads a deterministic
 `release-evidence-index`; it does not qualify, tag, release, or publish.
 
-The current development tree contains 88 test files and 468 tests; the release gate runs those tests together with linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
+The current development tree contains 88 test files and 470 tests; the release gate runs those tests together with linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
 
 </details>
 
