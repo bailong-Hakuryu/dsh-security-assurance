@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Admit DeepSeek Harness `0.1.5-alpha.2` into the closed verified
+  compatibility set after its dynamically discovered lanes passed every
+  non-admission composition check. Adapt the test Inbox double to the public
+  Agent contract and preserve Security error codes across Harness's bundled
+  ToolRuntime boundary. Keep the package peer range and bilingual support
+  documentation aligned with the exact-version invariant.
+
 ## [0.1.0-rc.12] - 2026-09-09
 
 - Admit DeepSeek Harness `0.1.3-alpha.2` and `0.1.5-alpha.1` into the closed

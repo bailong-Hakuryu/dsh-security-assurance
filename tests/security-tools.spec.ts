@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentStatus } from '@deepseek-ai/dsh-agent'
+import AgentRegistry from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentStatus, Inbox } from '@deepseek-ai/dsh-agent'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import { ToolCallId as CallId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
@@ -31,42 +31,109 @@ afterEach(async () => {
 
 interface StubAgent {
   readonly agent: Agent
+  readonly inbox: StubInbox
   readonly session: Session
   readonly steered: ReturnType<typeof createUserMessage>[]
   setStatus(status: AgentStatus): void
+}
+
+type InboxTarget = Parameters<Inbox['append']>[0]
+type InboxMessage = Parameters<Inbox['append']>[1]
+type InboxMessageId = Parameters<Inbox['replace']>[0]
+
+/** Test-owned Inbox double covering only the public operations exercised here. */
+class StubInbox {
+  private readonly pending: Record<InboxTarget, InboxMessage[]> = {
+    'next-turn': [],
+    'next-step': [],
+  }
+
+  get nextTurn(): readonly InboxMessage[] { return this.pending['next-turn'] }
+  get nextStep(): readonly InboxMessage[] { return this.pending['next-step'] }
+
+  clear(): void {
+    this.pending['next-step'].splice(0)
+    this.pending['next-turn'].splice(0)
+  }
+
+  append(target: InboxTarget, message: InboxMessage): void {
+    this.pending[target].push(message)
+  }
+
+  prepend(target: InboxTarget, message: InboxMessage): void {
+    this.pending[target].unshift(message)
+  }
+
+  replace(messageId: InboxMessageId, newMessage: InboxMessage): boolean {
+    const location = this.locate(messageId)
+    if (location === undefined) return false
+    this.pending[location.target].splice(location.index, 1, newMessage)
+    return true
+  }
+
+  remove(messageId: InboxMessageId): boolean {
+    const location = this.locate(messageId)
+    if (location === undefined) return false
+    this.pending[location.target].splice(location.index, 1)
+    return true
+  }
+
+  splice(
+    target: InboxTarget,
+    start: number,
+    deleteCount: number,
+    inserted: InboxMessage[],
+  ): InboxMessage[] {
+    return this.pending[target].splice(start, deleteCount, ...inserted)
+  }
+
+  claim(target: InboxTarget): InboxMessage[] {
+    const claimed = this.pending['next-step'].splice(0)
+    if (target === 'next-turn') claimed.push(...this.pending['next-turn'].splice(0, 1))
+    return claimed
+  }
+
+  private locate(messageId: InboxMessageId): { target: InboxTarget, index: number } | undefined {
+    for (const target of ['next-turn', 'next-step'] as const) {
+      const index = this.pending[target].findIndex(message => message.id === messageId)
+      if (index >= 0) return { target, index }
+    }
+    return undefined
+  }
 }
 
 function stubAgent(rawId: string, supplied?: Session): StubAgent {
   const session = supplied ?? Session.create(SessionId(rawId))
   let status: AgentStatus = 'running'
   const steered: ReturnType<typeof createUserMessage>[] = []
+  const inbox = new StubInbox()
   const agent: Agent = {
     id: session.id,
     options: {},
     session,
-    inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
+    inbox: inbox as unknown as Agent['inbox'],
     get status() { return status },
     ctx: new Context(),
     send: () => {},
     followup: () => {},
     steer: message => { steered.push(message) },
-    inject(input) { this.inbox.append('next-step', input) },
+    inject(input) { inbox.append('next-step', input) },
     cancel() {},
     runMaintenance: task => task(new AbortController().signal),
     whenIdle: () => Promise.resolve(),
   }
-  return { agent, session, steered, setStatus(value) { status = value } }
+  return { agent, inbox, session, steered, setStatus(value) { status = value } }
 }
 
 function openTurn(stub: StubAgent): number {
   const turn = readSessionEvents(stub.session)
     .filter(event => event.type === 'turn/start')
     .reduce((maximum, event) => Math.max(maximum, event.data.turn), 0) + 1
-  stub.agent.inbox.append('next-turn', createUserMessage({
+  stub.inbox.append('next-turn', createUserMessage({
     content: [{ type: 'text', text: 'Read the current assessment status.' }],
     source: { kind: 'user' },
   }))
-  const admitted = stub.agent.inbox.claim('next-turn', turn)
+  const admitted = stub.inbox.claim('next-turn')
   stub.session.append('turn/start', { turn })
   for (const message of admitted) stub.session.append('user/message', message, { surfaceOp: 'append' })
   return turn

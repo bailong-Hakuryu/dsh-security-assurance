@@ -43,6 +43,7 @@ const PUBLISHED_VERSIONS = [
   '0.1.3-alpha.1',
   '0.1.3-alpha.2',
   '0.1.5-alpha.1',
+  '0.1.5-alpha.2',
 ] as const
 
 function tagLine(version: string, index: number, peeled = false): string {
@@ -102,6 +103,7 @@ describe('declared Harness compatibility window', () => {
       '0.1.3-alpha.1',
       '0.1.3-alpha.2',
       '0.1.5-alpha.1',
+      '0.1.5-alpha.2',
     ])
     expect(SUPPORTED_HARNESS_VERSIONS[0]).toBe(TARGET_HARNESS_VERSION)
     expect(isSupportedHarnessVersion('0.1.2-alpha.1')).toBe(true)
@@ -110,6 +112,7 @@ describe('declared Harness compatibility window', () => {
     expect(isSupportedHarnessVersion('0.1.3-alpha.1')).toBe(true)
     expect(isSupportedHarnessVersion('0.1.3-alpha.2')).toBe(true)
     expect(isSupportedHarnessVersion('0.1.5-alpha.1')).toBe(true)
+    expect(isSupportedHarnessVersion('0.1.5-alpha.2')).toBe(true)
     expect(isSupportedHarnessVersion('0.1.6-alpha.1')).toBe(false)
     expect(isSupportedHarnessVersion('0.1.1-rc.2')).toBe(false)
   })
@@ -134,6 +137,11 @@ describe('declared Harness compatibility window', () => {
       { packageName: '@deepseek-ai/dsh-invariants', actual: '0.1.5-alpha.1' },
       { packageName: '@deepseek-ai/dsh-typert-registry', actual: '0.1.5-alpha.1' },
     ], SUPPORTED_HARNESS_VERSIONS)).toEqual({ status: 'SUPPORTED', version: '0.1.5-alpha.1' })
+
+    expect(evaluateHarnessVersionAdmission([
+      { packageName: '@deepseek-ai/dsh-invariants', actual: '0.1.5-alpha.2' },
+      { packageName: '@deepseek-ai/dsh-typert-registry', actual: '0.1.5-alpha.2' },
+    ], SUPPORTED_HARNESS_VERSIONS)).toEqual({ status: 'SUPPORTED', version: '0.1.5-alpha.2' })
 
     expect(evaluateHarnessVersionAdmission([
       { packageName: '@deepseek-ai/dsh-invariants', actual: '0.1.6-alpha.1' },
@@ -188,7 +196,7 @@ describe('harness-compat-matrix discovery', () => {
 
     expect(result.status).toBe(0)
     const matrix = parseMatrix(result.stdout)
-    expect(matrix.include).toHaveLength(22)
+    expect(matrix.include).toHaveLength(24)
 
     const target = matrix.include.filter(lane => lane.track === 'target')
     expect(target.map(lane => lane.harness)).toEqual(Array(6).fill(TARGET_HARNESS_VERSION))
@@ -199,7 +207,7 @@ describe('harness-compat-matrix discovery', () => {
     expect(target.every(lane => lane.ref === `dsh-v${TARGET_HARNESS_VERSION}`)).toBe(true)
     expect(target.every(lane => lane.commit === tagCommit(TARGET_HARNESS_VERSION))).toBe(true)
 
-    for (const version of ['0.1.2-alpha.2', '0.1.2-alpha.3', '0.1.2-alpha.4', '0.1.2-alpha.5', '0.1.2-rc.1', '0.1.3-alpha.1', '0.1.3-alpha.2', '0.1.5-alpha.1']) {
+    for (const version of ['0.1.2-alpha.2', '0.1.2-alpha.3', '0.1.2-alpha.4', '0.1.2-alpha.5', '0.1.2-rc.1', '0.1.3-alpha.1', '0.1.3-alpha.2', '0.1.5-alpha.1', '0.1.5-alpha.2']) {
       const lanes = matrix.include.filter(lane => lane.harness === version)
       expect(lanes.map(lane => lane.track)).toEqual(['supported', 'supported'])
       expect(lanes.map(lane => lane.os)).toEqual(['ubuntu-latest', 'ubuntu-latest'])
@@ -219,7 +227,7 @@ describe('harness-compat-matrix discovery', () => {
 
     expect(result.status).toBe(0)
     const matrix = parseMatrix(result.stdout)
-    expect(matrix.include).toHaveLength(22)
+    expect(matrix.include).toHaveLength(24)
     const alpha4 = matrix.include.filter(lane => lane.harness === '0.1.2-alpha.4')
     expect(alpha4).toHaveLength(2)
     expect(alpha4.every(lane => lane.commit === '63'.padStart(40, '0'))).toBe(true)
@@ -230,7 +238,7 @@ describe('harness-compat-matrix discovery', () => {
 
     expect(result.status).toBe(0)
     const matrix = parseMatrix(result.stdout)
-    expect(matrix.include).toHaveLength(24)
+    expect(matrix.include).toHaveLength(26)
     const recent = matrix.include.filter(lane => lane.track === 'recent')
     expect(recent).toHaveLength(2)
     expect(recent.every(lane => lane.harness === '0.1.6-alpha.1')).toBe(true)

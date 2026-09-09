@@ -1,8 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
-import { createUserMessage, HarnessError } from '@deepseek-ai/dsh-llm'
-import { defineTool, type GenericCallView, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { ToolArgsError, defineTool, type GenericCallView, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import {
   cancelAssessmentRequestSchema,
   getCatalogRequestSchema,
@@ -503,8 +503,25 @@ const FINDINGS_OUTPUT = {
   }]),
 } as const
 
+/**
+ * Preserve machine-routable Security codes when Harness bundles ToolRuntime
+ * with its own copy of the LLM error module. In that layout an independently
+ * imported HarnessError fails ToolRuntime's process-local `instanceof` check;
+ * inheriting from its exported ToolArgsError retains the owning runtime brand.
+ */
+class SecurityToolError extends ToolArgsError {
+  constructor(message: string, code: string) {
+    super([message])
+    this.name = 'SecurityToolError'
+    Object.defineProperties(this, {
+      code: { configurable: true, enumerable: true, value: code, writable: false },
+      message: { configurable: true, enumerable: false, value: message, writable: true },
+    })
+  }
+}
+
 function reject(message: string, code: string): never {
-  throw new HarnessError(message, code)
+  throw new SecurityToolError(message, code)
 }
 
 /** A model tool may act only for the exact live Agent inside its open driver turn. */
