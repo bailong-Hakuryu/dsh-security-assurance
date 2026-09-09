@@ -958,6 +958,12 @@ describe('Security Assurance Control Plane Provider', () => {
     )
     await firstContext.engineeringControlPlane.whenReady()
     const firstAdapterFiber = await firstContext.plugin(SecurityAssuranceControlPlaneProvider)
+    let resolveAnalyzerStarted!: (assessmentId: string) => void
+    const analyzerStarted = new Promise<string>(resolve => { resolveAnalyzerStarted = resolve })
+    const disposeBlockingAnalyzer = registerBlockingCancellationAnalyzer(
+      firstContext,
+      resolveAnalyzerStarted,
+    )
 
     let missionId: string
     try {
@@ -972,9 +978,20 @@ describe('Security Assurance Control Plane Provider', () => {
         descriptor: SECURITY_ASSURANCE_CONTROL_PLANE_DESCRIPTOR,
         state: 'begun',
       })])
+      const firstAssessmentId = await Promise.race([
+        analyzerStarted,
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error('Blocking Security Analyzer was not invoked')), 15_000)
+        }),
+      ])
+      await expect(firstContext.securityAssurance.getAssessment(firstInvocation, {
+        schemaVersion: 1,
+        assessmentId: firstAssessmentId as never,
+      })).resolves.toMatchObject({ ok: true, value: { state: 'RUNNING' } })
     } finally {
       await firstAdapterFiber.dispose()
       await firstControlPlaneFiber.dispose()
+      disposeBlockingAnalyzer()
       await firstSecurityFiber.dispose()
       disposeFirstScriptedProvider()
       await firstSubagentFiber.dispose()
@@ -1228,6 +1245,12 @@ describe('Security Assurance Control Plane Provider', () => {
     const firstAdapterFiber = await firstContext.plugin(SecurityAssuranceControlPlaneProvider)
     let resolveAssessmentStarted!: (assessmentId: string) => void
     const assessmentStarted = new Promise<string>(resolve => { resolveAssessmentStarted = resolve })
+    let resolveAnalyzerStarted!: (assessmentId: string) => void
+    const analyzerStarted = new Promise<string>(resolve => { resolveAnalyzerStarted = resolve })
+    const disposeBlockingAnalyzer = registerBlockingCancellationAnalyzer(
+      firstContext,
+      resolveAnalyzerStarted,
+    )
     let interruptedAssessmentId: string | undefined
     const disposeCheckpoint = installControlPlaneCancellationCrashCheckpoint(
       firstContext.securityAssurance,
@@ -1255,6 +1278,17 @@ describe('Security Assurance Control Plane Provider', () => {
           setTimeout(() => reject(new Error('Security Assessment did not reach the start checkpoint')), 15_000)
         }),
       ])
+      const runningAssessmentId = await Promise.race([
+        analyzerStarted,
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error('Blocking Security Analyzer was not invoked')), 15_000)
+        }),
+      ])
+      expect(runningAssessmentId).toBe(startedAssessmentId)
+      await expect(firstContext.securityAssurance.getAssessment(firstInvocation, {
+        schemaVersion: 1,
+        assessmentId: startedAssessmentId as never,
+      })).resolves.toMatchObject({ ok: true, value: { state: 'RUNNING' } })
 
       await expect(cancelMissionAtLatestRevision(
         firstContext,
@@ -1287,6 +1321,7 @@ describe('Security Assurance Control Plane Provider', () => {
       disposeCheckpoint()
       await firstAdapterFiber.dispose()
       await firstControlPlaneFiber.dispose()
+      disposeBlockingAnalyzer()
       await firstSecurityFiber.dispose()
       disposeFirstScriptedProvider()
       await firstSubagentFiber.dispose()
