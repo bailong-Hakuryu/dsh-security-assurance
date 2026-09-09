@@ -119,9 +119,10 @@ function registerScriptedEngineeringProvider(
   return ctx.subagents.registerProvider(provider)
 }
 
-function registerBlockingCancellationAnalyzer(
+function registerCancellationFixtureAnalyzer(
   ctx: Context,
   onStarted: (assessmentId: string) => void,
+  behavior: 'BLOCK_UNTIL_ABORTED' | 'COMPLETE' = 'BLOCK_UNTIL_ABORTED',
 ): () => void {
   const descriptor: AnalyzerDescriptorV1 = {
     schemaVersion: 1,
@@ -147,6 +148,33 @@ function registerBlockingCancellationAnalyzer(
     descriptor: normalizedDescriptor,
     analyze(input, options) {
       onStarted(input.assessmentId)
+      if (behavior === 'COMPLETE') {
+        return Promise.resolve({
+          schemaVersion: 1 as const,
+          analyzerIdentity: {
+            analyzerId: normalizedDescriptor.analyzerId,
+            analyzerVersion: normalizedDescriptor.analyzerVersion,
+            descriptorSchemaVersion: normalizedDescriptor.descriptorSchemaVersion,
+            buildDigest: normalizedDescriptor.buildDigest,
+          },
+          subjectDigest: input.subject.digest,
+          completionDisposition: 'COMPLETE' as const,
+          coverageClaims: [{
+            obligationId: 'application-security-analysis',
+            completion: 'COMPLETE' as const,
+            evidenceArtifactId: 'blocking-cancellation-evidence',
+          }],
+          candidateFindings: [],
+          evidence: [{
+            artifactId: 'blocking-cancellation-evidence',
+            schemaId: 'fixture/blocking-cancellation-evidence',
+            mediaType: 'application/json',
+            value: { schemaVersion: 1, result: 'recovered-clean' },
+          }],
+          diagnostics: [],
+          resourceUse: { filesRead: 0, bytesRead: 0 },
+        })
+      }
       return new Promise<never>((_resolve, reject) => {
         const signal = options?.signal
         if (signal === undefined) return
@@ -960,7 +988,7 @@ describe('Security Assurance Control Plane Provider', () => {
     const firstAdapterFiber = await firstContext.plugin(SecurityAssuranceControlPlaneProvider)
     let resolveAnalyzerStarted!: (assessmentId: string) => void
     const analyzerStarted = new Promise<string>(resolve => { resolveAnalyzerStarted = resolve })
-    const disposeBlockingAnalyzer = registerBlockingCancellationAnalyzer(
+    const disposeBlockingAnalyzer = registerCancellationFixtureAnalyzer(
       firstContext,
       resolveAnalyzerStarted,
     )
@@ -1010,6 +1038,13 @@ describe('Security Assurance Control Plane Provider', () => {
     )
     await restartedContext.engineeringControlPlane.whenReady()
     const restartedAdapterFiber = await restartedContext.plugin(SecurityAssuranceControlPlaneProvider)
+    // Recovery must recompose the frozen Analyzer descriptor exactly; only the
+    // new process-local factory behavior changes so the interrupted work can finish.
+    const disposeRestartedAnalyzer = registerCancellationFixtureAnalyzer(
+      restartedContext,
+      () => {},
+      'COMPLETE',
+    )
 
     try {
       const recovered = await restartedContext.engineeringControlPlane.status(
@@ -1043,6 +1078,7 @@ describe('Security Assurance Control Plane Provider', () => {
     } finally {
       await restartedAdapterFiber.dispose()
       await restartedControlPlaneFiber.dispose()
+      disposeRestartedAnalyzer()
       await restartedSecurityFiber.dispose()
       disposeRestartedScriptedProvider()
       await restartedSubagentFiber.dispose()
@@ -1070,7 +1106,7 @@ describe('Security Assurance Control Plane Provider', () => {
     await ctx.securityAssurance.whenReady()
     let resolveAnalyzerStarted!: (assessmentId: string) => void
     const analyzerStarted = new Promise<string>(resolve => { resolveAnalyzerStarted = resolve })
-    const disposeBlockingAnalyzer = registerBlockingCancellationAnalyzer(ctx, resolveAnalyzerStarted)
+    const disposeBlockingAnalyzer = registerCancellationFixtureAnalyzer(ctx, resolveAnalyzerStarted)
     const invocation = referenceHostInvocation(ctx.securityAssurance)
     const registered = await ctx.securityAssurance.registerRepository(invocation, {
       schemaVersion: 1,
@@ -1247,7 +1283,7 @@ describe('Security Assurance Control Plane Provider', () => {
     const assessmentStarted = new Promise<string>(resolve => { resolveAssessmentStarted = resolve })
     let resolveAnalyzerStarted!: (assessmentId: string) => void
     const analyzerStarted = new Promise<string>(resolve => { resolveAnalyzerStarted = resolve })
-    const disposeBlockingAnalyzer = registerBlockingCancellationAnalyzer(
+    const disposeBlockingAnalyzer = registerCancellationFixtureAnalyzer(
       firstContext,
       resolveAnalyzerStarted,
     )
