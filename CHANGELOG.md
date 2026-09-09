@@ -4,6 +4,11 @@
 
 ## [0.1.0-rc.12] - 2026-09-09
 
+- Admit DeepSeek Harness `0.1.3-alpha.2` and `0.1.5-alpha.1` into the closed
+  verified compatibility set after their dynamically discovered lanes passed
+  build and all non-admission joint checks, reaching only the expected
+  exact-version invariant. Keep peer declarations and bilingual support docs
+  aligned while retaining `0.1.2-alpha.1` as the primary target.
 - Bound GitHub Actions supply-chain Candidate emission to the largest set that
   fits the v1 sealed Evidence and bundle-record budgets. Higher-cardinality
   workflows now seal fail-closed with explicit incomplete Coverage instead of

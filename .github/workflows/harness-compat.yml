@@ -128,8 +128,8 @@ jobs:
           path: deepseek-harness-latest
           persist-credentials: false
 
-      # Control Plane stays on main until its rc.10 provider binding has a
-      # new release tag, matching the primary CI qualification layout.
+      # Control Plane stays on main so each lane validates the exact jointly
+      # developed release candidate before a new package tag exists.
       - name: Check out qualified Control Plane
         uses: actions/checkout@v6
         with:
