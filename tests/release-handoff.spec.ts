@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import { gzipSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 
+import { SECURITY_ASSURANCE_PRODUCT_VERSION } from '../src/contracts.js'
 import type { DigestEnvelopeV1 } from '../src/digest-envelope.js'
 import { releasePromotionHandoffV1Schema } from '../src/release-promotion.js'
 import { releaseQualificationFixture } from './support/release-qualification-fixture.js'
@@ -17,7 +18,7 @@ const execute = promisify(execFile)
 const bindCliPath = fileURLToPath(new URL('../src/release-bind.ts', import.meta.url))
 const qualifyCliPath = fileURLToPath(new URL('../src/release-qualify.ts', import.meta.url))
 const handoffCliPath = fileURLToPath(new URL('../src/release-handoff.ts', import.meta.url))
-const candidateVersion = '0.1.0-rc.11'
+const candidateVersion = SECURITY_ASSURANCE_PRODUCT_VERSION
 const stableVersion = '0.1.0'
 
 type PackageFile = {

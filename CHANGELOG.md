@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.12] - 2026-09-09
+
 - Bound GitHub Actions supply-chain Candidate emission to the largest set that
   fits the v1 sealed Evidence and bundle-record budgets. Higher-cardinality
   workflows now seal fail-closed with explicit incomplete Coverage instead of

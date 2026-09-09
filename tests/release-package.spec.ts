@@ -32,7 +32,7 @@ const implementationSpecification = readFileSync(
 
 describe('v0.1 release candidate package', () => {
   it('binds runtime and package identity to the candidate version', () => {
-    expect(packageJson.version).toBe('0.1.0-rc.11')
+    expect(packageJson.version).toBe('0.1.0-rc.12')
     expect(SECURITY_ASSURANCE_PRODUCT_VERSION).toBe(packageJson.version)
   })
 
@@ -48,6 +48,8 @@ describe('v0.1 release candidate package', () => {
     expect(implementationSpecification).toContain(
       `The qualified candidate uses \`${version}\``,
     )
+    expect(readme).toContain('/dsh-engineering-control-plane/releases/tag/v0.1.11')
+    expect(readme).toContain('dsh-engineering-control-plane-0.1.11.tgz')
   })
 
   it('is explicitly publishable under the reviewed license', () => {

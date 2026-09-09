@@ -3,7 +3,7 @@
 ## Candidate
 
 - Package: `dsh-security-assurance`
-- Candidate version: `0.1.0-rc.11`
+- Candidate version: `0.1.0-rc.12`
 - Qualified Harness target: `0.1.2-alpha.1`
 - Node.js: `^22.19.0 || >=24.0.0`
 - License: MIT
@@ -198,7 +198,7 @@ and the exact qualification output directory:
   "schemaVersion": 1,
   "qualificationOutputPath": "./release-qualification",
   "qualifiedCandidateArtifact": {
-    "path": "./dsh-security-assurance-0.1.0-rc.11.tgz",
+    "path": "./dsh-security-assurance-0.1.0-rc.12.tgz",
     "mediaType": "application/gzip"
   },
   "proposedStableArtifact": {
