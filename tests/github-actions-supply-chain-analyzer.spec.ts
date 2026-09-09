@@ -61,6 +61,22 @@ jobs:
       - uses: docker://alpine:latest
 `
 
+function highCardinalityWorkflow(candidateCount = 32): string {
+  const steps = Array.from(
+    { length: candidateCount },
+    (_, index) => `      - name: Unpinned action ${index + 1}\n        uses: actions/checkout@v4`,
+  ).join('\n')
+  return `name: High-cardinality CI
+on: [push]
+permissions: read-all
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+${steps}
+`
+}
+
 afterEach(async () => {
   await removeTemporaryRoots(temporaryRoots)
 })
@@ -109,6 +125,31 @@ function eligiblePortfolioEntry(): AnalyzerPortfolioEntryV1 {
 }
 
 describe('GitHub Actions supply-chain Analyzer (unit)', () => {
+  it('keeps the largest seal-safe Candidate set complete and fails closed above it', () => {
+    expect(GITHUB_ACTIONS_DESCRIPTOR.analyzerVersion).toBe('1.0.1')
+    expect(GITHUB_ACTIONS_QUALIFICATION.qualificationId).toBe(
+      'dsh/qualification/builtin-github-actions-supply-chain/v2',
+    )
+
+    const atLimit = analyzeGitHubActionsWorkflows({
+      subjectDigest: subjectDigestFixture(),
+      slices: [workflowSlice(highCardinalityWorkflow(29))],
+    })
+    expect(atLimit.completionDisposition).toBe('COMPLETE')
+    expect(atLimit.coverageClaims).toHaveLength(1)
+    expect(atLimit.candidateFindings).toHaveLength(29)
+    expect(atLimit.diagnostics).not.toContain('GITHUB_ACTIONS_CANDIDATE_LIMIT')
+
+    const aboveLimit = analyzeGitHubActionsWorkflows({
+      subjectDigest: subjectDigestFixture(),
+      slices: [workflowSlice(highCardinalityWorkflow(30))],
+    })
+    expect(aboveLimit.completionDisposition).toBe('INCOMPLETE')
+    expect(aboveLimit.coverageClaims).toEqual([])
+    expect(aboveLimit.candidateFindings).toHaveLength(29)
+    expect(aboveLimit.diagnostics).toContain('GITHUB_ACTIONS_CANDIDATE_LIMIT')
+  })
+
   it('accepts explicit read-only permissions, full commit pins and local actions', () => {
     const contribution = analyzeGitHubActionsWorkflows({
       subjectDigest: subjectDigestFixture(),
@@ -470,6 +511,13 @@ describe('GitHub Actions supply-chain Analyzer (sealed chain)', () => {
         === 'dsh/security/github-actions-supply-chain-validation/v1'
       && finding.policySignificance === 'BLOCKING'
     ))).toBe(true)
+  }, 30_000)
+
+  it('seals a high-cardinality workflow fail-closed without overflowing v1 Evidence', async () => {
+    const result = await runScenario('high-cardinality', highCardinalityWorkflow())
+    expect(result.verdict).toBe('FAILED')
+    expect(result.coverageStatus).toBe('GAP')
+    expect(result.findings).toHaveLength(29)
   }, 30_000)
 
   it('seals invalid YAML as INDETERMINATE without a fabricated Finding', async () => {

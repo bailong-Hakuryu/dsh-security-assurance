@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Bound GitHub Actions supply-chain Candidate emission to the largest set that
+  fits the v1 sealed Evidence and bundle-record budgets. Higher-cardinality
+  workflows now seal fail-closed with explicit incomplete Coverage instead of
+  becoming operationally `BLOCKED` during Evidence publication. Advance the
+  corrected Analyzer to version `1.0.1`, method `v2`, and qualification `v2`.
 - Add the bundled PURE `security/npm-publish-surface` Policy for
   `REPOSITORY` and `CHANGE` Assessments. It verifies the frozen root
   `package.json` publish identity, public access, explicit files allowlist,

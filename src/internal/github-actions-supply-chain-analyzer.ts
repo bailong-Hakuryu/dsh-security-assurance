@@ -21,7 +21,7 @@ import type { VerifiedSubjectTextSliceV1 } from './subject-freeze.ts'
 export const GITHUB_ACTIONS_ANALYSIS_CONTRACT_ID
   = 'dsh/security/github-actions-supply-chain-analysis/v1' as const
 export const GITHUB_ACTIONS_ANALYZER_ID = 'dsh/builtin-github-actions-supply-chain' as const
-export const GITHUB_ACTIONS_ANALYZER_VERSION = '1.0.0' as const
+export const GITHUB_ACTIONS_ANALYZER_VERSION = '1.0.1' as const
 export const GITHUB_ACTIONS_POLICY_ID = 'security/github-actions-supply-chain' as const
 export const GITHUB_ACTIONS_PERMISSION_WEAKNESS_ID
   = 'dsh/github-actions/excessive-token-permission' as const
@@ -52,7 +52,7 @@ const GITHUB_ACTIONS_METHOD = {
   contractId: GITHUB_ACTIONS_ANALYSIS_CONTRACT_ID,
   analyzerId: GITHUB_ACTIONS_ANALYZER_ID,
   analyzerVersion: GITHUB_ACTIONS_ANALYZER_VERSION,
-  methodVersion: 'dsh-github-actions-supply-chain-analysis-v1',
+  methodVersion: 'dsh-github-actions-supply-chain-analysis-v2',
   input: 'verified .github/workflows YAML slices frozen with the Subject',
   rules: [
     'top-level permissions are explicitly read-only or empty',
@@ -60,6 +60,8 @@ const GITHUB_ACTIONS_METHOD = {
     'external actions and reusable workflows use a full 40-hex commit SHA',
     'container actions use a sha256 image digest',
   ],
+  candidateLimit: 29,
+  candidateLimitDisposition: 'INCOMPLETE',
   exclusions: 'workflow execution, network lookup, ref resolution and permission necessity analysis',
 } as const
 
@@ -82,7 +84,7 @@ export const GITHUB_ACTIONS_DESCRIPTOR: AnalyzerDescriptorV1 = deepFreeze({
 
 const GITHUB_ACTIONS_QUALIFICATION_CORE = {
   schemaVersion: 1 as const,
-  qualificationId: 'dsh/qualification/builtin-github-actions-supply-chain/v1' as const,
+  qualificationId: 'dsh/qualification/builtin-github-actions-supply-chain/v2' as const,
   analyzerIdentity: {
     analyzerId: GITHUB_ACTIONS_DESCRIPTOR.analyzerId,
     analyzerVersion: GITHUB_ACTIONS_DESCRIPTOR.analyzerVersion,
@@ -107,6 +109,7 @@ const GITHUB_ACTIONS_QUALIFICATION_CORE = {
   limitations: [
     'Only frozen .github/workflows YAML files selected by the Assessment Target are evaluated.',
     'This strict policy accepts only read-only or empty GitHub token permissions; workflows that need write authority require another reviewed policy.',
+    'At most 29 Candidates are emitted; higher-cardinality results are truncated and reported with incomplete Coverage.',
     'The analyzer proves immutable syntax but does not resolve refs, execute workflows, inspect referenced code, or access the network.',
   ] as const,
 }
@@ -175,7 +178,12 @@ type GitHubActionsDiagnostic =
   | 'GITHUB_ACTIONS_CANDIDATE_LIMIT'
 
 const MAX_WORKFLOW_SLICES = 256
-const MAX_CANDIDATES = 768
+// A sealed v1 bundle admits at most 128 records. Seven core records, three
+// Analyzer-level records, and four independent Validation records per
+// Candidate leave room for at most 29 Candidates: 7 + 3 + (4 * 29) = 126.
+// Truncation is explicit and removes the complete-Coverage claim, so the
+// resulting Assessment still seals fail-closed instead of becoming BLOCKED.
+const MAX_CANDIDATES = 29
 const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/iu
 const CONTAINER_DIGEST = /^docker:\/\/[^\s@]+@sha256:[0-9a-f]{64}$/iu
 
