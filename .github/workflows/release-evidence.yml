@@ -354,6 +354,10 @@ jobs:
           --input ./release-proof-input.json
           --output ./release-evidence/release-proof-index.json
 
+      - name: Require the collected proof index
+        shell: bash
+        run: test -s ./release-evidence/release-proof-index.json
+
       - name: Upload release evidence index
         uses: actions/upload-artifact@v7
         with:

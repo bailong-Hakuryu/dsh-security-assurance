@@ -4,6 +4,10 @@
 
 ## [0.1.0-rc.12] - 2026-09-09
 
+- Resolve packaged release CLI entry points through their real filesystem path
+  so npm's POSIX `.bin` symlinks execute binding, collection, assembly,
+  qualification, and promotion-handoff commands instead of exiting silently.
+  The release-evidence workflow now also fails if collection produces no index.
 - Admit DeepSeek Harness `0.1.5-rc.1` into the closed verified compatibility
   set after its dynamically discovered lanes passed every non-admission
   composition check. Admit its Cordis `4.0.2` runtime through the existing

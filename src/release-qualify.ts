@@ -11,11 +11,11 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { basename, dirname, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import {
   assembleReleaseEvidenceManifestV1,
   type ReleaseEvidenceManifestV1,
 } from './evaluation.ts'
+import { isDirectCliInvocation } from './internal/cli-entry.ts'
 import {
   ReleaseFileBoundaryError,
   digestRawFile,
@@ -307,6 +307,6 @@ async function runReleaseQualificationCli(
 }
 
 const invokedPath = process.argv[1]
-if (invokedPath !== undefined && pathToFileURL(resolve(invokedPath)).href === import.meta.url) {
+if (isDirectCliInvocation(import.meta.url, invokedPath)) {
   process.exitCode = await runReleaseQualificationCli(process.argv.slice(2))
 }

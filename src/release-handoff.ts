@@ -3,10 +3,10 @@
 import { createHash } from 'node:crypto'
 import { lstat, link, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 
 import type { DigestEnvelopeV1 } from './digest-envelope.ts'
+import { isDirectCliInvocation } from './internal/cli-entry.ts'
 import {
   releaseEvidenceScorecardReferenceV1Schema,
   releaseEvidenceManifestV1Schema,
@@ -626,6 +626,6 @@ async function runReleaseHandoffCli(
 }
 
 const invokedPath = process.argv[1]
-if (invokedPath !== undefined && pathToFileURL(resolve(invokedPath)).href === import.meta.url) {
+if (isDirectCliInvocation(import.meta.url, invokedPath)) {
   process.exitCode = await runReleaseHandoffCli(process.argv.slice(2))
 }

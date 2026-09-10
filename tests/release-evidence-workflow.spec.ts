@@ -60,6 +60,7 @@ describe('exact-artifact release evidence workflow', () => {
     expect(workflow).toContain('pattern: platform-proof-*')
     expect(workflow).toContain('merge-multiple: true')
     expect(workflow).toContain('dsh-security-assurance-release-collect')
+    expect(workflow).toContain('test -s ./release-evidence/release-proof-index.json')
     expect(workflow).toContain('name: release-evidence-index')
   })
 })

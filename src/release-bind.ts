@@ -3,8 +3,8 @@
 import { lstat } from 'node:fs/promises'
 import { link, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, relative, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
+import { isDirectCliInvocation } from './internal/cli-entry.ts'
 import {
   ReleaseFileBoundaryError,
   digestRawFile,
@@ -195,6 +195,6 @@ async function runReleaseBindingCli(
 }
 
 const invokedPath = process.argv[1]
-if (invokedPath !== undefined && pathToFileURL(resolve(invokedPath)).href === import.meta.url) {
+if (isDirectCliInvocation(import.meta.url, invokedPath)) {
   process.exitCode = await runReleaseBindingCli(process.argv.slice(2))
 }

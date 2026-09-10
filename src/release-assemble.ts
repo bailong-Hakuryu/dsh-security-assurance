@@ -3,9 +3,9 @@
 import { createHash } from 'node:crypto'
 import { link, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, relative, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 import type { DigestEnvelopeV1 } from './digest-envelope.ts'
+import { isDirectCliInvocation } from './internal/cli-entry.ts'
 import {
   ReleaseFileBoundaryError,
   releaseFileFailure,
@@ -304,6 +304,6 @@ async function runReleaseAssemblyCli(
 }
 
 const invokedPath = process.argv[1]
-if (invokedPath !== undefined && pathToFileURL(resolve(invokedPath)).href === import.meta.url) {
+if (isDirectCliInvocation(import.meta.url, invokedPath)) {
   process.exitCode = await runReleaseAssemblyCli(process.argv.slice(2))
 }

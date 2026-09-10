@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -108,7 +108,37 @@ async function runCli(inputPath: string, outputPath: string) {
   ], { windowsHide: true })
 }
 
+async function runLinkedCli(inputPath: string, outputPath: string, root: string) {
+  const linkedSource = join(root, 'linked-source')
+  await symlink(
+    fileURLToPath(new URL('../src', import.meta.url)),
+    linkedSource,
+    process.platform === 'win32' ? 'junction' : 'dir',
+  )
+  return execute(process.execPath, [
+    '--experimental-strip-types',
+    join(linkedSource, 'release-collect.ts'),
+    '--',
+    '--input', inputPath,
+    '--output', outputPath,
+  ], { windowsHide: true })
+}
+
 describe('release proof collection CLI', () => {
+  it('runs when an installed package invokes the entry point through a linked path', async () => {
+    const fixtureValue = await fixture()
+    const inputPath = await writeInput(fixtureValue.root, ['windows-platform.json'])
+    const outputPath = join(fixtureValue.root, 'proof-index.json')
+
+    const { stdout, stderr } = await runLinkedCli(inputPath, outputPath, fixtureValue.root)
+
+    expect(stdout).toBe('')
+    expect(stderr).toBe('')
+    expect(releaseProofIndexV1Schema.parse(
+      JSON.parse(await readFile(outputPath, 'utf8')),
+    ).records).toHaveLength(1)
+  })
+
   it('builds a deterministic manifest-ready index from exact-artifact proof records', async () => {
     const fixtureValue = await fixture()
     const inputPath = await writeInput(fixtureValue.root, ['workbench.json', 'windows-platform.json'])
