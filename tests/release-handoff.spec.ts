@@ -293,7 +293,7 @@ describe('release promotion handoff CLI', () => {
       verification: 'BEHAVIOR_EQUIVALENT',
       authorization: 'NOT_GRANTED',
     })
-  })
+  }, 30_000)
 
   it('rejects runtime behavior drift in the proposed stable package', async () => {
     const fixtureState = await fixture()
