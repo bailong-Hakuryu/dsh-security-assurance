@@ -4,6 +4,11 @@
 
 ## [0.1.0-rc.12] - 2026-09-09
 
+- Admit DeepSeek Harness `0.1.5-rc.1` into the closed verified compatibility
+  set after its dynamically discovered lanes passed every non-admission
+  composition check. Admit its Cordis `4.0.2` runtime through the existing
+  compatible `4.0.x` line, and keep package peers plus bilingual support
+  documentation aligned with the exact-version invariant.
 - Admit DeepSeek Harness `0.1.5-alpha.2` into the closed verified
   compatibility set after its dynamically discovered lanes passed every
   non-admission composition check. Adapt the test Inbox double to the public
