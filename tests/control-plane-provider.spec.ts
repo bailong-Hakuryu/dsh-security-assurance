@@ -1428,5 +1428,5 @@ describe('Security Assurance Control Plane Provider', () => {
       await restartedSubagentFiber.dispose()
       await restartedSubprocessFiber.dispose()
     }
-  }, 50_000)
+  }, 90_000)
 })

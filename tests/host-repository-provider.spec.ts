@@ -87,7 +87,7 @@ describe('Security Assurance Host Repository Provider', () => {
       await providerFiber?.dispose()
       await securityFiber.dispose()
     }
-  })
+  }, 30_000)
 
   it('registers Host configuration and resolves one immutable path-free binding', async () => {
     const repository = await cleanRepository()

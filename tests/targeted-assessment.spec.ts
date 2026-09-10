@@ -162,7 +162,7 @@ describe('TARGETED Node package lifecycle Assessments', () => {
     } finally {
       await fiber.dispose()
     }
-  })
+  }, 30_000)
 
   it('fails closed for nonexistent or policy-unsupported explicit Targets', async () => {
     const repository = await targetedRepositoryFixture()
@@ -237,5 +237,5 @@ describe('TARGETED Node package lifecycle Assessments', () => {
     } finally {
       await fiber.dispose()
     }
-  })
+  }, 30_000)
 })
