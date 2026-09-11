@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.13] - 2026-09-11
+
+- Admit DeepSeek Harness `0.1.5-rc.2` into the closed verified compatibility
+  set and exact peer dependency disjunction. This repairs fresh npm consumer
+  installs that otherwise fail with `ERESOLVE` when the registry selects the
+  current Harness release-candidate graph.
+- Bind the documented joint installation to
+  `dsh-engineering-control-plane@0.1.12`.
+
 ## [0.1.0-rc.12] - 2026-09-09
 
 - Resolve packaged release CLI entry points through their real filesystem path
