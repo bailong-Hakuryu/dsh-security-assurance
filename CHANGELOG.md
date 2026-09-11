@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.14] - 2026-09-11
+
+- Upgrade the direct YAML parser dependency to `2.8.3`, the first patched
+  release for GHSA-48c2-rrv3-qjmp / CVE-2026-33532 (deeply nested collection
+  stack overflow).
+- Add regression coverage proving both YAML analyzer entry points fail closed
+  on a deeply nested collection without leaking a `RangeError`.
+
 ## [0.1.0-rc.13] - 2026-09-11
 
 - Admit DeepSeek Harness `0.1.5-rc.2` into the closed verified compatibility

@@ -30,10 +30,10 @@ Service 先解析授权 Catalog 选择并冻结完整 Subject，再把已验证 
 
 ### 当前版本
 
-- 版本：<code>0.1.0-rc.13</code>
+- 版本：<code>0.1.0-rc.14</code>
 - 状态：Release Candidate（预发布版）
 - 适配：DeepSeek Harness <code>0.1.2-alpha.1</code>（主目标）；<code>0.1.2-alpha.2</code> 至 <code>0.1.2-rc.1</code>、<code>0.1.3-alpha.1</code>、<code>0.1.3-alpha.2</code>、<code>0.1.5-alpha.1</code>、<code>0.1.5-alpha.2</code>、<code>0.1.5-rc.1</code> 与 <code>0.1.5-rc.2</code> 经兼容矩阵验证
-- GitHub：[v0.1.0-rc.13 Release](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.13)
+- GitHub：[v0.1.0-rc.14 Release](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.14)
 
 ### 支持范围
 
@@ -71,18 +71,18 @@ Harness 支持窗口是一个显式的已验证集合：每日 [Harness Compatib
 3. 启动 Harness Web，然后运行一个明确的 <code>/security</code> 评估。
 
 ~~~powershell
-dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.13/dsh-security-assurance-0.1.0-rc.13.tgz
+dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.14/dsh-security-assurance-0.1.0-rc.14.tgz
 dsh --profile web --dump-config
 dsh web
 ~~~
 
-也可以先在 Release 页面下载 <code>dsh-security-assurance-0.1.0-rc.13.tgz</code>，再把上面 URL 换成本地文件的绝对路径。
+也可以先在 Release 页面下载 <code>dsh-security-assurance-0.1.0-rc.14.tgz</code>，再把上面 URL 换成本地文件的绝对路径。
 
-如果还要使用工程 Mission 门禁，请先安装 [Engineering Control Plane](https://github.com/bailong-Hakuryu/dsh-engineering-control-plane/releases/tag/v0.1.12)，再安装本插件：
+如果还要使用工程 Mission 门禁，请先安装 [Engineering Control Plane](https://github.com/bailong-Hakuryu/dsh-engineering-control-plane/releases/tag/v0.1.13)，再安装本插件：
 
 ~~~powershell
-dsh plugin --profile web add D:\Downloads\dsh-engineering-control-plane-0.1.12.tgz
-dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.13/dsh-security-assurance-0.1.0-rc.13.tgz
+dsh plugin --profile web add D:\Downloads\dsh-engineering-control-plane-0.1.13.tgz
+dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.14/dsh-security-assurance-0.1.0-rc.14.tgz
 dsh --profile web --dump-config
 dsh web
 ~~~
@@ -258,10 +258,10 @@ The Service resolves an authorized Catalog selection and freezes the complete Su
 
 ## Current release
 
-- Version: <code>0.1.0-rc.13</code>
+- Version: <code>0.1.0-rc.14</code>
 - Status: release candidate
 - Target Harness: <code>0.1.2-alpha.1</code> (primary); <code>0.1.2-alpha.2</code> through <code>0.1.2-rc.1</code>, <code>0.1.3-alpha.1</code>, <code>0.1.3-alpha.2</code>, <code>0.1.5-alpha.1</code>, <code>0.1.5-alpha.2</code>, <code>0.1.5-rc.1</code>, and <code>0.1.5-rc.2</code> verified by the compatibility matrix
-- Release: [v0.1.0-rc.13](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.13)
+- Release: [v0.1.0-rc.14](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.14)
 
 ## Support matrix
 
@@ -301,12 +301,12 @@ Compatible with DeepSeek Harness <code>0.1.2-alpha.1</code> through <code>0.1.2-
 3. Start Harness Web and run an explicit <code>/security</code> assessment.
 
 ~~~powershell
-dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.13/dsh-security-assurance-0.1.0-rc.13.tgz
+dsh plugin --profile web add https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/download/v0.1.0-rc.14/dsh-security-assurance-0.1.0-rc.14.tgz
 dsh --profile web --dump-config
 dsh web
 ~~~
 
-Alternatively, download <code>dsh-security-assurance-0.1.0-rc.13.tgz</code> from the Release page and pass its absolute local path to the same command.
+Alternatively, download <code>dsh-security-assurance-0.1.0-rc.14.tgz</code> from the Release page and pass its absolute local path to the same command.
 
 When both plugins are installed, install Engineering Control Plane first because it supplies the shared invariant registry. The launcher working directory is registered as <code>current-workspace</code>.
 
@@ -423,7 +423,7 @@ reuses those tarballs for Linux, macOS, and Windows proof runs. Its final job
 installs the public collector from the candidate and uploads a deterministic
 `release-evidence-index`; it does not qualify, tag, release, or publish.
 
-The current development tree contains 88 test files and 470 tests; the release gate runs those tests together with linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
+The current development tree contains 89 test files and 480 tests; the release gate runs those tests together with linting, typecheck, build, packaging, and Harness profile smoke. Public CI rebuilds a fresh Profile from both tarballs and probes Web on Ubuntu, macOS, and Windows; the daily compatibility matrix additionally runs the dual-plugin joint E2E and the packed-installation probe across every declared Harness version.
 
 </details>
 

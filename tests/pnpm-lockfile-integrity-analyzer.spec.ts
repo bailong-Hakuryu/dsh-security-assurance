@@ -35,6 +35,7 @@ import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 
 const run = promisify(execFile)
 const temporaryRoots: string[] = []
+const DEEPLY_NESTED_YAML = `${'['.repeat(5_000)}1${']'.repeat(5_000)}`
 const MANIFEST = `{
   "name": "lockfile-fixture",
   "version": "1.0.0",
@@ -244,6 +245,19 @@ describe('pnpm lockfile integrity Analyzer (unit)', () => {
       lockfile: { missingIntegrityCount: 1 },
       entries: [{ ruleId: 'PNPM_PACKAGE_INTEGRITY_MISSING' }],
     })
+  })
+
+  it('fails closed without leaking a stack overflow from a deeply nested lockfile', () => {
+    const contribution = analyzePnpmLockfileIntegrity({
+      subjectDigest: subjectDigestFixture(),
+      slices: [
+        textSlice('package.json', MANIFEST),
+        textSlice('pnpm-lock.yaml', DEEPLY_NESTED_YAML),
+      ],
+    })
+    expect(contribution.completionDisposition).toBe('INCOMPLETE')
+    expect(contribution.coverageClaims).toEqual([])
+    expect(contribution.diagnostics).toContain('PNPM_LOCKFILE_INVALID')
   })
 
   it('independently re-derives Coverage and never publishes a tampered claim', () => {

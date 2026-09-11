@@ -37,6 +37,7 @@ import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 const run = promisify(execFile)
 const temporaryRoots: string[] = []
 const PINNED_SHA = 'a'.repeat(40)
+const DEEPLY_NESTED_YAML = `${'['.repeat(5_000)}1${']'.repeat(5_000)}`
 const CLEAN_WORKFLOW = `name: CI
 on: [push]
 permissions: read-all
@@ -299,6 +300,16 @@ jobs:
     expect(mergeKey.completionDisposition).toBe('INCOMPLETE')
     expect(mergeKey.coverageClaims).toEqual([])
     expect(mergeKey.diagnostics).toContain('GITHUB_ACTIONS_WORKFLOW_INVALID_YAML')
+  })
+
+  it('fails closed without leaking a stack overflow from deeply nested YAML collections', () => {
+    const contribution = analyzeGitHubActionsWorkflows({
+      subjectDigest: subjectDigestFixture(),
+      slices: [workflowSlice(DEEPLY_NESTED_YAML)],
+    })
+    expect(contribution.completionDisposition).toBe('INCOMPLETE')
+    expect(contribution.coverageClaims).toEqual([])
+    expect(contribution.diagnostics).toContain('GITHUB_ACTIONS_WORKFLOW_INVALID_YAML')
   })
 
   it('rejects a job permission map that widens an explicit top-level boundary', () => {

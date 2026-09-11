@@ -14,6 +14,7 @@ const packageJson = JSON.parse(
   scripts?: Record<string, string>
   bin?: Record<string, string>
   exports?: Record<string, unknown>
+  dependencies?: Record<string, string>
 }
 const ciWorkflow = readFileSync(
   new URL('../.github/workflows/ci.yml', import.meta.url),
@@ -32,7 +33,7 @@ const implementationSpecification = readFileSync(
 
 describe('v0.1 release candidate package', () => {
   it('binds runtime and package identity to the candidate version', () => {
-    expect(packageJson.version).toBe('0.1.0-rc.13')
+    expect(packageJson.version).toBe('0.1.0-rc.14')
     expect(SECURITY_ASSURANCE_PRODUCT_VERSION).toBe(packageJson.version)
   })
 
@@ -48,14 +49,15 @@ describe('v0.1 release candidate package', () => {
     expect(implementationSpecification).toContain(
       `The qualified candidate uses \`${version}\``,
     )
-    expect(readme).toContain('/dsh-engineering-control-plane/releases/tag/v0.1.12')
-    expect(readme).toContain('dsh-engineering-control-plane-0.1.12.tgz')
+    expect(readme).toContain('/dsh-engineering-control-plane/releases/tag/v0.1.13')
+    expect(readme).toContain('dsh-engineering-control-plane-0.1.13.tgz')
   })
 
   it('is explicitly publishable under the reviewed license', () => {
     expect(packageJson.private).toBe(false)
     expect(packageJson.license).toBe('MIT')
     expect(packageJson.publishConfig?.access).toBe('public')
+    expect(packageJson.dependencies?.yaml).toBe('2.8.3')
     expect(packageJson.files).toEqual(expect.arrayContaining([
       'assets/*.svg',
       'README.md',
