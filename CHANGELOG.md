@@ -63,6 +63,10 @@
   independence Evidence all match. Only complete `CLEAR` Evidence satisfies
   `SECRET_REDACTION`; residual secrets reject the check, while missing,
   indeterminate, expired, scope-mismatched or drifted Evidence fails closed.
+- Bind that qualified secret-review decision and digest into the Data Egress
+  review for the same exact Slice. `CLEAR` removes only the secret-review gap,
+  `SECRET_FOUND` rejects egress, and Broker qualification plus destination
+  authorization remain mandatory with no approved or Provider-calling state.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

@@ -62,7 +62,6 @@ export type ProtectedSourceSliceMaterialReviewStatusV1 =
 
 export type ProtectedSourceSliceMaterialReviewReasonV1 =
   | ProtectedSourceSliceEgressReasonV1
-  | 'RESIDUAL_SECRET_DETECTED'
   | 'TOKEN_METERING_REQUIRED'
   | 'ROLE_NEED_VALIDATION_REQUIRED'
 
@@ -295,17 +294,6 @@ export async function reviewRequestedSourceSliceMaterial(
       classifyProtectedSourceSliceSensitivity({ material, redaction }),
       { material, redaction },
     )
-    const egressReview = reviewProtectedSourceSliceEgress({
-      contextGrant,
-      request,
-      material,
-      redaction,
-    })
-    const parsedEgressReview = parseProtectedSourceSliceEgressReview(egressReview, {
-      contextGrantDigest: contextGrant.grantDigest,
-      requestDigest: request.requestDigest,
-      redactionDigest: redaction.redactionDigest,
-    })
     const secretReview = options.secretReview === undefined
       ? null
       : admitQualifiedSourceSliceSecretReview({
@@ -315,6 +303,19 @@ export async function reviewRequestedSourceSliceMaterial(
           portfolioEntry: options.secretReview.portfolioEntry,
           contribution: options.secretReview.contribution,
         })
+    const egressReview = reviewProtectedSourceSliceEgress({
+      contextGrant,
+      request,
+      material,
+      redaction,
+      secretReview: secretReview ?? undefined,
+    })
+    const parsedEgressReview = parseProtectedSourceSliceEgressReview(egressReview, {
+      contextGrantDigest: contextGrant.grantDigest,
+      requestDigest: request.requestDigest,
+      redactionDigest: redaction.redactionDigest,
+      secretReview: secretReview ?? undefined,
+    })
     const checks = materialChecks(
       secretReview,
       parsedEgressReview.decision,
@@ -425,6 +426,7 @@ export function parseProtectedSourceSliceMaterialReview(
     review.policies.dataEgressPolicyId,
     review.observed.redactedBytes,
     review.observed.requestedContextBytes,
+    review.secretReview?.decision ?? null,
   )
   if (
     review.egressDecision !== disposition.decision

@@ -325,6 +325,34 @@ describe('ADR 0168 protected Source Slice material review record', () => {
     }
   })
 
+  it('carries qualified CLEAR review into Data Egress without approving Broker or destination', async () => {
+    const fixture = await materialReviewFixture('egress/host-qualified-v1')
+    try {
+      const secretReview = await qualifiedSecretReview(fixture)
+      const review = await reviewRequestedSourceSliceMaterial({
+        securityRoot: fixture.securityRoot,
+        contextGrant: fixture.contextGrant,
+        request: fixture.request,
+        fingerprintKey,
+        fingerprintKeyId: 'host/secret-fingerprint-key-1',
+        secretReview: secretReview.admission,
+      })
+
+      expect(review.decision).toBe('ADDITIONAL_REVIEW_REQUIRED')
+      expect(review.checks.find(check => check.check === 'DATA_EGRESS')).toEqual({
+        check: 'DATA_EGRESS',
+        status: 'REVIEW_REQUIRED',
+        reasonCodes: [
+          'BROKER_QUALIFICATION_REQUIRED',
+          'DESTINATION_AUTHORIZATION_REQUIRED',
+        ],
+      })
+      expect(JSON.stringify(review)).not.toMatch(/APPROVED|AUTHORIZED|GRANTED/iu)
+    } finally {
+      await fixture.subprocessFiber.dispose()
+    }
+  })
+
   it('rejects a redacted Slice when the qualified independent review still finds a secret', async () => {
     const fixture = await materialReviewFixture('egress/host-qualified-v1')
     try {
@@ -345,6 +373,15 @@ describe('ADR 0168 protected Source Slice material review record', () => {
         check: 'SECRET_REDACTION',
         status: 'REJECTED',
         reasonCodes: ['RESIDUAL_SECRET_DETECTED'],
+      })
+      expect(review.checks.find(check => check.check === 'DATA_EGRESS')).toEqual({
+        check: 'DATA_EGRESS',
+        status: 'REJECTED',
+        reasonCodes: [
+          'RESIDUAL_SECRET_DETECTED',
+          'BROKER_QUALIFICATION_REQUIRED',
+          'DESTINATION_AUTHORIZATION_REQUIRED',
+        ],
       })
     } finally {
       await fixture.subprocessFiber.dispose()
@@ -370,6 +407,15 @@ describe('ADR 0168 protected Source Slice material review record', () => {
         check: 'SECRET_REDACTION',
         status: 'REVIEW_REQUIRED',
         reasonCodes: ['SECRET_REVIEW_INCOMPLETE'],
+      })
+      expect(review.checks.find(check => check.check === 'DATA_EGRESS')).toEqual({
+        check: 'DATA_EGRESS',
+        status: 'REVIEW_REQUIRED',
+        reasonCodes: [
+          'SECRET_REVIEW_INCOMPLETE',
+          'BROKER_QUALIFICATION_REQUIRED',
+          'DESTINATION_AUTHORIZATION_REQUIRED',
+        ],
       })
     } finally {
       await fixture.subprocessFiber.dispose()
