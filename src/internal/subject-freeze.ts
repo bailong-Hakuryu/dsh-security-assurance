@@ -26,11 +26,19 @@ import {
   assessmentTargetSelectorV1Schema,
   digestEnvelopeV1Schema,
 } from '../contracts.ts'
+import type { RoleContextGrantV1 } from '../role-context-grant.ts'
+import { parseRoleContextGrantV1 } from '../role-context-grant.ts'
+import type { SourceSliceRequestV1 } from '../source-slice-request.ts'
+import {
+  parseSourceSliceRequestV1,
+  preflightSourceSliceRequestV1,
+} from '../source-slice-request.ts'
 import { binaryDigest, canonicalJson, structuredDigest } from './canonical.ts'
 import {
   computeControlPlaneProducedChangeFingerprintV1,
   computeControlPlaneWorkspaceFingerprintV1,
 } from './control-plane-workspace-identity.ts'
+import { deepFreeze } from './freeze.ts'
 
 const MAX_SUBJECT_FILES = 10_000
 const MAX_SUBJECT_BYTES = 64 * 1024 * 1024
@@ -125,6 +133,19 @@ export interface VerifiedSubjectTextSliceV1 {
   readonly path: string
   readonly digest: DigestEnvelopeV1
   readonly text: string
+}
+
+/** Protected local material; this value is not approved for Provider egress. */
+export interface ProtectedSourceSliceMaterialV1 extends VerifiedSubjectTextSliceV1 {
+  readonly requestDigest: DigestEnvelopeV1
+  readonly subjectDigest: DigestEnvelopeV1
+}
+
+export interface ReadVerifiedRequestedSourceSliceOptions {
+  readonly securityRoot: string
+  readonly contextGrant: RoleContextGrantV1
+  readonly request: SourceSliceRequestV1
+  readonly signal?: AbortSignal | undefined
 }
 
 export interface FreezeSubjectOptions {
@@ -799,6 +820,101 @@ async function verifyPublishedSnapshot(
     throw new SubjectFreezeError('integrity_failure', 'Subject materialization does not match its Manifest')
   }
   return manifest
+}
+
+/**
+ * Materialize one exact request from protected Subject storage after static
+ * admission, containment, digest and actual byte checks. The returned text
+ * remains local and is not a Source Slice grant or an egress authorization.
+ */
+export async function readVerifiedRequestedSourceSlice(
+  options: ReadVerifiedRequestedSourceSliceOptions,
+): Promise<ProtectedSourceSliceMaterialV1> {
+  canceled(options.signal)
+  const contextGrant = parseRoleContextGrantV1(options.contextGrant)
+  const request = parseSourceSliceRequestV1(options.request)
+  const preflight = preflightSourceSliceRequestV1({ contextGrant, request })
+  if (preflight.decision !== 'MATERIAL_REVIEW_REQUIRED') {
+    throw new TypeError('Source Slice Request failed static preflight')
+  }
+  const subjectDigest = request.subjectDigest
+  if (
+    subjectDigest.algorithm !== 'sha256'
+    || subjectDigest.mediaType !== 'application/vnd.dsh.security.subject-manifest+json'
+    || !/^[0-9a-f]{64}$/u.test(subjectDigest.value)
+  ) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject identity is not a supported Manifest digest')
+  }
+  const publishedRoot = join(options.securityRoot, 'subjects', subjectDigest.value)
+  const manifest = await verifyPublishedSnapshot(publishedRoot, subjectDigest)
+  if (!Array.isArray(manifest.entries)) {
+    throw new SubjectFreezeError('integrity_failure', 'Subject Manifest entries are invalid')
+  }
+  const target = assessmentTargetSelectorV1Schema.parse(manifest.target)
+  const expectedTargetKind = contextGrant.purpose.assessmentMode.toLowerCase()
+  if (target.kind !== expectedTargetKind) {
+    throw new SubjectFreezeError(
+      'invalid_subject',
+      'Context Grant Assessment mode does not match the frozen Subject Target',
+    )
+  }
+  const declaredTargetDigest = digestEnvelopeV1Schema.parse(manifest.targetDigest)
+  const observedTargetDigest = structuredDigest(TARGET_SELECTOR_MEDIA_TYPE, target)
+  if (
+    canonicalJson(declaredTargetDigest) !== canonicalJson(observedTargetDigest)
+    || canonicalJson(declaredTargetDigest) !== canonicalJson(contextGrant.purpose.targetDigest)
+  ) {
+    throw new SubjectFreezeError(
+      'integrity_failure',
+      'Context Grant Target digest does not match the frozen Subject',
+    )
+  }
+  const entry = manifest.entries.map(recordValue).find(value => (
+    value.kind === 'file'
+    && value.path === request.target.path
+  ))
+  if (entry === undefined || !targetIncludesPath(target, request.target.path)) {
+    throw new SubjectFreezeError(
+      'invalid_subject',
+      'Requested Source Slice is not contained in the frozen Subject target',
+    )
+  }
+  const declaredDigest = digestEnvelopeV1Schema.parse(entry.digest)
+  if (canonicalJson(declaredDigest) !== canonicalJson(request.target.expectedSourceDigest)) {
+    throw new SubjectFreezeError(
+      'integrity_failure',
+      'Requested Source Slice digest does not match the frozen Subject Manifest',
+    )
+  }
+  canceled(options.signal)
+  const captured = await stableFile(join(
+    publishedRoot,
+    'content',
+    ...request.target.path.split('/'),
+  ))
+  if (
+    captured.bytes.byteLength > MAX_ANALYZER_SLICE_BYTES
+    || captured.bytes.byteLength > request.budget.contextBytes
+  ) {
+    throw new SubjectFreezeError(
+      'resource_limit',
+      'Requested Source Slice exceeds its protected byte budget',
+    )
+  }
+  const observedDigest = binaryDigest('application/octet-stream', captured.bytes)
+  if (
+    canonicalJson(observedDigest) !== canonicalJson(declaredDigest)
+    || canonicalJson(observedDigest) !== canonicalJson(request.target.expectedSourceDigest)
+  ) {
+    throw new SubjectFreezeError('integrity_failure', 'Requested Source Slice failed digest verification')
+  }
+  return deepFreeze({
+    requestDigest: request.requestDigest,
+    subjectDigest,
+    path: request.target.path,
+    digest: observedDigest,
+    text: decodeUtf8(captured.bytes),
+  })
 }
 
 /** Freeze one exact Subject and atomically publish its private content-addressed Snapshot. */

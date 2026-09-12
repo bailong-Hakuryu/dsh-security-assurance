@@ -27,6 +27,12 @@
   requested budget. Preflight aggregates every static mismatch and can only
   reject or require the full protected material review; it never grants source
   content, Provider access or a capability.
+- Add package-private protected materialization for one exact Source Slice
+  Request. It reparses and statically admits the exact Context Grant and Request,
+  reverifies the complete content-addressed Subject, enforces the frozen Target,
+  matches Request, Manifest and observed raw-byte digests, and meters actual
+  bytes before returning deeply frozen local text. The result is not exported,
+  egress-approved, redacted, or eligible for a new Context Grant.
 
 ## [0.1.0-rc.14] - 2026-09-11
 
