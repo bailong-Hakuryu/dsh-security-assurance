@@ -16,6 +16,11 @@
   bounded Catalog in Start Preflight so confirmation binds the role identities
   that were disclosed. Older v1 summaries remain parseable, partial lineage is
   rejected, and no executable Role Definition or Provider authority is implied.
+- Add a public, authority-free `RoleContextGrantV1` contract kit that binds an
+  exact Role Attempt to protected Subject Inventory, Source Slice and Evidence
+  references, explicit disclosure categories, peer visibility and bounded byte
+  and token grants. Creation is deterministic and immutable; parsing recomputes
+  the digest and rejects tampering, budget overruns and ambiguous references.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

@@ -226,6 +226,7 @@ import {
 
 export * from './contracts.ts'
 export * from './analyzer.ts'
+export * from './role-context-grant.ts'
 export {
   analyzeGitleaksReport,
   createGitleaksAnalyzer,
