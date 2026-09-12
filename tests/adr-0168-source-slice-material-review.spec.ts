@@ -138,14 +138,22 @@ describe('ADR 0168 protected Source Slice material review record', () => {
       })
 
       expect(review.decision).toBe('REJECTED')
-      expect(review.sensitivity).toBe('PROTECTED_SOURCE')
+      expect(review.sensitivity).toEqual({
+        classifierId: 'security/source-slice-sensitivity-baseline',
+        classifierVersion: '1.0.0',
+        category: 'SECRET_BEARING_SOURCE',
+        indicatorCodes: ['HIGH_CONFIDENCE_SECRET_MATCH'],
+        classificationDigest: expect.objectContaining({
+          mediaType: 'application/vnd.dsh.security.source-slice-sensitivity-classification+json',
+        }),
+      })
       expect(review.checks).toEqual([
         { check: 'SUBJECT_CONTAINMENT', status: 'SATISFIED', reasonCodes: [] },
         { check: 'SOURCE_DIGEST_INTEGRITY', status: 'SATISFIED', reasonCodes: [] },
         {
           check: 'SENSITIVITY_CLASSIFICATION',
-          status: 'REVIEW_REQUIRED',
-          reasonCodes: ['SENSITIVITY_REVIEW_REQUIRED'],
+          status: 'SATISFIED',
+          reasonCodes: [],
         },
         {
           check: 'SECRET_REDACTION',

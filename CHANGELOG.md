@@ -46,11 +46,17 @@
   Slices. It repeats static admission, enforces `egress/deny-by-default`, meters
   the redacted bytes, and otherwise reports the Broker, destination and secret
   checks still required; it has no approved state and performs no Provider call.
+- Add a versioned package-private sensitivity classifier that conservatively
+  labels every Source Slice as at least `PROTECTED_SOURCE`, raises sensitive
+  paths to `RESTRICTED_SOURCE`, and raises detected secret matches to
+  `SECRET_BEARING_SOURCE`. Its digest-bound result cannot authorize egress or
+  substitute for a future compiled Security Policy.
 - Add one package-private vertical material-review operation that re-reads the
   content-addressed Subject and emits a text-free, immutable record covering all
-  seven Source Slice material checks. Only containment and raw-source integrity
-  are satisfied locally; unresolved sensitivity, secret, token, Role-need and
-  egress boundaries remain review-required or rejected, never approved.
+  seven Source Slice material checks. Containment, raw-source integrity and the
+  conservative sensitivity classification are satisfied locally; unresolved
+  secret, token, Role-need and egress checks remain review-required or rejected,
+  never approved.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

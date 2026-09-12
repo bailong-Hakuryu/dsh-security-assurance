@@ -19,6 +19,16 @@ import {
   SOURCE_SLICE_REDACTION_MEDIA_TYPE,
   type ProtectedSourceSliceEgressReasonV1,
 } from './source-slice-protection.ts'
+import {
+  classifyProtectedSourceSliceSensitivity,
+  deriveProtectedSourceSliceSensitivity,
+  parseProtectedSourceSliceSensitivity,
+  SOURCE_SLICE_SENSITIVITY_CLASSIFICATION_MEDIA_TYPE,
+  SOURCE_SLICE_SENSITIVITY_CLASSIFIER_ID,
+  SOURCE_SLICE_SENSITIVITY_CLASSIFIER_VERSION,
+  type SourceSliceSensitivityCategoryV1,
+  type SourceSliceSensitivityIndicatorV1,
+} from './source-slice-sensitivity.ts'
 import { readVerifiedRequestedSourceSlice } from './subject-freeze.ts'
 
 export const SOURCE_SLICE_MATERIAL_REVIEW_MEDIA_TYPE =
@@ -41,7 +51,6 @@ export type ProtectedSourceSliceMaterialReviewStatusV1 =
 
 export type ProtectedSourceSliceMaterialReviewReasonV1 =
   | ProtectedSourceSliceEgressReasonV1
-  | 'SENSITIVITY_REVIEW_REQUIRED'
   | 'TOKEN_METERING_REQUIRED'
   | 'ROLE_NEED_VALIDATION_REQUIRED'
 
@@ -54,7 +63,13 @@ export interface ProtectedSourceSliceMaterialReviewCheckV1 {
 export interface ProtectedSourceSliceMaterialReviewCoreV1 {
   readonly schemaVersion: 1
   readonly path: string
-  readonly sensitivity: 'PROTECTED_SOURCE'
+  readonly sensitivity: {
+    readonly classifierId: typeof SOURCE_SLICE_SENSITIVITY_CLASSIFIER_ID
+    readonly classifierVersion: typeof SOURCE_SLICE_SENSITIVITY_CLASSIFIER_VERSION
+    readonly category: SourceSliceSensitivityCategoryV1
+    readonly indicatorCodes: readonly SourceSliceSensitivityIndicatorV1[]
+    readonly classificationDigest: DigestEnvelopeV1
+  }
   readonly contextGrantDigest: DigestEnvelopeV1
   readonly requestDigest: DigestEnvelopeV1
   readonly subjectDigest: DigestEnvelopeV1
@@ -109,7 +124,6 @@ const reviewReasonV1Schema = z.enum([
   'SECRET_REVIEW_INCOMPLETE',
   'BROKER_QUALIFICATION_REQUIRED',
   'DESTINATION_AUTHORIZATION_REQUIRED',
-  'SENSITIVITY_REVIEW_REQUIRED',
   'TOKEN_METERING_REQUIRED',
   'ROLE_NEED_VALIDATION_REQUIRED',
 ])
@@ -125,7 +139,17 @@ const subjectRelativePathSchema = z.string().min(1).max(1024).refine(path => (
 const materialReviewV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   path: subjectRelativePathSchema,
-  sensitivity: z.literal('PROTECTED_SOURCE'),
+  sensitivity: z.strictObject({
+    classifierId: z.literal(SOURCE_SLICE_SENSITIVITY_CLASSIFIER_ID),
+    classifierVersion: z.literal(SOURCE_SLICE_SENSITIVITY_CLASSIFIER_VERSION),
+    category: z.enum(['PROTECTED_SOURCE', 'RESTRICTED_SOURCE', 'SECRET_BEARING_SOURCE']),
+    indicatorCodes: z.array(z.enum([
+      'BASELINE_SOURCE_PROTECTION',
+      'SENSITIVE_PATH',
+      'HIGH_CONFIDENCE_SECRET_MATCH',
+    ])).length(1),
+    classificationDigest: digestEnvelopeV1Schema,
+  }),
   contextGrantDigest: digestEnvelopeV1Schema,
   requestDigest: digestEnvelopeV1Schema,
   subjectDigest: digestEnvelopeV1Schema,
@@ -173,8 +197,8 @@ function materialChecks(
     { check: 'SOURCE_DIGEST_INTEGRITY', status: 'SATISFIED', reasonCodes: [] },
     {
       check: 'SENSITIVITY_CLASSIFICATION',
-      status: 'REVIEW_REQUIRED',
-      reasonCodes: ['SENSITIVITY_REVIEW_REQUIRED'],
+      status: 'SATISFIED',
+      reasonCodes: [],
     },
     {
       check: 'SECRET_REDACTION',
@@ -238,6 +262,10 @@ export async function reviewRequestedSourceSliceMaterial(
       fingerprintKey,
       fingerprintKeyId: options.fingerprintKeyId,
     })
+    const classification = parseProtectedSourceSliceSensitivity(
+      classifyProtectedSourceSliceSensitivity({ material, redaction }),
+      { material, redaction },
+    )
     const egressReview = reviewProtectedSourceSliceEgress({
       contextGrant,
       request,
@@ -253,7 +281,13 @@ export async function reviewRequestedSourceSliceMaterial(
     const core: ProtectedSourceSliceMaterialReviewCoreV1 = {
       schemaVersion: 1,
       path: material.path,
-      sensitivity: 'PROTECTED_SOURCE',
+      sensitivity: {
+        classifierId: classification.classifierId,
+        classifierVersion: classification.classifierVersion,
+        category: classification.category,
+        indicatorCodes: classification.indicatorCodes,
+        classificationDigest: classification.classificationDigest,
+      },
       contextGrantDigest: parsedEgressReview.contextGrantDigest,
       requestDigest: material.requestDigest,
       subjectDigest: material.subjectDigest,
@@ -306,6 +340,8 @@ export function parseProtectedSourceSliceMaterialReview(
   if (
     review.redactionDigest.mediaType !== SOURCE_SLICE_REDACTION_MEDIA_TYPE
     || review.egressReviewDigest.mediaType !== SOURCE_SLICE_EGRESS_REVIEW_MEDIA_TYPE
+    || review.sensitivity.classificationDigest.mediaType
+      !== SOURCE_SLICE_SENSITIVITY_CLASSIFICATION_MEDIA_TYPE
     || review.observed.sourceBytes !== review.sourceDigest.byteLength
     || review.observed.redactedBytes !== review.redactedDigest.byteLength
   ) {
@@ -325,6 +361,16 @@ export function parseProtectedSourceSliceMaterialReview(
     || canonicalJson(egressCheck.reasonCodes) !== canonicalJson(disposition.reasonCodes)
   ) {
     throw new TypeError('Source Slice material review Data Egress disposition is invalid')
+  }
+  const sensitivity = deriveProtectedSourceSliceSensitivity(
+    review.path,
+    review.observed.secretFindingCount,
+  )
+  if (
+    review.sensitivity.category !== sensitivity.category
+    || canonicalJson(review.sensitivity.indicatorCodes) !== canonicalJson(sensitivity.indicatorCodes)
+  ) {
+    throw new TypeError('Source Slice material review sensitivity classification is invalid')
   }
   const expectedChecks = materialChecks(disposition.decision, disposition.reasonCodes)
   const expectedDecision = reviewDecision(expectedChecks)
