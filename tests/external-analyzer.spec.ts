@@ -539,7 +539,10 @@ describe('external Analyzer composition', () => {
               eligibility: 'INELIGIBLE',
               reason: 'ASSESSMENT_PROFILE_UNQUALIFIED',
             }],
-            unsupportedConditions: ['NO_ELIGIBLE_ANALYZER_COMPOSITION'],
+            unsupportedConditions: [
+              'NO_ELIGIBLE_ANALYZER_COMPOSITION',
+              'NO_ELIGIBLE_ROLE_COMPOSITION',
+            ],
             admissible: false,
           },
         },

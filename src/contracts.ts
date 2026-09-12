@@ -579,6 +579,19 @@ const securityCatalogStrongerControlV1Schema: z.ZodType<SecurityCatalogStrongerC
   requiresControlIds: z.array(boundedBindingId).max(16),
 })
 
+/** Bounded capability summary; this is not a Role Definition or execution authority. */
+export interface SecurityCatalogRoleV1 {
+  readonly roleId: SecurityRoleIdV1
+  readonly executionSupport: 'SUPPORTED' | 'UNSUPPORTED'
+  readonly authority: 'PROPOSAL_ONLY'
+}
+
+const securityCatalogRoleV1Schema: z.ZodType<SecurityCatalogRoleV1> = z.strictObject({
+  roleId: z.lazy(() => securityRoleIdV1Schema),
+  executionSupport: z.enum(['SUPPORTED', 'UNSUPPORTED']),
+  authority: z.literal('PROPOSAL_ONLY'),
+})
+
 export interface StartPreflightProviderV1 {
   readonly providerId: string
   readonly analyzerId: string
@@ -659,6 +672,8 @@ export interface SecurityCatalogSnapshotV1 {
   readonly assessmentModes: readonly SecurityCatalogAssessmentModeV1[]
   readonly assessmentProfiles: readonly SecurityCatalogProfileV1[]
   readonly strongerControls: readonly SecurityCatalogStrongerControlV1[]
+  /** Fixed governed identities with effective execution support for this Service composition. */
+  readonly securityRoles: readonly SecurityCatalogRoleV1[]
   readonly supportedEcosystemIds: readonly string[]
   readonly supportedPlatforms: readonly RepositoryPlatform[]
   readonly supportMatrixReferences: readonly string[]
@@ -671,6 +686,7 @@ export const securityCatalogSnapshotV1Schema: z.ZodType<SecurityCatalogSnapshotV
   assessmentModes: z.array(securityCatalogAssessmentModeV1Schema).max(3),
   assessmentProfiles: z.array(securityCatalogProfileV1Schema).max(32),
   strongerControls: z.array(securityCatalogStrongerControlV1Schema).max(16),
+  securityRoles: z.array(securityCatalogRoleV1Schema).max(5).default([]),
   supportedEcosystemIds: z.array(boundedBindingId).max(64),
   supportedPlatforms: z.array(repositoryPlatformSchema).max(3),
   supportMatrixReferences: z.array(boundedBindingId).max(32),

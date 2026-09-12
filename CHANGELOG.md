@@ -7,6 +7,11 @@
   report `security/deep` or Host-defined Profiles as unsupported, and a direct
   Service start that omits preflight can seal only `INDETERMINATE` instead of
   reusing Standard PURE Evidence as a stronger Profile claim.
+- Publish the fixed five-role Security Role Catalog as bounded `PROPOSAL_ONLY`
+  capability summaries without prompts, factories, credentials, or decision
+  authority. Every role remains explicitly unsupported until qualified
+  subagent execution exists, and Deep Start Preflight now reports the separate
+  `NO_ELIGIBLE_ROLE_COMPOSITION` blocker.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

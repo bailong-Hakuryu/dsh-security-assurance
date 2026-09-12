@@ -4,6 +4,7 @@ import type {
   RepositorySnapshotV1,
   SecurityCatalogAssessmentModeV1,
   SecurityCatalogProfileV1,
+  SecurityCatalogRoleV1,
   SecurityCatalogSnapshotV1,
   StartAssessmentSelectionV1,
   StartPreflightProviderV1,
@@ -23,6 +24,13 @@ import { structuredDigest } from './canonical.ts'
 import { deepFreeze } from './freeze.ts'
 
 const START_PREFLIGHT_MEDIA_TYPE = 'application/vnd.dsh.security.start-preflight+json'
+const SECURITY_ROLE_CATALOG: readonly SecurityCatalogRoleV1[] = [
+  { roleId: 'threat-modeler', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
+  { roleId: 'discovery-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
+  { roleId: 'validation-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
+  { roleId: 'attack-path-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
+  { roleId: 'challenge-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
+]
 const MODE_DEFINITIONS = [
   {
     assessmentMode: 'REPOSITORY',
@@ -142,7 +150,9 @@ function profile(repository: RepositorySnapshotV1): SecurityCatalogProfileV1 {
     maximumBudget: { status: 'NOT_REPORTED' },
     limitations: profileId === QUALIFIED_ASSESSMENT_PROFILE_ID
       ? ['The v0.1 Service does not yet report a numeric maximum execution budget.']
-      : ['The selected Assessment Profile has no qualified Analyzer composition in v0.1.'],
+      : profileId === 'security/deep'
+        ? ['Deep requires governed Role execution, but no qualified Role Provider composition is available in v0.1.']
+        : ['The selected Assessment Profile has no qualified Analyzer composition in v0.1.'],
   }
 }
 
@@ -159,6 +169,12 @@ function preflight(
     unsupportedConditions.push('ASSESSMENT_PROFILE_NOT_BOUND')
   }
   if (eligibleProviders.length === 0) unsupportedConditions.push('NO_ELIGIBLE_ANALYZER_COMPOSITION')
+  if (
+    repository.bindings.assessmentProfileId === 'security/deep'
+    && SECURITY_ROLE_CATALOG.every(role => role.executionSupport === 'UNSUPPORTED')
+  ) {
+    unsupportedConditions.push('NO_ELIGIBLE_ROLE_COMPOSITION')
+  }
   const claimLimitations = [...new Set([
     ...builtinSupports(repository, selection.assessmentMode)
       ? BUILTIN_NODE_PACKAGE_LIFECYCLE_QUALIFICATION.limitations
@@ -244,6 +260,7 @@ export function buildSecurityCatalog(
       label: { en: 'Critical dual authority', zhCN: 'Critical 双重授权' },
       requiresControlIds: [RISK_DECISION_WINDOW_CONTROL_ID],
     }],
+    securityRoles: SECURITY_ROLE_CATALOG,
     supportedEcosystemIds: [...new Set(
       qualifiedProviders.flatMap(provider => provider.supportedEcosystemIds),
     )],

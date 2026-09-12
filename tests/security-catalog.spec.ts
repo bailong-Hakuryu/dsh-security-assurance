@@ -59,6 +59,32 @@ async function waitUntilSealed(
 }
 
 describe('Security Catalog and Start Preflight', () => {
+  it('exposes only the fixed governed Role Catalog without executable or decision authority', async () => {
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-role-catalog-home-'))
+    temporaryRoots.push(dshHome)
+    const ctx = new Context()
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
+    try {
+      const invocation = referenceHostInvocation(ctx.securityAssurance)
+      const catalog = await ctx.securityAssurance.getCatalog(invocation, { schemaVersion: 1 })
+      if (!catalog.ok) throw new Error(`catalog failed: ${catalog.error.code}`)
+
+      expect(catalog.value.securityRoles).toEqual([
+        { roleId: 'threat-modeler', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
+        { roleId: 'discovery-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
+        { roleId: 'validation-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
+        { roleId: 'attack-path-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
+        { roleId: 'challenge-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
+      ])
+      expect(Object.isFrozen(catalog.value.securityRoles)).toBe(true)
+      expect(JSON.stringify(catalog.value.securityRoles)).not.toMatch(
+        /prompt|factory|credential|approver|risk acceptor|verdict owner/iu,
+      )
+    } finally {
+      await fiber.dispose()
+    }
+  })
+
   it('binds effective Service composition to the confirmed Assessment start', async () => {
     const repositoryRoot = await repositoryFixture()
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-catalog-home-'))
@@ -262,7 +288,7 @@ describe('Security Catalog and Start Preflight', () => {
           assessmentProfiles: [{
             assessmentProfileId: 'security/deep',
             limitations: [
-              'The selected Assessment Profile has no qualified Analyzer composition in v0.1.',
+              'Deep requires governed Role execution, but no qualified Role Provider composition is available in v0.1.',
             ],
           }],
           supportedEcosystemIds: [],
@@ -270,7 +296,10 @@ describe('Security Catalog and Start Preflight', () => {
           startPreflight: {
             selection,
             providerComposition: [],
-            unsupportedConditions: ['NO_ELIGIBLE_ANALYZER_COMPOSITION'],
+            unsupportedConditions: [
+              'NO_ELIGIBLE_ANALYZER_COMPOSITION',
+              'NO_ELIGIBLE_ROLE_COMPOSITION',
+            ],
             claimLimitations: [],
             coverageLimitations: [
               'Mandatory Coverage cannot be satisfied by the currently qualified composition.',
