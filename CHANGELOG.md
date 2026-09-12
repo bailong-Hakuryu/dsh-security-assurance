@@ -46,6 +46,11 @@
   Slices. It repeats static admission, enforces `egress/deny-by-default`, meters
   the redacted bytes, and otherwise reports the Broker, destination and secret
   checks still required; it has no approved state and performs no Provider call.
+- Add one package-private vertical material-review operation that re-reads the
+  content-addressed Subject and emits a text-free, immutable record covering all
+  seven Source Slice material checks. Only containment and raw-source integrity
+  are satisfied locally; unresolved sensitivity, secret, token, Role-need and
+  egress boundaries remain review-required or rejected, never approved.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

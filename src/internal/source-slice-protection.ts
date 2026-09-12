@@ -435,22 +435,33 @@ export function parseProtectedSourceSliceRedaction(
   return deepFreeze({ ...core, redactionDigest })
 }
 
-function expectedEgressReasons(
+export function deriveProtectedSourceSliceEgressDisposition(
   policyId: string,
   observedRedactedBytes: number,
   requestedContextBytes: number,
-): ProtectedSourceSliceEgressReasonV1[] {
-  if (policyId === 'egress/deny-by-default') return ['POLICY_DENIES_EGRESS']
+): {
+  readonly decision: ProtectedSourceSliceEgressReviewCoreV1['decision']
+  readonly reasonCodes: readonly ProtectedSourceSliceEgressReasonV1[]
+} {
   const reasons: ProtectedSourceSliceEgressReasonV1[] = []
+  if (policyId === 'egress/deny-by-default') reasons.push('POLICY_DENIES_EGRESS')
   if (observedRedactedBytes > requestedContextBytes) {
     reasons.push('REDACTED_BYTE_BUDGET_EXCEEDED')
   }
-  reasons.push(
-    'SECRET_REVIEW_INCOMPLETE',
-    'BROKER_QUALIFICATION_REQUIRED',
-    'DESTINATION_AUTHORIZATION_REQUIRED',
-  )
-  return reasons
+  if (policyId !== 'egress/deny-by-default') {
+    reasons.push(
+      'SECRET_REVIEW_INCOMPLETE',
+      'BROKER_QUALIFICATION_REQUIRED',
+      'DESTINATION_AUTHORIZATION_REQUIRED',
+    )
+  }
+  return deepFreeze({
+    decision: reasons.includes('POLICY_DENIES_EGRESS')
+      || reasons.includes('REDACTED_BYTE_BUDGET_EXCEEDED')
+      ? 'REJECTED'
+      : 'BROKER_REVIEW_REQUIRED',
+    reasonCodes: reasons,
+  })
 }
 
 /**
@@ -475,15 +486,11 @@ export function reviewProtectedSourceSliceEgress(
     throw new TypeError('Source Slice egress review does not bind the admitted request')
   }
   const observedRedactedBytes = Buffer.byteLength(redaction.redactedText, 'utf8')
-  const reasonCodes = expectedEgressReasons(
+  const disposition = deriveProtectedSourceSliceEgressDisposition(
     request.disclosure.dataEgressPolicyId,
     observedRedactedBytes,
     request.budget.contextBytes,
   )
-  const decision = reasonCodes.includes('POLICY_DENIES_EGRESS')
-    || reasonCodes.includes('REDACTED_BYTE_BUDGET_EXCEEDED')
-    ? 'REJECTED' as const
-    : 'BROKER_REVIEW_REQUIRED' as const
   const core: ProtectedSourceSliceEgressReviewCoreV1 = {
     schemaVersion: 1,
     contextGrantDigest: contextGrant.grantDigest,
@@ -495,8 +502,8 @@ export function reviewProtectedSourceSliceEgress(
     disclosure: request.disclosure,
     observedRedactedBytes,
     requestedContextBytes: request.budget.contextBytes,
-    decision,
-    reasonCodes,
+    decision: disposition.decision,
+    reasonCodes: disposition.reasonCodes,
   }
   return deepFreeze({
     ...core,
@@ -517,20 +524,16 @@ export function parseProtectedSourceSliceEgressReview(
   ) {
     throw new TypeError('Source Slice egress review does not bind its expected inputs')
   }
-  const expectedReasons = expectedEgressReasons(
+  const disposition = deriveProtectedSourceSliceEgressDisposition(
     review.disclosure.dataEgressPolicyId,
     review.observedRedactedBytes,
     review.requestedContextBytes,
   )
-  const expectedDecision = expectedReasons.includes('POLICY_DENIES_EGRESS')
-    || expectedReasons.includes('REDACTED_BYTE_BUDGET_EXCEEDED')
-    ? 'REJECTED'
-    : 'BROKER_REVIEW_REQUIRED'
   if (
     review.redactedDigest.mediaType !== REDACTED_SOURCE_SLICE_MEDIA_TYPE
     || review.redactionDigest.mediaType !== SOURCE_SLICE_REDACTION_MEDIA_TYPE
-    || review.decision !== expectedDecision
-    || canonicalJson(review.reasonCodes) !== canonicalJson(expectedReasons)
+    || review.decision !== disposition.decision
+    || canonicalJson(review.reasonCodes) !== canonicalJson(disposition.reasonCodes)
   ) {
     throw new TypeError('Source Slice egress review decision or reasons are invalid')
   }
