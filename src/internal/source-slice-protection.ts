@@ -2,6 +2,13 @@ import { createHmac } from 'node:crypto'
 import { z } from 'zod'
 import type { DigestEnvelopeV1 } from '../contracts.ts'
 import { digestEnvelopeV1Schema } from '../contracts.ts'
+import type { RoleContextGrantV1 } from '../role-context-grant.ts'
+import { parseRoleContextGrantV1 } from '../role-context-grant.ts'
+import type { SourceSliceRequestV1 } from '../source-slice-request.ts'
+import {
+  parseSourceSliceRequestV1,
+  preflightSourceSliceRequestV1,
+} from '../source-slice-request.ts'
 import { binaryDigest, canonicalJson, structuredDigest } from './canonical.ts'
 import { deepFreeze } from './freeze.ts'
 import type { ProtectedSourceSliceMaterialV1 } from './subject-freeze.ts'
@@ -12,6 +19,8 @@ export const REDACTED_SOURCE_SLICE_MEDIA_TYPE =
   'application/vnd.dsh.security.redacted-source-slice+text'
 export const SOURCE_SLICE_REDACTION_MEDIA_TYPE =
   'application/vnd.dsh.security.source-slice-redaction+json'
+export const SOURCE_SLICE_EGRESS_REVIEW_MEDIA_TYPE =
+  'application/vnd.dsh.security.source-slice-egress-review+json'
 
 const SECRET_DETECTOR_POLICY_ID = 'security/high-confidence-secret-patterns-v1'
 const SECRET_REDACTION_POLICY_ID = 'security/high-confidence-secret-redaction-v1'
@@ -78,6 +87,50 @@ export interface ProtectedSourceSliceRedactionCoreV1 {
 }
 
 export interface ProtectedSourceSliceRedactionV1 extends ProtectedSourceSliceRedactionCoreV1 {
+  readonly redactionDigest: DigestEnvelopeV1
+}
+
+export type ProtectedSourceSliceEgressReasonV1 =
+  | 'POLICY_DENIES_EGRESS'
+  | 'REDACTED_BYTE_BUDGET_EXCEEDED'
+  | 'SECRET_REVIEW_INCOMPLETE'
+  | 'BROKER_QUALIFICATION_REQUIRED'
+  | 'DESTINATION_AUTHORIZATION_REQUIRED'
+
+export interface ProtectedSourceSliceEgressReviewCoreV1 {
+  readonly schemaVersion: 1
+  readonly contextGrantDigest: DigestEnvelopeV1
+  readonly requestDigest: DigestEnvelopeV1
+  readonly subjectDigest: DigestEnvelopeV1
+  readonly sourceDigest: DigestEnvelopeV1
+  readonly redactionDigest: DigestEnvelopeV1
+  readonly redactedDigest: DigestEnvelopeV1
+  readonly disclosure: {
+    readonly dataEgressPolicyId: string
+    readonly destinationId: string
+    readonly categoryId: string
+  }
+  readonly observedRedactedBytes: number
+  readonly requestedContextBytes: number
+  readonly decision: 'REJECTED' | 'BROKER_REVIEW_REQUIRED'
+  readonly reasonCodes: readonly ProtectedSourceSliceEgressReasonV1[]
+}
+
+export interface ProtectedSourceSliceEgressReviewV1
+  extends ProtectedSourceSliceEgressReviewCoreV1 {
+  readonly egressReviewDigest: DigestEnvelopeV1
+}
+
+export interface ReviewProtectedSourceSliceEgressOptionsV1 {
+  readonly contextGrant: RoleContextGrantV1
+  readonly request: SourceSliceRequestV1
+  readonly material: ProtectedSourceSliceMaterialV1
+  readonly redaction: ProtectedSourceSliceRedactionV1
+}
+
+export interface ProtectedSourceSliceEgressReviewBindingsV1 {
+  readonly contextGrantDigest: DigestEnvelopeV1
+  readonly requestDigest: DigestEnvelopeV1
   readonly redactionDigest: DigestEnvelopeV1
 }
 
@@ -271,6 +324,34 @@ const sourceSliceRedactionV1Schema = z.strictObject({
   redactionDigest: digestEnvelopeV1Schema,
 })
 
+const SOURCE_SLICE_EGRESS_REASON_CODES = [
+  'POLICY_DENIES_EGRESS',
+  'REDACTED_BYTE_BUDGET_EXCEEDED',
+  'SECRET_REVIEW_INCOMPLETE',
+  'BROKER_QUALIFICATION_REQUIRED',
+  'DESTINATION_AUTHORIZATION_REQUIRED',
+] as const satisfies readonly ProtectedSourceSliceEgressReasonV1[]
+
+const sourceSliceEgressReviewV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  contextGrantDigest: digestEnvelopeV1Schema,
+  requestDigest: digestEnvelopeV1Schema,
+  subjectDigest: digestEnvelopeV1Schema,
+  sourceDigest: digestEnvelopeV1Schema,
+  redactionDigest: digestEnvelopeV1Schema,
+  redactedDigest: digestEnvelopeV1Schema,
+  disclosure: z.strictObject({
+    dataEgressPolicyId: fingerprintKeyIdSchema,
+    destinationId: fingerprintKeyIdSchema,
+    categoryId: fingerprintKeyIdSchema,
+  }),
+  observedRedactedBytes: z.number().int().nonnegative().max(2 * 1024 * 1024),
+  requestedContextBytes: z.number().int().positive().max(64 * 1024 * 1024),
+  decision: z.enum(['REJECTED', 'BROKER_REVIEW_REQUIRED']),
+  reasonCodes: z.array(z.enum(SOURCE_SLICE_EGRESS_REASON_CODES)).min(1).max(5),
+  egressReviewDigest: digestEnvelopeV1Schema,
+})
+
 /** Replace every detected high-confidence match while preserving the fail-closed review state. */
 export function redactProtectedSourceSliceSecrets(
   options: InspectProtectedSourceSliceSecretsOptionsV1,
@@ -352,4 +433,111 @@ export function parseProtectedSourceSliceRedaction(
     throw new TypeError('Source Slice redaction digest does not bind its canonical content')
   }
   return deepFreeze({ ...core, redactionDigest })
+}
+
+function expectedEgressReasons(
+  policyId: string,
+  observedRedactedBytes: number,
+  requestedContextBytes: number,
+): ProtectedSourceSliceEgressReasonV1[] {
+  if (policyId === 'egress/deny-by-default') return ['POLICY_DENIES_EGRESS']
+  const reasons: ProtectedSourceSliceEgressReasonV1[] = []
+  if (observedRedactedBytes > requestedContextBytes) {
+    reasons.push('REDACTED_BYTE_BUDGET_EXCEEDED')
+  }
+  reasons.push(
+    'SECRET_REVIEW_INCOMPLETE',
+    'BROKER_QUALIFICATION_REQUIRED',
+    'DESTINATION_AUTHORIZATION_REQUIRED',
+  )
+  return reasons
+}
+
+/**
+ * Enforce local deny-by-default and identify remaining Host/Broker checks.
+ * This function performs no network or Provider operation and cannot approve egress.
+ */
+export function reviewProtectedSourceSliceEgress(
+  options: ReviewProtectedSourceSliceEgressOptionsV1,
+): ProtectedSourceSliceEgressReviewV1 {
+  const contextGrant = parseRoleContextGrantV1(options.contextGrant)
+  const request = parseSourceSliceRequestV1(options.request)
+  if (preflightSourceSliceRequestV1({ contextGrant, request }).decision !== 'MATERIAL_REVIEW_REQUIRED') {
+    throw new TypeError('Source Slice egress review failed static preflight')
+  }
+  const material = parseProtectedMaterial(options.material)
+  const redaction = parseProtectedSourceSliceRedaction(options.redaction, material)
+  if (
+    !sameDigest(material.requestDigest, request.requestDigest)
+    || !sameDigest(material.subjectDigest, request.subjectDigest)
+    || !sameDigest(material.digest, request.target.expectedSourceDigest)
+  ) {
+    throw new TypeError('Source Slice egress review does not bind the admitted request')
+  }
+  const observedRedactedBytes = Buffer.byteLength(redaction.redactedText, 'utf8')
+  const reasonCodes = expectedEgressReasons(
+    request.disclosure.dataEgressPolicyId,
+    observedRedactedBytes,
+    request.budget.contextBytes,
+  )
+  const decision = reasonCodes.includes('POLICY_DENIES_EGRESS')
+    || reasonCodes.includes('REDACTED_BYTE_BUDGET_EXCEEDED')
+    ? 'REJECTED' as const
+    : 'BROKER_REVIEW_REQUIRED' as const
+  const core: ProtectedSourceSliceEgressReviewCoreV1 = {
+    schemaVersion: 1,
+    contextGrantDigest: contextGrant.grantDigest,
+    requestDigest: request.requestDigest,
+    subjectDigest: material.subjectDigest,
+    sourceDigest: material.digest,
+    redactionDigest: redaction.redactionDigest,
+    redactedDigest: redaction.redactedDigest,
+    disclosure: request.disclosure,
+    observedRedactedBytes,
+    requestedContextBytes: request.budget.contextBytes,
+    decision,
+    reasonCodes,
+  }
+  return deepFreeze({
+    ...core,
+    egressReviewDigest: structuredDigest(SOURCE_SLICE_EGRESS_REVIEW_MEDIA_TYPE, core),
+  })
+}
+
+/** Validate a persisted deny-by-default review against its exact upstream digests. */
+export function parseProtectedSourceSliceEgressReview(
+  candidate: unknown,
+  expectedBindings: ProtectedSourceSliceEgressReviewBindingsV1,
+): ProtectedSourceSliceEgressReviewV1 {
+  const review = sourceSliceEgressReviewV1Schema.parse(candidate)
+  if (
+    !sameDigest(review.contextGrantDigest, expectedBindings.contextGrantDigest)
+    || !sameDigest(review.requestDigest, expectedBindings.requestDigest)
+    || !sameDigest(review.redactionDigest, expectedBindings.redactionDigest)
+  ) {
+    throw new TypeError('Source Slice egress review does not bind its expected inputs')
+  }
+  const expectedReasons = expectedEgressReasons(
+    review.disclosure.dataEgressPolicyId,
+    review.observedRedactedBytes,
+    review.requestedContextBytes,
+  )
+  const expectedDecision = expectedReasons.includes('POLICY_DENIES_EGRESS')
+    || expectedReasons.includes('REDACTED_BYTE_BUDGET_EXCEEDED')
+    ? 'REJECTED'
+    : 'BROKER_REVIEW_REQUIRED'
+  if (
+    review.redactedDigest.mediaType !== REDACTED_SOURCE_SLICE_MEDIA_TYPE
+    || review.redactionDigest.mediaType !== SOURCE_SLICE_REDACTION_MEDIA_TYPE
+    || review.decision !== expectedDecision
+    || canonicalJson(review.reasonCodes) !== canonicalJson(expectedReasons)
+  ) {
+    throw new TypeError('Source Slice egress review decision or reasons are invalid')
+  }
+  const { egressReviewDigest, ...core } = review
+  const observedDigest = structuredDigest(SOURCE_SLICE_EGRESS_REVIEW_MEDIA_TYPE, core)
+  if (!sameDigest(egressReviewDigest, observedDigest)) {
+    throw new TypeError('Source Slice egress review digest does not bind its canonical content')
+  }
+  return deepFreeze({ ...core, egressReviewDigest })
 }

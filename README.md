@@ -71,6 +71,8 @@ Security Catalog 同时公开固定五角色的有界能力摘要。每个条目
 
 同一包内层可将每个已检测值替换为带类型的固定占位符，并分别摘要绑定脱敏后的 UTF-8 正文与完整脱敏记录。接收方会针对原受保护材料重新核对源绑定、检测位置、替换覆盖和两个摘要；记录不保留原始匹配值。<code>REDACTED_MATCHES_REVIEW_REQUIRED</code> 仅说明已知高置信命中已被替换，仍不等于完整 secret clearance 或 Data Egress 授权。
 
+包内 Data Egress 审查随后重新执行 Grant/Request 静态 admission、核对完整材料与脱敏摘要链，并按脱敏后的实际 UTF-8 字节重新计量。<code>egress/deny-by-default</code> 必定得到 <code>REJECTED</code>；其他策略也只能得到 <code>BROKER_REVIEW_REQUIRED</code>，并明确列出 secret 复核、Broker 资格和目标授权缺口。该步骤没有 approved 状态，不读取凭据、不访问网络，也不调用 Provider。
+
 <code>TARGETED</code> 仍会冻结并摘要绑定完整 Subject，但只把明确目标内、经过验证的相关 slice 交给内建分析器：Node 生命周期策略读取 <code>package.json</code>，GitHub Actions 策略读取 <code>.github/workflows/*.yml|yaml</code>。每个目标必须对应一个现有条目或目录前缀；不存在的目标会在创建 Assessment 前被拒绝。npm 发布面、npm audit、Gitleaks 与 pnpm 锁文件策略暂不声明 <code>TARGETED</code> 支持，因为它们的根部或外部输入目前不能独立证明与目标完全一致。
 
 Harness 支持窗口是一个显式的已验证集合：每日 [Harness Compatibility](https://github.com/bailong-Hakuryu/dsh-security-assurance/actions/workflows/harness-compat.yml) 工作流自动发现官方仓库标签，对主目标在 Ubuntu、macOS、Windows 上、对其余版本在 Ubuntu 上执行双插件联合 E2E（Mission → Developer 工作区变更 → CHANGE Assessment → sealed submission → Quality Gate）和打包 fresh Profile 安装加 Web 探针。新标签会自动进入验证，但未通过矩阵验证前不会被声明支持（ADR 0310）。
@@ -313,6 +315,8 @@ A package-private protected reader can now accept that exact Grant and Request, 
 A package-private secret inspection layer can run a versioned set of high-confidence patterns over that local material while retaining only the type, UTF-16 location, and an HMAC-SHA-256 fingerprint made with a Host-supplied key. Raw matches and the fingerprint key never enter the returned record; weak keys, text-digest drift, and non-canonical paths fail closed. The detector is intentionally bounded: even an empty result remains <code>ADDITIONAL_REVIEW_REQUIRED</code>, never a claim that the text is secret-free or an authorization for egress.
 
 The same package-private layer can replace every detected value with a fixed typed placeholder and separately digest-bind the redacted UTF-8 text and the complete redaction record. A receiver rechecks the source bindings, detected locations, replacement coverage, and both digests against the protected material; raw matches are not retained. <code>REDACTED_MATCHES_REVIEW_REQUIRED</code> means only that known high-confidence matches were replaced, not that secret clearance is complete or Data Egress is authorized.
+
+A package-private Data Egress review then repeats Grant/Request static admission, verifies the complete material-to-redaction digest chain, and meters the actual redacted UTF-8 bytes. <code>egress/deny-by-default</code> always yields <code>REJECTED</code>; every other policy can yield only <code>BROKER_REVIEW_REQUIRED</code> with explicit secret-review, Broker-qualification, and destination-authorization gaps. This step has no approved state, reads no credential, accesses no network, and calls no Provider.
 
 <code>TARGETED</code> still freezes and digest-binds the complete Subject, then exposes only verified relevant slices inside the explicit Target: <code>package.json</code> for the Node lifecycle policy and <code>.github/workflows/*.yml|yaml</code> for the GitHub Actions policy. Every Target path must name an existing entry or directory prefix. A nonexistent path is rejected before Assessment creation. The npm publish surface, npm audit, Gitleaks, and pnpm lockfile policies do not yet claim <code>TARGETED</code> support because their root or external inputs cannot independently prove an exact Target scan scope.
 

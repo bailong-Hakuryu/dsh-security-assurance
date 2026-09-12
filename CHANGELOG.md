@@ -42,6 +42,10 @@
   match. The redacted text and canonical record receive separate exact digests,
   parsing recomputes the replacement coverage and source bindings, and both
   matched and no-match results remain explicitly subject to further review.
+- Add a digest-bound package-private Data Egress review for protected Source
+  Slices. It repeats static admission, enforces `egress/deny-by-default`, meters
+  the redacted bytes, and otherwise reports the Broker, destination and secret
+  checks still required; it has no approved state and performs no Provider call.
 
 ## [0.1.0-rc.14] - 2026-09-11
 
