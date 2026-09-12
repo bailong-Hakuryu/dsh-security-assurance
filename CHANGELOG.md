@@ -38,6 +38,10 @@
   HMAC-SHA-256 fingerprint, while the raw match and key are never returned.
   Empty findings remain `ADDITIONAL_REVIEW_REQUIRED` rather than claiming the
   bounded detector proved that the material is secret-free.
+- Add deterministic package-private redaction for every high-confidence secret
+  match. The redacted text and canonical record receive separate exact digests,
+  parsing recomputes the replacement coverage and source bindings, and both
+  matched and no-match results remain explicitly subject to further review.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

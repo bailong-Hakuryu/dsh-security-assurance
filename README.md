@@ -69,6 +69,8 @@ Security Catalog 同时公开固定五角色的有界能力摘要。每个条目
 
 包内 secret 检查层可对这份本地材料运行有版本的高置信模式集，并只保留类型、UTF-16 位置和使用 Host 提供密钥生成的 HMAC-SHA-256 指纹。原始匹配值与指纹密钥不会进入返回记录；弱密钥、正文摘要漂移或非规范路径会 fail closed。该检查是有意受限的检测器：即使没有命中，结果仍是 <code>ADDITIONAL_REVIEW_REQUIRED</code>，绝不据此宣称正文不含 secret，也不会授权 egress。
 
+同一包内层可将每个已检测值替换为带类型的固定占位符，并分别摘要绑定脱敏后的 UTF-8 正文与完整脱敏记录。接收方会针对原受保护材料重新核对源绑定、检测位置、替换覆盖和两个摘要；记录不保留原始匹配值。<code>REDACTED_MATCHES_REVIEW_REQUIRED</code> 仅说明已知高置信命中已被替换，仍不等于完整 secret clearance 或 Data Egress 授权。
+
 <code>TARGETED</code> 仍会冻结并摘要绑定完整 Subject，但只把明确目标内、经过验证的相关 slice 交给内建分析器：Node 生命周期策略读取 <code>package.json</code>，GitHub Actions 策略读取 <code>.github/workflows/*.yml|yaml</code>。每个目标必须对应一个现有条目或目录前缀；不存在的目标会在创建 Assessment 前被拒绝。npm 发布面、npm audit、Gitleaks 与 pnpm 锁文件策略暂不声明 <code>TARGETED</code> 支持，因为它们的根部或外部输入目前不能独立证明与目标完全一致。
 
 Harness 支持窗口是一个显式的已验证集合：每日 [Harness Compatibility](https://github.com/bailong-Hakuryu/dsh-security-assurance/actions/workflows/harness-compat.yml) 工作流自动发现官方仓库标签，对主目标在 Ubuntu、macOS、Windows 上、对其余版本在 Ubuntu 上执行双插件联合 E2E（Mission → Developer 工作区变更 → CHANGE Assessment → sealed submission → Quality Gate）和打包 fresh Profile 安装加 Web 探针。新标签会自动进入验证，但未通过矩阵验证前不会被声明支持（ADR 0310）。
@@ -309,6 +311,8 @@ The same public seam provides deterministic <code>SourceSliceRequestV1</code> cr
 A package-private protected reader can now accept that exact Grant and Request, repeat static admission, and read one in-target file from the content-addressed Subject Snapshot. It reverifies the complete Subject, frozen Target containment, the Request/Manifest/observed raw-byte digest chain, and the actual byte budget; its deeply frozen result is not exported from the package root. This local material has not passed sensitivity, secret-redaction, Data Egress, or Role-need review, so it cannot be sent to a Provider or used to issue another Context Grant.
 
 A package-private secret inspection layer can run a versioned set of high-confidence patterns over that local material while retaining only the type, UTF-16 location, and an HMAC-SHA-256 fingerprint made with a Host-supplied key. Raw matches and the fingerprint key never enter the returned record; weak keys, text-digest drift, and non-canonical paths fail closed. The detector is intentionally bounded: even an empty result remains <code>ADDITIONAL_REVIEW_REQUIRED</code>, never a claim that the text is secret-free or an authorization for egress.
+
+The same package-private layer can replace every detected value with a fixed typed placeholder and separately digest-bind the redacted UTF-8 text and the complete redaction record. A receiver rechecks the source bindings, detected locations, replacement coverage, and both digests against the protected material; raw matches are not retained. <code>REDACTED_MATCHES_REVIEW_REQUIRED</code> means only that known high-confidence matches were replaced, not that secret clearance is complete or Data Egress is authorized.
 
 <code>TARGETED</code> still freezes and digest-binds the complete Subject, then exposes only verified relevant slices inside the explicit Target: <code>package.json</code> for the Node lifecycle policy and <code>.github/workflows/*.yml|yaml</code> for the GitHub Actions policy. Every Target path must name an existing entry or directory prefix. A nonexistent path is rejected before Assessment creation. The npm publish surface, npm audit, Gitleaks, and pnpm lockfile policies do not yet claim <code>TARGETED</code> support because their root or external inputs cannot independently prove an exact Target scan scope.
 
