@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Bind every current v0.1 Analyzer qualification to the only implemented
+  `security/standard` Assessment Profile. Catalog and Start Preflight now
+  report `security/deep` or Host-defined Profiles as unsupported, and a direct
+  Service start that omits preflight can seal only `INDETERMINATE` instead of
+  reusing Standard PURE Evidence as a stronger Profile claim.
+
 ## [0.1.0-rc.14] - 2026-09-11
 
 - Upgrade the direct YAML parser dependency to `2.8.3`, the first patched

@@ -14,6 +14,7 @@ import {
   RISK_DECISION_WINDOW_CONTROL_ID,
   SECURITY_ASSURANCE_PRODUCT_NAME,
 } from '../contracts.ts'
+import { QUALIFIED_ASSESSMENT_PROFILE_ID } from './assessment-profile.ts'
 import {
   BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR,
   BUILTIN_NODE_PACKAGE_LIFECYCLE_QUALIFICATION,
@@ -50,6 +51,7 @@ export interface SecurityCatalogCompositionInputV1 {
 }
 function builtinSupports(repository: RepositorySnapshotV1, mode: AssessmentMode): boolean {
   return repository.bindings.policyId === 'security/node-package-lifecycle'
+    && repository.bindings.assessmentProfileId === QUALIFIED_ASSESSMENT_PROFILE_ID
     && BUILTIN_NODE_PACKAGE_LIFECYCLE_DESCRIPTOR.supportedAssessmentModes.includes(
       mode,
     )
@@ -76,7 +78,10 @@ function providerSummary(
     })
   }
   for (const entry of portfolio) {
-    const qualifiedScope = entry.eligibility.decision === 'ELIGIBLE'
+    const profileQualified = repository.bindings.assessmentProfileId
+      === QUALIFIED_ASSESSMENT_PROFILE_ID
+    const eligible = entry.eligibility.decision === 'ELIGIBLE' && profileQualified
+    const qualifiedScope = eligible
       ? entry.qualification
       : null
     providers.push({
@@ -84,8 +89,10 @@ function providerSummary(
       analyzerId: entry.descriptor.analyzerId,
       analyzerVersion: entry.descriptor.analyzerVersion,
       executionClass: entry.descriptor.executionClass,
-      eligibility: entry.eligibility.decision,
-      reason: entry.eligibility.reason,
+      eligibility: eligible ? 'ELIGIBLE' : 'INELIGIBLE',
+      reason: profileQualified
+        ? entry.eligibility.reason
+        : 'ASSESSMENT_PROFILE_UNQUALIFIED',
       supportedEcosystemIds: qualifiedScope?.supportedEcosystemIds ?? [],
       supportedPlatforms: qualifiedScope?.platforms ?? [],
       coverageObligationIds: entry.descriptor.coverageObligationIds,
@@ -99,8 +106,12 @@ function modeCapability(
   definition: typeof MODE_DEFINITIONS[number],
   portfolio: readonly AnalyzerPortfolioEntryV1[],
 ): SecurityCatalogAssessmentModeV1 {
-  const supported = builtinSupports(repository, definition.assessmentMode)
-    || portfolio.some(entry => entry.eligibility.decision === 'ELIGIBLE')
+  const supported = repository.bindings.assessmentProfileId
+    === QUALIFIED_ASSESSMENT_PROFILE_ID
+    && (
+      builtinSupports(repository, definition.assessmentMode)
+      || portfolio.some(entry => entry.eligibility.decision === 'ELIGIBLE')
+    )
   const qualificationLimitations = portfolio.flatMap(entry => entry.qualification?.limitations ?? [])
   const limitations = supported
     ? [...new Set([
@@ -129,7 +140,9 @@ function profile(repository: RepositorySnapshotV1): SecurityCatalogProfileV1 {
     assessmentProfileId: profileId,
     label,
     maximumBudget: { status: 'NOT_REPORTED' },
-    limitations: ['The v0.1 Service does not yet report a numeric maximum execution budget.'],
+    limitations: profileId === QUALIFIED_ASSESSMENT_PROFILE_ID
+      ? ['The v0.1 Service does not yet report a numeric maximum execution budget.']
+      : ['The selected Assessment Profile has no qualified Analyzer composition in v0.1.'],
   }
 }
 

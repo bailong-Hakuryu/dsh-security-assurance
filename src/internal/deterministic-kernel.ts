@@ -41,6 +41,7 @@ import type {
   EvidencePublicationInputV1,
   EvidencePublicationReceiptV1,
 } from './evidence-persistence.ts'
+import { QUALIFIED_ASSESSMENT_PROFILE_ID } from './assessment-profile.ts'
 import type { VerifiedSubjectTextSliceV1 } from './subject-freeze.ts'
 
 const POLICY_MEDIA_TYPE = 'application/vnd.dsh.security.policy+json'
@@ -457,6 +458,16 @@ export function evaluateDeterministicAssessment(
   analysis?: AdmittedAnalyzerInputV1,
   externalAnalyses: readonly AdmittedExternalAnalyzerInputV1[] = [],
 ): DeterministicAssessmentOutcomeV1 {
+  if (contract.assessmentProfileId !== QUALIFIED_ASSESSMENT_PROFILE_ID) {
+    return indeterminateOutcome(
+      contract,
+      evaluationInstant,
+      contract.policy.policyId === 'security/node-package-lifecycle'
+        ? 'node-package-install-lifecycle-policy'
+        : 'application-security-analysis',
+      'NO_ELIGIBLE_ANALYZER',
+    )
+  }
   if (contract.policy.policyId !== 'security/node-package-lifecycle') {
     if (externalAnalyses.length > 0) {
       const obligationId = 'application-security-analysis'

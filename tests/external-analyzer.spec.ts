@@ -275,7 +275,7 @@ describe('external Analyzer composition', () => {
     }
   })
 
-  it('keeps a qualified external clean claim advisory without an independent Evidence verifier', async () => {
+  it('keeps a qualified external clean claim advisory and does not extend it to Deep', async () => {
     const repository = await repositoryFixture()
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-qualified-analyzer-home-'))
     temporaryRoots.push(dshHome)
@@ -495,6 +495,52 @@ describe('external Analyzer composition', () => {
                 }),
               }),
             ]),
+          },
+        },
+      })
+
+      const deepBindings = {
+        policyId: 'security/reference-qualified',
+        assessmentProfileId: 'security/deep',
+        evidenceProtectionId: 'evidence/local-protected',
+        dataEgressPolicyId: 'egress/deny-by-default',
+        platform,
+        deliveryDestinationIds: [],
+      }
+      const updated = await ctx.securityAssurance.updateRepository(invocation, {
+        schemaVersion: 1,
+        contractVersion: 1,
+        idempotencyKey: 'qualified-analyzer-deep-update-1',
+        repositoryId: registered.value.repositoryId,
+        expectedRepositoryRevision: 1,
+        bindings: deepBindings,
+      })
+      if (!updated.ok) throw new Error(`update failed: ${updated.error.code}`)
+      await expect(ctx.securityAssurance.getCatalog(invocation, {
+        schemaVersion: 1,
+        repositoryId: registered.value.repositoryId,
+        proposedStart: {
+          ...selection,
+          assessmentProfileId: 'security/deep',
+        },
+      })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          assessmentModes: [
+            { assessmentMode: 'REPOSITORY', support: 'UNSUPPORTED' },
+            { assessmentMode: 'CHANGE', support: 'UNSUPPORTED' },
+            { assessmentMode: 'TARGETED', support: 'UNSUPPORTED' },
+          ],
+          supportedEcosystemIds: [],
+          supportedPlatforms: [],
+          startPreflight: {
+            providerComposition: [{
+              analyzerId: descriptor.analyzerId,
+              eligibility: 'INELIGIBLE',
+              reason: 'ASSESSMENT_PROFILE_UNQUALIFIED',
+            }],
+            unsupportedConditions: ['NO_ELIGIBLE_ANALYZER_COMPOSITION'],
+            admissible: false,
           },
         },
       })

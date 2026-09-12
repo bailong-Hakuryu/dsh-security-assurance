@@ -7,7 +7,12 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { StartAssessmentSelectionV1 } from '../src/index.ts'
+import SecurityAssuranceService from '../src/index.ts'
+import type {
+  AssessmentId,
+  SecurityInvocation,
+  StartAssessmentSelectionV1,
+} from '../src/index.ts'
 import {
   referenceHostInvocation,
   referenceHostInvocationWithPermissions,
@@ -29,6 +34,28 @@ async function repositoryFixture(): Promise<string> {
   await run('git', ['add', '.'], { cwd: root })
   await run('git', ['commit', '-m', 'catalog fixture'], { cwd: root })
   return root
+}
+
+async function waitUntilSealed(
+  service: SecurityAssuranceService,
+  invocation: SecurityInvocation,
+  assessmentId: AssessmentId,
+): Promise<void> {
+  let revision = 1
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const changed = await service.waitForAssessmentRevision(invocation, {
+      schemaVersion: 1,
+      assessmentId,
+      afterRevision: revision,
+      timeoutMs: 5_000,
+    })
+    if (!changed.ok) throw new Error(`wait failed: ${changed.error.code}`)
+    const assessment = await service.getAssessment(invocation, { schemaVersion: 1, assessmentId })
+    if (!assessment.ok) throw new Error(`query failed: ${assessment.error.code}`)
+    if (assessment.value.state === 'SEALED') return
+    revision = assessment.value.assessmentRevision
+  }
+  throw new Error('Assessment did not seal')
 }
 
 describe('Security Catalog and Start Preflight', () => {
@@ -179,6 +206,108 @@ describe('Security Catalog and Start Preflight', () => {
           requestedStrongerControlIds: [],
         },
       })).resolves.toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } })
+    } finally {
+      await fiber.dispose()
+    }
+  })
+
+  it('does not advertise a PURE Analyzer as qualified for an unimplemented Deep Profile', async () => {
+    const repositoryRoot = await repositoryFixture()
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-security-catalog-deep-home-'))
+    temporaryRoots.push(dshHome)
+    const ctx = new Context()
+    const fiber = await ctx.plugin(SecurityAssuranceTestComposition, { dshHome })
+    try {
+      const invocation = referenceHostInvocation(ctx.securityAssurance)
+      const registered = await ctx.securityAssurance.registerRepository(invocation, {
+        schemaVersion: 1,
+        contractVersion: 1,
+        idempotencyKey: 'catalog-deep-repository-v1',
+        root: repositoryRoot,
+        displayName: 'Deep Catalog fixture',
+        bindings: {
+          policyId: 'security/node-package-lifecycle',
+          assessmentProfileId: 'security/deep',
+          evidenceProtectionId: 'evidence/local-protected',
+          dataEgressPolicyId: 'egress/deny-by-default',
+          platform: process.platform as 'win32' | 'linux' | 'darwin',
+          deliveryDestinationIds: [],
+        },
+      })
+      if (!registered.ok) throw new Error(`registration failed: ${registered.error.code}`)
+
+      const selection: StartAssessmentSelectionV1 = {
+        schemaVersion: 1,
+        repositoryId: registered.value.repositoryId,
+        subject: { kind: 'workspace_snapshot' },
+        assessmentMode: 'REPOSITORY',
+        assessmentProfileId: 'security/deep',
+        target: { kind: 'repository' },
+        requestedStrongerControlIds: [],
+      }
+      const catalog = await ctx.securityAssurance.getCatalog(invocation, {
+        schemaVersion: 1,
+        repositoryId: registered.value.repositoryId,
+        proposedStart: selection,
+      })
+
+      expect(catalog).toMatchObject({
+        ok: true,
+        value: {
+          assessmentModes: [
+            { assessmentMode: 'REPOSITORY', support: 'UNSUPPORTED' },
+            { assessmentMode: 'CHANGE', support: 'UNSUPPORTED' },
+            { assessmentMode: 'TARGETED', support: 'UNSUPPORTED' },
+          ],
+          assessmentProfiles: [{
+            assessmentProfileId: 'security/deep',
+            limitations: [
+              'The selected Assessment Profile has no qualified Analyzer composition in v0.1.',
+            ],
+          }],
+          supportedEcosystemIds: [],
+          supportedPlatforms: [],
+          startPreflight: {
+            selection,
+            providerComposition: [],
+            unsupportedConditions: ['NO_ELIGIBLE_ANALYZER_COMPOSITION'],
+            claimLimitations: [],
+            coverageLimitations: [
+              'Mandatory Coverage cannot be satisfied by the currently qualified composition.',
+            ],
+            admissible: false,
+          },
+        },
+      })
+
+      const started = await ctx.securityAssurance.startAssessment(invocation, {
+        ...selection,
+        contractVersion: 1,
+        idempotencyKey: 'catalog-deep-direct-start-v1',
+      })
+      if (!started.ok) throw new Error(`start failed: ${started.error.code}`)
+      await waitUntilSealed(
+        ctx.securityAssurance,
+        invocation,
+        started.value.assessmentId,
+      )
+      await expect(ctx.securityAssurance.getAssessment(invocation, {
+        schemaVersion: 1,
+        assessmentId: started.value.assessmentId,
+      })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          state: 'SEALED',
+          verdict: 'INDETERMINATE',
+          coverage: {
+            status: 'GAP',
+            resolutions: [{
+              obligationId: 'node-package-install-lifecycle-policy',
+              reason: 'NO_ELIGIBLE_ANALYZER',
+            }],
+          },
+        },
+      })
     } finally {
       await fiber.dispose()
     }

@@ -49,12 +49,14 @@ Service 先解析授权 Catalog 选择并冻结完整 Subject，再把已验证 
 | 可选 GitHub Actions 策略 | <code>security/github-actions-supply-chain</code> |
 | 可选 npm 发布面策略 | <code>security/npm-publish-surface</code> |
 | 可选 pnpm 锁文件策略 | <code>security/pnpm-lockfile-integrity</code> |
-| 默认档案 | <code>security/standard</code> |
+| 评估档案 | <code>security/standard</code>（当前唯一已资格化档案）；<code>security/deep</code> 与 Host 自定义档案在独立多轮分析组合落地前 fail closed |
 | Harness 版本 | <code>0.1.2-alpha.1</code>（主）、<code>0.1.2-alpha.2</code>、<code>0.1.2-alpha.3</code>、<code>0.1.2-alpha.4</code>、<code>0.1.2-alpha.5</code>、<code>0.1.2-rc.1</code>、<code>0.1.3-alpha.1</code>、<code>0.1.3-alpha.2</code>、<code>0.1.5-alpha.1</code>、<code>0.1.5-alpha.2</code>、<code>0.1.5-rc.1</code>、<code>0.1.5-rc.2</code> |
 | Node.js | <code>^22.19.0 \|\| >=24.0.0</code>（CI 覆盖 22 与 24） |
 | 支持平台 | Windows、Linux、macOS |
 
 评估会先读取当前 Host 注册的 Repository 和 Catalog；只有 Service 返回的精确 ID、模式、Subject、Target、Profile 和强化控制才能用于启动，不允许模型猜测路径或标识符。
+
+当前 v0.1 Analyzer 资格只证明 <code>security/standard</code> 路径。若 Repository 绑定 <code>security/deep</code> 或 Host 自定义档案，Catalog 和 Start Preflight 会明确报告不支持；即使调用方省略 preflight 直接调用 Service，也只能形成 <code>INDETERMINATE</code>，不会把 Standard PURE Evidence 冒充为更强档案的 Coverage。
 
 <code>TARGETED</code> 仍会冻结并摘要绑定完整 Subject，但只把明确目标内、经过验证的相关 slice 交给内建分析器：Node 生命周期策略读取 <code>package.json</code>，GitHub Actions 策略读取 <code>.github/workflows/*.yml|yaml</code>。每个目标必须对应一个现有条目或目录前缀；不存在的目标会在创建 Assessment 前被拒绝。npm 发布面、npm audit、Gitleaks 与 pnpm 锁文件策略暂不声明 <code>TARGETED</code> 支持，因为它们的根部或外部输入目前不能独立证明与目标完全一致。
 
@@ -277,12 +279,14 @@ The Service resolves an authorized Catalog selection and freezes the complete Su
 | Optional GitHub Actions policy | <code>security/github-actions-supply-chain</code> |
 | Optional npm publish surface policy | <code>security/npm-publish-surface</code> |
 | Optional pnpm lockfile policy | <code>security/pnpm-lockfile-integrity</code> |
-| Default profile | <code>security/standard</code> |
+| Assessment profile | <code>security/standard</code> (the only currently qualified Profile); <code>security/deep</code> and Host-defined Profiles fail closed until their independent multi-pass composition is implemented |
 | Harness versions | <code>0.1.2-alpha.1</code> (primary), <code>0.1.2-alpha.2</code>, <code>0.1.2-alpha.3</code>, <code>0.1.2-alpha.4</code>, <code>0.1.2-alpha.5</code>, <code>0.1.2-rc.1</code>, <code>0.1.3-alpha.1</code>, <code>0.1.3-alpha.2</code>, <code>0.1.5-alpha.1</code>, <code>0.1.5-alpha.2</code>, <code>0.1.5-rc.1</code>, <code>0.1.5-rc.2</code> |
 | Node.js | <code>^22.19.0 \|\| >=24.0.0</code> (CI covers 22 and 24) |
 | Platforms | Windows, Linux, macOS |
 
 The Service resolves authorized repositories and catalog choices first. Models must use the exact returned identifiers; paths and IDs are never guessed.
+
+Current v0.1 Analyzer qualifications prove only the <code>security/standard</code> path. A Repository bound to <code>security/deep</code> or a Host-defined Profile is reported as unsupported by Catalog and Start Preflight; even a direct Service caller that omits preflight can produce only an <code>INDETERMINATE</code> result, never stronger-Profile Coverage from Standard PURE Evidence.
 
 <code>TARGETED</code> still freezes and digest-binds the complete Subject, then exposes only verified relevant slices inside the explicit Target: <code>package.json</code> for the Node lifecycle policy and <code>.github/workflows/*.yml|yaml</code> for the GitHub Actions policy. Every Target path must name an existing entry or directory prefix. A nonexistent path is rejected before Assessment creation. The npm publish surface, npm audit, Gitleaks, and pnpm lockfile policies do not yet claim <code>TARGETED</code> support because their root or external inputs cannot independently prove an exact Target scan scope.
 
