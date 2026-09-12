@@ -21,6 +21,12 @@
   references, explicit disclosure categories, peer visibility and bounded byte
   and token grants. Creation is deterministic and immutable; parsing recomputes
   the digest and rejects tampering, budget overruns and ambiguous references.
+- Add deterministic `SourceSliceRequestV1` creation and parsing plus a
+  fail-closed static preflight. Requests bind the exact Context Grant, Subject,
+  purpose, obligation, canonical target, raw source digest, egress selection and
+  requested budget. Preflight aggregates every static mismatch and can only
+  reject or require the full protected material review; it never grants source
+  content, Provider access or a capability.
 
 ## [0.1.0-rc.14] - 2026-09-11
 
