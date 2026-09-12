@@ -33,6 +33,11 @@
   matches Request, Manifest and observed raw-byte digests, and meters actual
   bytes before returning deeply frozen local text. The result is not exported,
   egress-approved, redacted, or eligible for a new Context Grant.
+- Add package-private high-confidence secret inspection for protected Source
+  Slice material. Findings retain only type, UTF-16 location and keyed
+  HMAC-SHA-256 fingerprint, while the raw match and key are never returned.
+  Empty findings remain `ADDITIONAL_REVIEW_REQUIRED` rather than claiming the
+  bounded detector proved that the material is secret-free.
 
 ## [0.1.0-rc.14] - 2026-09-11
 
