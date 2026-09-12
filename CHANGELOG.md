@@ -54,9 +54,15 @@
 - Add one package-private vertical material-review operation that re-reads the
   content-addressed Subject and emits a text-free, immutable record covering all
   seven Source Slice material checks. Containment, raw-source integrity and the
-  conservative sensitivity classification are satisfied locally; unresolved
-  secret, token, Role-need and egress checks remain review-required or rejected,
-  never approved.
+  conservative sensitivity classification are satisfied locally; token,
+  Role-need and egress checks remain review-required or rejected, never
+  approved.
+- Admit an independent Source Slice secret review only from an exact
+  Kernel-eligible Analyzer Portfolio and Contribution whose dedicated scope,
+  qualification validity, redacted-artifact digests and Host-attested
+  independence Evidence all match. Only complete `CLEAR` Evidence satisfies
+  `SECRET_REDACTION`; residual secrets reject the check, while missing,
+  indeterminate, expired, scope-mismatched or drifted Evidence fails closed.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

@@ -1,4 +1,8 @@
 import { z } from 'zod'
+import type {
+  AnalyzerContributionV1,
+  AnalyzerPortfolioEntryV1,
+} from '../analyzer.ts'
 import type { DigestEnvelopeV1 } from '../contracts.ts'
 import { digestEnvelopeV1Schema } from '../contracts.ts'
 import type { RoleContextGrantV1 } from '../role-context-grant.ts'
@@ -29,6 +33,13 @@ import {
   type SourceSliceSensitivityCategoryV1,
   type SourceSliceSensitivityIndicatorV1,
 } from './source-slice-sensitivity.ts'
+import type { ProtectedSourceSliceSecretReviewV1 } from './source-slice-secret-review.ts'
+import {
+  admitQualifiedSourceSliceSecretReview,
+  parseProtectedSourceSliceSecretReview,
+  protectedSourceSliceSecretReviewV1Schema,
+  SOURCE_SLICE_SECRET_REVIEW_MEDIA_TYPE,
+} from './source-slice-secret-review.ts'
 import { readVerifiedRequestedSourceSlice } from './subject-freeze.ts'
 
 export const SOURCE_SLICE_MATERIAL_REVIEW_MEDIA_TYPE =
@@ -51,6 +62,7 @@ export type ProtectedSourceSliceMaterialReviewStatusV1 =
 
 export type ProtectedSourceSliceMaterialReviewReasonV1 =
   | ProtectedSourceSliceEgressReasonV1
+  | 'RESIDUAL_SECRET_DETECTED'
   | 'TOKEN_METERING_REQUIRED'
   | 'ROLE_NEED_VALIDATION_REQUIRED'
 
@@ -78,6 +90,7 @@ export interface ProtectedSourceSliceMaterialReviewCoreV1 {
   readonly redactionDigest: DigestEnvelopeV1
   readonly redactedDigest: DigestEnvelopeV1
   readonly egressReviewDigest: DigestEnvelopeV1
+  readonly secretReview: ProtectedSourceSliceSecretReviewV1 | null
   readonly policies: {
     readonly detectorPolicyId: string
     readonly redactionPolicyId: string
@@ -109,6 +122,10 @@ export interface ReviewRequestedSourceSliceMaterialOptionsV1 {
   readonly request: SourceSliceRequestV1
   readonly fingerprintKey: Uint8Array
   readonly fingerprintKeyId: string
+  readonly secretReview?: {
+    readonly portfolioEntry: AnalyzerPortfolioEntryV1
+    readonly contribution: AnalyzerContributionV1
+  } | undefined
   readonly signal?: AbortSignal | undefined
 }
 
@@ -116,12 +133,14 @@ export interface ProtectedSourceSliceMaterialReviewBindingsV1 {
   readonly contextGrantDigest: DigestEnvelopeV1
   readonly requestDigest: DigestEnvelopeV1
   readonly subjectDigest: DigestEnvelopeV1
+  readonly secretReview?: ProtectedSourceSliceSecretReviewV1 | undefined
 }
 
 const reviewReasonV1Schema = z.enum([
   'POLICY_DENIES_EGRESS',
   'REDACTED_BYTE_BUDGET_EXCEEDED',
   'SECRET_REVIEW_INCOMPLETE',
+  'RESIDUAL_SECRET_DETECTED',
   'BROKER_QUALIFICATION_REQUIRED',
   'DESTINATION_AUTHORIZATION_REQUIRED',
   'TOKEN_METERING_REQUIRED',
@@ -158,6 +177,7 @@ const materialReviewV1Schema = z.strictObject({
   redactionDigest: digestEnvelopeV1Schema,
   redactedDigest: digestEnvelopeV1Schema,
   egressReviewDigest: digestEnvelopeV1Schema,
+  secretReview: protectedSourceSliceSecretReviewV1Schema.nullable(),
   policies: z.strictObject({
     detectorPolicyId: boundedIdSchema,
     redactionPolicyId: boundedIdSchema,
@@ -188,6 +208,7 @@ function sameDigest(left: DigestEnvelopeV1, right: DigestEnvelopeV1): boolean {
 }
 
 function materialChecks(
+  secretReview: ProtectedSourceSliceSecretReviewV1 | null,
   egressDecision: ProtectedSourceSliceMaterialReviewCoreV1['egressDecision'],
   egressReasons: readonly ProtectedSourceSliceEgressReasonV1[],
 ): ProtectedSourceSliceMaterialReviewCheckV1[] {
@@ -200,11 +221,19 @@ function materialChecks(
       status: 'SATISFIED',
       reasonCodes: [],
     },
-    {
-      check: 'SECRET_REDACTION',
-      status: 'REVIEW_REQUIRED',
-      reasonCodes: ['SECRET_REVIEW_INCOMPLETE'],
-    },
+    secretReview?.decision === 'CLEAR'
+      ? { check: 'SECRET_REDACTION', status: 'SATISFIED', reasonCodes: [] }
+      : secretReview?.decision === 'SECRET_FOUND'
+        ? {
+            check: 'SECRET_REDACTION',
+            status: 'REJECTED',
+            reasonCodes: ['RESIDUAL_SECRET_DETECTED'],
+          }
+        : {
+            check: 'SECRET_REDACTION',
+            status: 'REVIEW_REQUIRED',
+            reasonCodes: ['SECRET_REVIEW_INCOMPLETE'],
+          },
     {
       check: 'DATA_EGRESS',
       status: egressDecision === 'REJECTED' ? 'REJECTED' : 'REVIEW_REQUIRED',
@@ -277,7 +306,20 @@ export async function reviewRequestedSourceSliceMaterial(
       requestDigest: request.requestDigest,
       redactionDigest: redaction.redactionDigest,
     })
-    const checks = materialChecks(parsedEgressReview.decision, parsedEgressReview.reasonCodes)
+    const secretReview = options.secretReview === undefined
+      ? null
+      : admitQualifiedSourceSliceSecretReview({
+          material,
+          redaction,
+          assessmentMode: contextGrant.purpose.assessmentMode,
+          portfolioEntry: options.secretReview.portfolioEntry,
+          contribution: options.secretReview.contribution,
+        })
+    const checks = materialChecks(
+      secretReview,
+      parsedEgressReview.decision,
+      parsedEgressReview.reasonCodes,
+    )
     const core: ProtectedSourceSliceMaterialReviewCoreV1 = {
       schemaVersion: 1,
       path: material.path,
@@ -296,6 +338,7 @@ export async function reviewRequestedSourceSliceMaterial(
       redactionDigest: redaction.redactionDigest,
       redactedDigest: redaction.redactedDigest,
       egressReviewDigest: parsedEgressReview.egressReviewDigest,
+      secretReview,
       policies: {
         detectorPolicyId: redaction.detectorPolicyId,
         redactionPolicyId: redaction.redactionPolicyId,
@@ -337,11 +380,38 @@ export function parseProtectedSourceSliceMaterialReview(
   ) {
     throw new TypeError('Source Slice material review does not bind its expected inputs')
   }
+  if ((review.secretReview === null) !== (expectedBindings.secretReview === undefined)) {
+    throw new TypeError('Source Slice material review does not bind its expected secret review')
+  }
+  if (review.secretReview !== null && expectedBindings.secretReview !== undefined) {
+    const secretReviewBindings = {
+      requestDigest: review.requestDigest,
+      subjectDigest: review.subjectDigest,
+      sourceDigest: review.sourceDigest,
+      path: review.path,
+      redactionDigest: review.redactionDigest,
+      redactedDigest: review.redactedDigest,
+      assessmentMode: review.secretReview.assessmentMode,
+    }
+    const embeddedSecretReview = parseProtectedSourceSliceSecretReview(
+      review.secretReview,
+      secretReviewBindings,
+    )
+    const expectedSecretReview = parseProtectedSourceSliceSecretReview(
+      expectedBindings.secretReview,
+      secretReviewBindings,
+    )
+    if (!sameDigest(embeddedSecretReview.secretReviewDigest, expectedSecretReview.secretReviewDigest)) {
+      throw new TypeError('Source Slice material review secret review binding is invalid')
+    }
+  }
   if (
     review.redactionDigest.mediaType !== SOURCE_SLICE_REDACTION_MEDIA_TYPE
     || review.egressReviewDigest.mediaType !== SOURCE_SLICE_EGRESS_REVIEW_MEDIA_TYPE
     || review.sensitivity.classificationDigest.mediaType
       !== SOURCE_SLICE_SENSITIVITY_CLASSIFICATION_MEDIA_TYPE
+    || (review.secretReview !== null
+      && review.secretReview.secretReviewDigest.mediaType !== SOURCE_SLICE_SECRET_REVIEW_MEDIA_TYPE)
     || review.observed.sourceBytes !== review.sourceDigest.byteLength
     || review.observed.redactedBytes !== review.redactedDigest.byteLength
   ) {
@@ -372,7 +442,11 @@ export function parseProtectedSourceSliceMaterialReview(
   ) {
     throw new TypeError('Source Slice material review sensitivity classification is invalid')
   }
-  const expectedChecks = materialChecks(disposition.decision, disposition.reasonCodes)
+  const expectedChecks = materialChecks(
+    review.secretReview,
+    disposition.decision,
+    disposition.reasonCodes,
+  )
   const expectedDecision = reviewDecision(expectedChecks)
   if (
     review.decision !== expectedDecision
