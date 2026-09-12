@@ -582,14 +582,27 @@ const securityCatalogStrongerControlV1Schema: z.ZodType<SecurityCatalogStrongerC
 /** Bounded capability summary; this is not a Role Definition or execution authority. */
 export interface SecurityCatalogRoleV1 {
   readonly roleId: SecurityRoleIdV1
+  /** Additive lineage fields are always emitted by the current Service. */
+  readonly catalogEntryVersion?: string | undefined
+  readonly catalogEntryDigest?: DigestEnvelopeV1 | undefined
   readonly executionSupport: 'SUPPORTED' | 'UNSUPPORTED'
   readonly authority: 'PROPOSAL_ONLY'
 }
 
 const securityCatalogRoleV1Schema: z.ZodType<SecurityCatalogRoleV1> = z.strictObject({
   roleId: z.lazy(() => securityRoleIdV1Schema),
+  catalogEntryVersion: z.string().min(1).max(128).optional(),
+  catalogEntryDigest: digestEnvelopeV1Schema.optional(),
   executionSupport: z.enum(['SUPPORTED', 'UNSUPPORTED']),
   authority: z.literal('PROPOSAL_ONLY'),
+}).superRefine((role, context) => {
+  if ((role.catalogEntryVersion === undefined) !== (role.catalogEntryDigest === undefined)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['catalogEntryDigest'],
+      message: 'Role Catalog lineage version and digest must be present together',
+    })
+  }
 })
 
 export interface StartPreflightProviderV1 {
@@ -627,6 +640,8 @@ export interface StartPreflightV1 {
   readonly effectivePolicyId: string
   readonly effectiveProfileId: AssessmentProfileId
   readonly providerComposition: readonly StartPreflightProviderV1[]
+  /** Exact governed Role Catalog considered by this proposal; entries grant no execution authority. */
+  readonly roleCatalog: readonly SecurityCatalogRoleV1[]
   readonly dataEgress: {
     readonly policyId: string
     readonly destinationIds: readonly string[]
@@ -652,6 +667,7 @@ export const startPreflightV1Schema: z.ZodType<StartPreflightV1> = z.strictObjec
   effectivePolicyId: boundedBindingId,
   effectiveProfileId: assessmentProfileIdSchema,
   providerComposition: z.array(startPreflightProviderV1Schema).max(128),
+  roleCatalog: z.array(securityCatalogRoleV1Schema).max(5).default([]),
   dataEgress: z.strictObject({
     policyId: boundedBindingId,
     destinationIds: z.array(boundedBindingId).max(32),

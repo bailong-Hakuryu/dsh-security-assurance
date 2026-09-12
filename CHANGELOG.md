@@ -12,6 +12,10 @@
   authority. Every role remains explicitly unsupported until qualified
   subagent execution exists, and Deep Start Preflight now reports the separate
   `NO_ELIGIBLE_ROLE_COMPOSITION` blocker.
+- Version and digest-bind every fixed Role Catalog entry, and include the exact
+  bounded Catalog in Start Preflight so confirmation binds the role identities
+  that were disclosed. Older v1 summaries remain parseable, partial lineage is
+  rejected, and no executable Role Definition or Provider authority is implied.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

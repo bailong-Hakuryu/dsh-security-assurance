@@ -50,7 +50,7 @@ Service 先解析授权 Catalog 选择并冻结完整 Subject，再把已验证 
 | 可选 npm 发布面策略 | <code>security/npm-publish-surface</code> |
 | 可选 pnpm 锁文件策略 | <code>security/pnpm-lockfile-integrity</code> |
 | 评估档案 | <code>security/standard</code>（当前唯一已资格化档案）；<code>security/deep</code> 与 Host 自定义档案在独立多轮分析组合落地前 fail closed |
-| 受治理角色目录 | 固定为 <code>threat-modeler</code>、<code>discovery-analyst</code>、<code>validation-analyst</code>、<code>attack-path-analyst</code>、<code>challenge-analyst</code>；当前仅公开非权威能力摘要，尚无已资格化执行 Provider |
+| 受治理角色目录 | 固定为 <code>threat-modeler</code>、<code>discovery-analyst</code>、<code>validation-analyst</code>、<code>attack-path-analyst</code>、<code>challenge-analyst</code>；每个条目都有版本化摘要谱系并绑定进 Start Preflight，但当前仍无已资格化执行 Provider |
 | Harness 版本 | <code>0.1.2-alpha.1</code>（主）、<code>0.1.2-alpha.2</code>、<code>0.1.2-alpha.3</code>、<code>0.1.2-alpha.4</code>、<code>0.1.2-alpha.5</code>、<code>0.1.2-rc.1</code>、<code>0.1.3-alpha.1</code>、<code>0.1.3-alpha.2</code>、<code>0.1.5-alpha.1</code>、<code>0.1.5-alpha.2</code>、<code>0.1.5-rc.1</code>、<code>0.1.5-rc.2</code> |
 | Node.js | <code>^22.19.0 \|\| >=24.0.0</code>（CI 覆盖 22 与 24） |
 | 支持平台 | Windows、Linux、macOS |
@@ -59,7 +59,7 @@ Service 先解析授权 Catalog 选择并冻结完整 Subject，再把已验证 
 
 当前 v0.1 Analyzer 资格只证明 <code>security/standard</code> 路径。若 Repository 绑定 <code>security/deep</code> 或 Host 自定义档案，Catalog 和 Start Preflight 会明确报告不支持；即使调用方省略 preflight 直接调用 Service，也只能形成 <code>INDETERMINATE</code>，不会把 Standard PURE Evidence 冒充为更强档案的 Coverage。
 
-Security Catalog 同时公开固定五角色的有界能力摘要。所有角色均为 <code>PROPOSAL_ONLY</code>，不能审批、接受风险或决定 Verdict；在版本化 Role Definition 与已资格化 Subagent Provider 组合落地前，其执行状态保持 <code>UNSUPPORTED</code>，Deep Preflight 会单独报告 <code>NO_ELIGIBLE_ROLE_COMPOSITION</code>。
+Security Catalog 同时公开固定五角色的有界能力摘要。每个条目都由包内拥有的版本与确定性摘要标识，Start Preflight 会把同一精确目录纳入提案摘要。所有角色均为 <code>PROPOSAL_ONLY</code>，不能审批、接受风险或决定 Verdict；Catalog 条目谱系不等于可执行 Role Definition，在完整定义与已资格化 Subagent Provider 组合落地前，其执行状态保持 <code>UNSUPPORTED</code>，Deep Preflight 会单独报告 <code>NO_ELIGIBLE_ROLE_COMPOSITION</code>。
 
 <code>TARGETED</code> 仍会冻结并摘要绑定完整 Subject，但只把明确目标内、经过验证的相关 slice 交给内建分析器：Node 生命周期策略读取 <code>package.json</code>，GitHub Actions 策略读取 <code>.github/workflows/*.yml|yaml</code>。每个目标必须对应一个现有条目或目录前缀；不存在的目标会在创建 Assessment 前被拒绝。npm 发布面、npm audit、Gitleaks 与 pnpm 锁文件策略暂不声明 <code>TARGETED</code> 支持，因为它们的根部或外部输入目前不能独立证明与目标完全一致。
 
@@ -283,7 +283,7 @@ The Service resolves an authorized Catalog selection and freezes the complete Su
 | Optional npm publish surface policy | <code>security/npm-publish-surface</code> |
 | Optional pnpm lockfile policy | <code>security/pnpm-lockfile-integrity</code> |
 | Assessment profile | <code>security/standard</code> (the only currently qualified Profile); <code>security/deep</code> and Host-defined Profiles fail closed until their independent multi-pass composition is implemented |
-| Governed role catalog | Fixed to <code>threat-modeler</code>, <code>discovery-analyst</code>, <code>validation-analyst</code>, <code>attack-path-analyst</code>, and <code>challenge-analyst</code>; currently exposes non-authoritative capability summaries only, with no qualified execution Provider |
+| Governed role catalog | Fixed to <code>threat-modeler</code>, <code>discovery-analyst</code>, <code>validation-analyst</code>, <code>attack-path-analyst</code>, and <code>challenge-analyst</code>; each entry has versioned digest lineage bound into Start Preflight, but no qualified execution Provider exists yet |
 | Harness versions | <code>0.1.2-alpha.1</code> (primary), <code>0.1.2-alpha.2</code>, <code>0.1.2-alpha.3</code>, <code>0.1.2-alpha.4</code>, <code>0.1.2-alpha.5</code>, <code>0.1.2-rc.1</code>, <code>0.1.3-alpha.1</code>, <code>0.1.3-alpha.2</code>, <code>0.1.5-alpha.1</code>, <code>0.1.5-alpha.2</code>, <code>0.1.5-rc.1</code>, <code>0.1.5-rc.2</code> |
 | Node.js | <code>^22.19.0 \|\| >=24.0.0</code> (CI covers 22 and 24) |
 | Platforms | Windows, Linux, macOS |
@@ -292,7 +292,7 @@ The Service resolves authorized repositories and catalog choices first. Models m
 
 Current v0.1 Analyzer qualifications prove only the <code>security/standard</code> path. A Repository bound to <code>security/deep</code> or a Host-defined Profile is reported as unsupported by Catalog and Start Preflight; even a direct Service caller that omits preflight can produce only an <code>INDETERMINATE</code> result, never stronger-Profile Coverage from Standard PURE Evidence.
 
-The Security Catalog also exposes bounded capability summaries for the fixed five-role catalog. Every role is <code>PROPOSAL_ONLY</code> and cannot approve, accept risk, or decide a Verdict. Execution remains <code>UNSUPPORTED</code> until versioned Role Definitions and a qualified Subagent Provider composition exist, and Deep Preflight reports <code>NO_ELIGIBLE_ROLE_COMPOSITION</code> separately.
+The Security Catalog also exposes bounded capability summaries for the fixed five-role catalog. Each entry is identified by a package-owned version and deterministic digest, and Start Preflight includes that same exact catalog in its proposal digest. Every role is <code>PROPOSAL_ONLY</code> and cannot approve, accept risk, or decide a Verdict. Catalog-entry lineage is not an executable Role Definition: execution remains <code>UNSUPPORTED</code> until complete definitions and a qualified Subagent Provider composition exist, and Deep Preflight reports <code>NO_ELIGIBLE_ROLE_COMPOSITION</code> separately.
 
 <code>TARGETED</code> still freezes and digest-binds the complete Subject, then exposes only verified relevant slices inside the explicit Target: <code>package.json</code> for the Node lifecycle policy and <code>.github/workflows/*.yml|yaml</code> for the GitHub Actions policy. Every Target path must name an existing entry or directory prefix. A nonexistent path is rejected before Assessment creation. The npm publish surface, npm audit, Gitleaks, and pnpm lockfile policies do not yet claim <code>TARGETED</code> support because their root or external inputs cannot independently prove an exact Target scan scope.
 

@@ -42,6 +42,7 @@ const preflight = {
     supportedPlatforms: ['win32' as const],
     coverageObligationIds: ['security/sast'],
   }],
+  roleCatalog: [],
   dataEgress: {
     policyId: 'egress/deny-by-default',
     destinationIds: [],

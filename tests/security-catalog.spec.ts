@@ -1,6 +1,7 @@
 import { SecurityAssuranceTestComposition } from './support/security-assurance-test-composition.ts'
 import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,12 +15,62 @@ import type {
   StartAssessmentSelectionV1,
 } from '../src/index.ts'
 import {
+  securityCatalogSnapshotV1Schema,
+  startPreflightV1Schema,
+} from '../src/index.ts'
+import {
   referenceHostInvocation,
   referenceHostInvocationWithPermissions,
 } from './support/reference-host.ts'
 
 const run = promisify(execFile)
 const temporaryRoots: string[] = []
+
+const expectedRoleCatalog = ([
+  ['threat-modeler', 103, '2f591983ccd1ffe3743dc282eaab45a8b10516e42e039e44c1bc10bca4a67c34'],
+  ['discovery-analyst', 106, '1dedd74c4cd7f2f09cad1a9a4fe3283dfdcbd5a1d2f37563c921b4483b4b86cd'],
+  ['validation-analyst', 107, '2effc9610eb40e9d85947164e6e0f4f0276f01427e3ac61cd13721f953a033c1'],
+  ['attack-path-analyst', 108, 'f734134dcdd305aab4ea0001ea11a442f1d4de7c2f0d1f05dda76e24d109eae6'],
+  ['challenge-analyst', 106, '78d10c092aab1210c0af88a538d255ddde1e3c36d40cbd4ac1301a4baccf9aef'],
+] as const).map(([roleId, byteLength, value]) => ({
+  roleId,
+  catalogEntryVersion: '1.0.0',
+  catalogEntryDigest: {
+    schemaVersion: 1,
+    algorithm: 'sha256',
+    mediaType: 'application/vnd.dsh.security.role-catalog-entry+json',
+    byteLength,
+    canonicalization: 'dsh-canonical-json-v1',
+    value,
+  },
+  executionSupport: 'UNSUPPORTED',
+  authority: 'PROPOSAL_ONLY',
+}))
+
+function canonicalJsonForTest(value: unknown): string {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+    return JSON.stringify(value)
+  }
+  if (typeof value === 'number') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(canonicalJsonForTest).join(',')}]`
+  if (typeof value !== 'object') throw new TypeError('expected a JSON-safe value')
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record).sort().map(key => (
+    `${JSON.stringify(key)}:${canonicalJsonForTest(record[key])}`
+  )).join(',')}}`
+}
+
+function expectedStartPreflightDigest(value: unknown) {
+  const encoded = canonicalJsonForTest(value)
+  return {
+    schemaVersion: 1,
+    algorithm: 'sha256',
+    mediaType: 'application/vnd.dsh.security.start-preflight+json',
+    byteLength: Buffer.byteLength(encoded, 'utf8'),
+    canonicalization: 'dsh-canonical-json-v1',
+    value: createHash('sha256').update(encoded).digest('hex'),
+  } as const
+}
 
 afterEach(async () => {
   await removeTemporaryRoots(temporaryRoots)
@@ -69,14 +120,11 @@ describe('Security Catalog and Start Preflight', () => {
       const catalog = await ctx.securityAssurance.getCatalog(invocation, { schemaVersion: 1 })
       if (!catalog.ok) throw new Error(`catalog failed: ${catalog.error.code}`)
 
-      expect(catalog.value.securityRoles).toEqual([
-        { roleId: 'threat-modeler', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
-        { roleId: 'discovery-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
-        { roleId: 'validation-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
-        { roleId: 'attack-path-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
-        { roleId: 'challenge-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
-      ])
+      expect(catalog.value.securityRoles).toEqual(expectedRoleCatalog)
       expect(Object.isFrozen(catalog.value.securityRoles)).toBe(true)
+      expect(catalog.value.securityRoles.every(role => (
+        Object.isFrozen(role) && Object.isFrozen(role.catalogEntryDigest)
+      ))).toBe(true)
       expect(JSON.stringify(catalog.value.securityRoles)).not.toMatch(
         /prompt|factory|credential|approver|risk acceptor|verdict owner/iu,
       )
@@ -181,6 +229,10 @@ describe('Security Catalog and Start Preflight', () => {
       if (!proposed.ok || proposed.value.startPreflight === null) {
         throw new Error('Start Preflight was not resolved')
       }
+      expect(proposed.value.startPreflight.roleCatalog).toEqual(expectedRoleCatalog)
+      expect(Object.isFrozen(proposed.value.startPreflight.roleCatalog)).toBe(true)
+      const { proposalDigest, ...proposalCore } = proposed.value.startPreflight
+      expect(proposalDigest).toEqual(expectedStartPreflightDigest(proposalCore))
 
       await expect(ctx.securityAssurance.startAssessment(invocation, {
         ...selection,
@@ -207,6 +259,78 @@ describe('Security Catalog and Start Preflight', () => {
     } finally {
       await fiber.dispose()
     }
+  })
+
+  it('defaults the additive preflight Role Catalog for older v1 payloads', () => {
+    const parsed = startPreflightV1Schema.parse({
+      schemaVersion: 1,
+      repository: {
+        repositoryId: 'repo-00000000-0000-0000-0000-000000000000',
+        repositoryRevision: 1,
+        displayName: 'Older v1 payload',
+      },
+      selection: {
+        schemaVersion: 1,
+        repositoryId: 'repo-00000000-0000-0000-0000-000000000000',
+        subject: { kind: 'workspace_snapshot' },
+        assessmentMode: 'REPOSITORY',
+        assessmentProfileId: 'security/standard',
+        target: { kind: 'repository' },
+        requestedStrongerControlIds: [],
+      },
+      effectivePolicyId: 'security/node-package-lifecycle',
+      effectiveProfileId: 'security/standard',
+      providerComposition: [],
+      dataEgress: {
+        policyId: 'egress/deny-by-default',
+        destinationIds: [],
+        categories: ['NONE'],
+      },
+      evidenceProtection: { policyId: 'evidence/local-protected' },
+      maximumBudget: { status: 'NOT_REPORTED' },
+      unsupportedConditions: [],
+      claimLimitations: [],
+      coverageLimitations: [],
+      admissible: true,
+      proposalDigest: {
+        schemaVersion: 1,
+        algorithm: 'sha256',
+        mediaType: 'application/vnd.dsh.security.start-preflight+json',
+        byteLength: 2,
+        canonicalization: 'dsh-canonical-json-v1',
+        value: '0'.repeat(64),
+      },
+    })
+
+    expect(parsed.roleCatalog).toEqual([])
+  })
+
+  it('accepts an older Role summary but rejects partial Catalog lineage', () => {
+    const catalog = {
+      schemaVersion: 1,
+      repository: null,
+      assessmentModes: [],
+      assessmentProfiles: [],
+      strongerControls: [],
+      supportedEcosystemIds: [],
+      supportedPlatforms: [],
+      supportMatrixReferences: [],
+      startPreflight: null,
+    }
+    const legacyRole = {
+      roleId: 'threat-modeler',
+      executionSupport: 'UNSUPPORTED',
+      authority: 'PROPOSAL_ONLY',
+    }
+
+    expect(securityCatalogSnapshotV1Schema.safeParse({
+      ...catalog,
+      securityRoles: [legacyRole],
+    }).success).toBe(true)
+    expect(securityCatalogSnapshotV1Schema.safeParse({
+      ...catalog,
+      securityRoles: [{ ...legacyRole, catalogEntryVersion: '1.0.0' }],
+    }).success).toBe(false)
   })
 
   it('requires start authority before resolving a proposal', async () => {

@@ -4,7 +4,6 @@ import type {
   RepositorySnapshotV1,
   SecurityCatalogAssessmentModeV1,
   SecurityCatalogProfileV1,
-  SecurityCatalogRoleV1,
   SecurityCatalogSnapshotV1,
   StartAssessmentSelectionV1,
   StartPreflightProviderV1,
@@ -22,15 +21,9 @@ import {
 } from './builtin-node-package-lifecycle-analyzer.ts'
 import { structuredDigest } from './canonical.ts'
 import { deepFreeze } from './freeze.ts'
+import { SECURITY_ROLE_CATALOG } from './security-role-catalog.ts'
 
 const START_PREFLIGHT_MEDIA_TYPE = 'application/vnd.dsh.security.start-preflight+json'
-const SECURITY_ROLE_CATALOG: readonly SecurityCatalogRoleV1[] = [
-  { roleId: 'threat-modeler', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
-  { roleId: 'discovery-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
-  { roleId: 'validation-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
-  { roleId: 'attack-path-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
-  { roleId: 'challenge-analyst', executionSupport: 'UNSUPPORTED', authority: 'PROPOSAL_ONLY' },
-]
 const MODE_DEFINITIONS = [
   {
     assessmentMode: 'REPOSITORY',
@@ -195,6 +188,7 @@ function preflight(
     effectivePolicyId: repository.bindings.policyId,
     effectiveProfileId: repository.bindings.assessmentProfileId,
     providerComposition: providers,
+    roleCatalog: SECURITY_ROLE_CATALOG,
     dataEgress: {
       policyId: repository.bindings.dataEgressPolicyId,
       destinationIds: [] as readonly string[],
