@@ -20,7 +20,9 @@ import {
 } from '../src/internal/source-slice-egress-authorization.ts'
 import {
   createModelInvocationBudgetReservationV1,
+  MODEL_INVOCATION_PROMPT_MEDIA_TYPE,
   MODEL_INVOCATION_RECORD_MEDIA_TYPE,
+  MODEL_INVOCATION_TOOL_SCHEMA_MEDIA_TYPE,
   parseModelInvocationRecordV1,
   settleSourceSliceModelInvocationV1,
 } from '../src/internal/model-invocation-settlement.ts'
@@ -71,10 +73,10 @@ function contextGrant() {
     purpose: {
       purposeId: 'security/deep-discovery',
       assessmentMode: 'TARGETED',
-      assessmentProfileId: 'security/deep',
+      assessmentProfileId: 'security/standard',
       targetDigest: structuredDigest(
-        'application/vnd.dsh.security.target+json',
-        { target: 'src/provider.ts' },
+        'application/vnd.dsh.security.target-selector+json',
+        { kind: 'targeted', relativePaths: ['src/provider.ts'] },
       ),
       coverageObligationIds: ['security/source-review'],
       constraintIds: ['security/read-only'],
@@ -234,6 +236,7 @@ function settledInvocationFixture() {
 async function runningAssessmentPersistence(
   securityRoot: string,
   grant: ReturnType<typeof contextGrant>,
+  options: { readonly startRoleAttempt?: boolean } = {},
 ) {
   const persistence = await openSecurityPersistence({
     databasePath: join(securityRoot, 'security-assurance.sqlite'),
@@ -261,7 +264,7 @@ async function runningAssessmentPersistence(
   })
   const repository = persistence.getRepository(registered.repositoryId)
   if (repository === undefined) throw new Error('repository fixture was not persisted')
-  const target = { kind: 'repository' as const }
+  const target = { kind: 'targeted' as const, relativePaths: ['src/provider.ts'] }
   const created = persistence.createAssessment({
     principalId: 'operator:model-invocation-fixture',
     authorityKind: 'host-operator',
@@ -274,19 +277,44 @@ async function runningAssessmentPersistence(
     subjectStats: { files: 0, bytes: 0, symbolicLinks: 0, submodules: 0 },
     preparedContract: prepareAssessmentContract({
       policyId: bindings.policyId,
-      assessmentMode: 'REPOSITORY',
-      assessmentProfileId: bindings.assessmentProfileId,
+      assessmentMode: grant.purpose.assessmentMode,
+      assessmentProfileId: grant.purpose.assessmentProfileId,
       target,
-      targetDigest: structuredDigest(
-        'application/vnd.dsh.security.target-selector+json',
-        target,
-      ),
+      targetDigest: grant.purpose.targetDigest,
       requestedStrongerControlIds: [],
       analyzerPortfolio: [],
     }),
   })
-  const running = persistence.beginAssessment(created.assessmentId)
-  if (running === undefined) throw new Error('assessment fixture did not begin')
+  const begun = persistence.beginAssessment(created.assessmentId)
+  if (begun === undefined) throw new Error('assessment fixture did not begin')
+  if (options.startRoleAttempt === false) return { persistence, running: begun }
+  persistence.startRoleAttempt({
+    contextGrant: grant,
+    expectedAssessmentRevision: begun.assessmentRevision,
+    generation: 1,
+    fenceDigest: attemptFenceDigest,
+    parentAttemptId: null,
+    independenceClass: 'DISTINCT_ATTEMPT',
+    provider: {
+      providerId: 'provider/reference',
+      modelId: 'model/reference',
+      movingProvider: false,
+    },
+    prompt: {
+      ...lineage().prompt,
+      promptDigest: structuredDigest(
+        MODEL_INVOCATION_PROMPT_MEDIA_TYPE,
+        { prompt: 'protected' },
+      ),
+      toolSchemaDigest: structuredDigest(
+        MODEL_INVOCATION_TOOL_SCHEMA_MEDIA_TYPE,
+        { tool: 'source-slice' },
+      ),
+    },
+    budget: { requestLimit: 1, tokenLimit: 128 },
+  })
+  const running = persistence.getAssessmentRecord(grant.assessmentId)
+  if (running === undefined) throw new Error('Role Attempt fixture was not persisted')
   return { persistence, running }
 }
 
@@ -330,6 +358,65 @@ function installReleasedSchemaV1(databasePath: string): void {
       ) STRICT;
       PRAGMA application_id = 0x44534853;
       PRAGMA user_version = 1;
+    `)
+  } finally {
+    database.close()
+  }
+}
+
+function installSchemaV2WithUnboundLink(databasePath: string): void {
+  installReleasedSchemaV1(databasePath)
+  const database = new DatabaseSync(databasePath)
+  try {
+    database.exec(`
+      CREATE TABLE schema_migrations (
+        target_version INTEGER NOT NULL PRIMARY KEY,
+        source_version INTEGER NOT NULL,
+        backup_name TEXT NOT NULL,
+        source_state_digest TEXT NOT NULL,
+        result_digest TEXT NOT NULL,
+        committed_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE model_invocation_evidence_links (
+        assessment_id TEXT NOT NULL,
+        invocation_id TEXT NOT NULL,
+        assessment_revision INTEGER NOT NULL,
+        attempt_id TEXT NOT NULL,
+        attempt_generation INTEGER NOT NULL CHECK (attempt_generation > 0),
+        attempt_fence_digest TEXT NOT NULL,
+        context_grant_digest TEXT NOT NULL,
+        artifact_id TEXT NOT NULL,
+        evidence_schema_id TEXT NOT NULL,
+        evidence_digest TEXT NOT NULL,
+        record_digest TEXT NOT NULL,
+        publication_receipt_digest TEXT NOT NULL,
+        link_json TEXT NOT NULL,
+        committed_at TEXT NOT NULL,
+        PRIMARY KEY (assessment_id, invocation_id),
+        FOREIGN KEY (assessment_id, assessment_revision)
+          REFERENCES assessment_revisions(assessment_id, assessment_revision)
+      ) STRICT;
+      INSERT INTO repositories VALUES (
+        'repo-v2-unbound', 'D:/v2-unbound', 1, '{}',
+        '2026-09-13T00:00:00.000Z', '2026-09-13T00:00:00.000Z'
+      );
+      INSERT INTO repository_revisions VALUES (
+        'repo-v2-unbound', 1, '{}', '2026-09-13T00:00:00.000Z'
+      );
+      INSERT INTO assessments VALUES (
+        'asm-v2-unbound', 'repo-v2-unbound', 1, 1, 'RUNNING', 'sha256:subject', '{}',
+        '2026-09-13T00:00:00.000Z', '2026-09-13T00:00:00.000Z'
+      );
+      INSERT INTO assessment_revisions VALUES (
+        'asm-v2-unbound', 1, 'model_invocation_evidence_linked', '{}',
+        '2026-09-13T00:00:00.000Z'
+      );
+      INSERT INTO model_invocation_evidence_links VALUES (
+        'asm-v2-unbound', 'invocation-v2-unbound', 1, 'role-attempt-v2-unbound', 1,
+        'sha256:fence', 'sha256:grant', 'artifact', 'schema', 'sha256:evidence',
+        'sha256:record', 'sha256:receipt', '{}', '2026-09-13T00:00:00.000Z'
+      );
+      PRAGMA user_version = 2;
     `)
   } finally {
     database.close()
@@ -739,6 +826,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
         contextGrant: grant,
         expectedAssessmentRevision: running.assessmentRevision,
         receipt: publication,
+        record,
         expected,
       }
 
@@ -763,6 +851,114 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
         assessmentRevision: running.assessmentRevision + 1,
         modelInvocationEvidenceLinks: [link],
       })
+
+      const completed = persistence.completeRoleAttempt({
+        assessmentId: grant.assessmentId,
+        attemptId,
+        generation: 1,
+        fenceDigest: attemptFenceDigest,
+        expectedAssessmentRevision: link.assessmentRevision,
+        completionDisposition: 'COMPLETE',
+        usage: { requestsUsed: 1, tokensUsed: 64 },
+        evidenceCount: 1,
+        candidateCount: 0,
+        milestones: [{
+          milestoneId: 'INITIAL_CONTRIBUTION_FROZEN',
+          state: 'REACHED',
+          recordedAt: '2026-09-13T00:00:03.000Z',
+        }],
+      })
+      expect(completed).toMatchObject({
+        assessmentRevision: link.assessmentRevision + 1,
+        lifecycleState: 'COMPLETED',
+        evidenceCount: 1,
+      })
+      expect(persistence.getAssessmentRecord(grant.assessmentId)).toMatchObject({
+        assessmentRevision: link.assessmentRevision + 1,
+        modelInvocationEvidenceLinks: [link],
+        roleCards: [{
+          attempt: { lifecycleState: 'COMPLETED' },
+          evidenceCount: 1,
+        }],
+      })
+    } finally {
+      persistence.close()
+    }
+  })
+
+  it('refuses a relational link until its exact Role Attempt is durable', async () => {
+    const { grant, record, expected } = settledInvocationFixture()
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-model-invocation-no-attempt-'))
+    temporaryRoots.push(securityRoot)
+    const publication = await publishModelInvocationEvidenceV1({
+      securityRoot,
+      contextGrant: grant,
+      record,
+      expected,
+    })
+    const { persistence, running } = await runningAssessmentPersistence(
+      securityRoot,
+      grant,
+      { startRoleAttempt: false },
+    )
+    try {
+      expect(() => persistence.linkModelInvocationEvidence({
+        contextGrant: grant,
+        expectedAssessmentRevision: running.assessmentRevision,
+        receipt: publication,
+        record,
+        expected,
+      })).toThrow(/Role Attempt/iu)
+      expect(persistence.getAssessmentRecord(grant.assessmentId)).toEqual(running)
+      expect(persistence.getModelInvocationEvidenceLink(grant.assessmentId, invocationId))
+        .toBeUndefined()
+    } finally {
+      persistence.close()
+    }
+  })
+
+  it('refuses a published invocation whose Provider lineage differs from its Role Attempt', async () => {
+    const grant = contextGrant()
+    const receipt = completedReceipt()
+    const reservation = budgetReservation(grant)
+    const record = settleSourceSliceModelInvocationV1({
+      contextGrant: grant,
+      reservation,
+      receipt,
+      lineage: {
+        ...lineage(),
+        provider: { movingProvider: true },
+      },
+    })
+    const expected = {
+      invocationId,
+      attemptId,
+      attemptGeneration: 1,
+      attemptFenceDigest,
+      contextGrantDigest: grant.grantDigest,
+      reservationDigest: reservation.reservationDigest,
+      receiptDigest: receipt.receiptDigest,
+    }
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-model-invocation-role-lineage-'))
+    temporaryRoots.push(securityRoot)
+    const publication = await publishModelInvocationEvidenceV1({
+      securityRoot,
+      contextGrant: grant,
+      record,
+      expected,
+    })
+    const { persistence, running } = await runningAssessmentPersistence(securityRoot, grant)
+    try {
+      expect(() => persistence.linkModelInvocationEvidence({
+        contextGrant: grant,
+        expectedAssessmentRevision: running.assessmentRevision,
+        receipt: publication,
+        record,
+        expected,
+      })).toThrow(/Role Attempt lineage/iu)
+      expect(persistence.getAssessmentRecord(grant.assessmentId)).toEqual(running)
+      expect(persistence.getModelInvocationEvidenceLink(grant.assessmentId, invocationId))
+        .toBeUndefined()
     } finally {
       persistence.close()
     }
@@ -806,6 +1002,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
         contextGrant: grant,
         expectedAssessmentRevision: running.assessmentRevision,
         receipt: publication,
+        record,
         expected,
       })
       const assessmentBeforeConflict = persistence.getAssessmentRecord(grant.assessmentId)
@@ -814,6 +1011,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
         contextGrant: grant,
         expectedAssessmentRevision: linked.assessmentRevision,
         receipt: conflictingPublication,
+        record: conflictingRecord,
         expected,
       })).toThrow(/already linked to different Evidence/iu)
       expect(persistence.getAssessmentRecord(grant.assessmentId)).toEqual(assessmentBeforeConflict)
@@ -830,13 +1028,13 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
       `).get()).toEqual({ count: 1 })
       expect(forensic.prepare(`
         SELECT count(*) AS count FROM assessment_revisions WHERE assessment_id = ?
-      `).get(grant.assessmentId)).toEqual({ count: 3 })
+      `).get(grant.assessmentId)).toEqual({ count: 4 })
     } finally {
       forensic.close()
     }
   })
 
-  it('opens a released schema-v1 Store only after a verified backup and v2 migration', async () => {
+  it('opens a released schema-v1 Store only after verified v2 and v3 migrations', async () => {
     const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-model-invocation-migration-'))
     temporaryRoots.push(securityRoot)
     const databasePath = join(securityRoot, 'security-assurance.sqlite')
@@ -850,51 +1048,74 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
 
     const migrated = new DatabaseSync(databasePath, { readOnly: true })
     try {
-      expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 2 })
+      expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 3 })
       expect(migrated.prepare(`
         SELECT source_version, target_version, committed_at
-        FROM schema_migrations
-      `).get()).toEqual({
-        source_version: 1,
-        target_version: 2,
-        committed_at: '2026-09-13T00:00:04.000Z',
-      })
+        FROM schema_migrations ORDER BY target_version
+      `).all()).toEqual([
+        {
+          source_version: 1,
+          target_version: 2,
+          committed_at: '2026-09-13T00:00:04.000Z',
+        },
+        {
+          source_version: 2,
+          target_version: 3,
+          committed_at: '2026-09-13T00:00:04.000Z',
+        },
+      ])
       expect(migrated.prepare(`
         SELECT backup_name, source_state_digest, result_digest
-        FROM schema_migrations
-      `).get()).toMatchObject({
-        backup_name: expect.stringMatching(
-          /^security-assurance\.sqlite\.pre-migration-v1-[0-9a-f-]{36}\.sqlite$/u,
-        ),
-        source_state_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
-        result_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
-      })
+        FROM schema_migrations ORDER BY target_version
+      `).all()).toEqual([
+        expect.objectContaining({
+          backup_name: expect.stringMatching(
+            /^security-assurance\.sqlite\.pre-migration-v1-[0-9a-f-]{36}\.sqlite$/u,
+          ),
+          source_state_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+          result_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+        }),
+        expect.objectContaining({
+          backup_name: expect.stringMatching(
+            /^security-assurance\.sqlite\.pre-migration-v2-[0-9a-f-]{36}\.sqlite$/u,
+          ),
+          source_state_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+          result_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+        }),
+      ])
       expect(migrated.prepare(`
         SELECT name FROM sqlite_master
         WHERE type = 'table' AND name = 'model_invocation_evidence_links'
       `).get()).toEqual({ name: 'model_invocation_evidence_links' })
+      expect(migrated.prepare(`
+        SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'role_attempts'
+      `).get()).toEqual({ name: 'role_attempts' })
     } finally {
       migrated.close()
     }
 
-    const backupNames = (await readdir(securityRoot))
-      .filter(name => /^security-assurance\.sqlite\.pre-migration-v1-[0-9a-f-]{36}\.sqlite$/u
-        .test(name))
-    expect(backupNames).toHaveLength(1)
-    const backup = new DatabaseSync(join(securityRoot, backupNames[0]!), { readOnly: true })
-    try {
-      expect(backup.prepare('PRAGMA application_id').get())
-        .toEqual({ application_id: 0x4453_4853 })
-      expect(backup.prepare('PRAGMA user_version').get()).toEqual({ user_version: 1 })
-      expect(backup.prepare('PRAGMA quick_check').get()).toEqual({ quick_check: 'ok' })
-    } finally {
-      backup.close()
+    const backupNames = (await readdir(securityRoot)).filter(name => (
+      /^security-assurance\.sqlite\.pre-migration-v[12]-[0-9a-f-]{36}\.sqlite$/u.test(name)
+    ))
+    expect(backupNames).toHaveLength(2)
+    for (const version of [1, 2]) {
+      const backupName = backupNames.find(name => name.includes(`migration-v${version}-`))
+      expect(backupName).toBeDefined()
+      const backup = new DatabaseSync(join(securityRoot, backupName!), { readOnly: true })
+      try {
+        expect(backup.prepare('PRAGMA application_id').get())
+          .toEqual({ application_id: 0x4453_4853 })
+        expect(backup.prepare('PRAGMA user_version').get()).toEqual({ user_version: version })
+        expect(backup.prepare('PRAGMA quick_check').get()).toEqual({ quick_check: 'ok' })
+      } finally {
+        backup.close()
+      }
     }
 
     const tampered = new DatabaseSync(databasePath)
     try {
       tampered.prepare(`
-        UPDATE schema_migrations SET result_digest = ? WHERE target_version = 2
+        UPDATE schema_migrations SET result_digest = ? WHERE target_version = 3
       `).run(`sha256:${'0'.repeat(64)}`)
     } finally {
       tampered.close()
@@ -903,5 +1124,30 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
       code: 'corrupt_database',
       message: 'SQLite migration history is invalid',
     })
+  })
+
+  it('does not infer missing Role Attempts when a schema-v2 Store already has links', async () => {
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-model-invocation-v2-unbound-'))
+    temporaryRoots.push(securityRoot)
+    const databasePath = join(securityRoot, 'security-assurance.sqlite')
+    installSchemaV2WithUnboundLink(databasePath)
+
+    await expect(openSecurityPersistence({ databasePath }))
+      .rejects.toThrow(/without durable Role Attempts/iu)
+
+    const entries = await readdir(securityRoot)
+    expect(entries.some(name => name.includes('.pre-migration-'))).toBe(false)
+    const unchanged = new DatabaseSync(databasePath, { readOnly: true })
+    try {
+      expect(unchanged.prepare('PRAGMA user_version').get()).toEqual({ user_version: 2 })
+      expect(unchanged.prepare(`
+        SELECT count(*) AS count FROM model_invocation_evidence_links
+      `).get()).toEqual({ count: 1 })
+      expect(unchanged.prepare(`
+        SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'role_attempts'
+      `).get()).toBeUndefined()
+    } finally {
+      unchanged.close()
+    }
   })
 })

@@ -104,8 +104,22 @@
   replay is idempotent; conflicting Evidence, stale state or Subject drift rolls
   back fail closed. Released schema-v1 Stores migrate forward to v2 only after a
   verified content-consistent protected backup under an exclusive migration
-  lease, with digest-bound migration history; no durable Role Attempt table,
-  Evidence Link, canonical Bundle admission, or public API is added.
+  lease, with digest-bound migration history.
+- Add package-private durable Role Attempt start and successful completion. Each
+  immutable record binds the exact Assessment revision, Context Grant, Attempt
+  generation and fence, Role, Provider/model, Prompt and Tool Schema digests,
+  parent lineage, budget, milestones and result counts. Start and completion
+  atomically update the Role Card projection and Revision Journal; exact replay
+  is idempotent, while stale fences, revisions or conflicting results roll back
+  fail closed. Schema v3 adds the Role Attempt aggregate and a composite foreign
+  key from every Model Invocation Evidence link to its exact RUNNING Attempt;
+  admission also revalidates the protected invocation's Role, Provider/model,
+  Prompt and Tool Schema lineage against that Attempt.
+  Schema-v1 Stores advance through separately backed-up and verified v2 and v3
+  migrations; a v2 Store containing legacy links is rejected because its missing
+  Attempt records cannot be safely inferred. Failed/canceled Attempt settlement,
+  session spawning, ADR 0197 Evidence Links, canonical Bundle admission and a
+  public API remain outside this slice.
 
 ## [0.1.0-rc.14] - 2026-09-11
 
