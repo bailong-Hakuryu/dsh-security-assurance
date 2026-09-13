@@ -38,6 +38,10 @@ import {
 } from '../src/internal/model-invocation-evidence.ts'
 import { prepareAssessmentContract } from '../src/internal/deterministic-kernel.ts'
 import { openSecurityPersistence } from '../src/internal/persistence.ts'
+import {
+  createRoleContributionV1,
+  ROLE_CONTRIBUTION_ADMISSION_LINK_MEDIA_TYPE,
+} from '../src/internal/role-contribution.ts'
 import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 
 const temporaryRoots: string[] = []
@@ -231,6 +235,49 @@ function settledInvocationFixture() {
     receiptDigest: receipt.receiptDigest,
   }
   return { grant, record, expected }
+}
+
+function roleContributionFixture(
+  grant: ReturnType<typeof contextGrant>,
+  record: ReturnType<typeof settleSourceSliceModelInvocationV1>,
+  evidenceArtifactId: string,
+) {
+  return createRoleContributionV1({
+    schemaVersion: 1,
+    contributionId: 'role-contribution-00000000-0000-0000-0000-000000000178',
+    assessmentId: grant.assessmentId,
+    subjectDigest: grant.subject.digest,
+    parentAttempt: {
+      attemptId,
+      generation: 1,
+      fenceDigest: attemptFenceDigest,
+    },
+    contextGrantDigest: grant.grantDigest,
+    roleDefinition: grant.roleDefinition,
+    modelInvocations: [{
+      invocationId,
+      recordDigest: record.recordDigest,
+      responseDigest: record.responseDigest,
+      inputTokens: record.usage.inputTokens,
+      outputTokens: record.usage.outputTokens,
+    }],
+    hypotheses: [],
+    candidateFindings: [],
+    coverageObservations: [],
+    evidenceArtifactIds: [evidenceArtifactId],
+    evidenceRequests: [],
+    challenges: [],
+    uncertainty: [],
+    limitations: [],
+    followUpRequests: [],
+    resourceUse: {
+      requests: 1,
+      inputTokens: record.usage.inputTokens,
+      outputTokens: record.usage.outputTokens,
+      tokens: record.usage.inputTokens + record.usage.outputTokens,
+    },
+    completionDisposition: 'COMPLETE',
+  })
 }
 
 async function runningAssessmentPersistence(
@@ -852,35 +899,131 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
         modelInvocationEvidenceLinks: [link],
       })
 
-      const completed = persistence.completeRoleAttempt({
+      const contribution = roleContributionFixture(grant, record, publication.artifactId)
+      const admitted = persistence.admitRoleContribution({
+        contextGrant: grant,
+        expectedAssessmentRevision: link.assessmentRevision,
+        contribution,
+        modelInvocationRecords: [record],
+      })
+      const admissionReplay = persistence.admitRoleContribution({
+        contextGrant: grant,
+        expectedAssessmentRevision: link.assessmentRevision,
+        contribution,
+        modelInvocationRecords: [record],
+      })
+      expect(admissionReplay).toEqual(admitted)
+      expect(admitted.link).toMatchObject({
+        assessmentRevision: link.assessmentRevision + 1,
+        contributionId: contribution.contributionId,
+        evidenceCount: 1,
+        candidateCount: 0,
+        resourceUse: { requests: 1, tokens: 40 },
+      })
+      expect(admitted.link.linkDigest.mediaType)
+        .toBe(ROLE_CONTRIBUTION_ADMISSION_LINK_MEDIA_TYPE)
+      expect(persistence.getRoleContribution(
+        grant.assessmentId,
+        contribution.contributionId,
+      )).toEqual(admitted)
+
+      const completionInput = {
         assessmentId: grant.assessmentId,
         attemptId,
         generation: 1,
         fenceDigest: attemptFenceDigest,
-        expectedAssessmentRevision: link.assessmentRevision,
-        completionDisposition: 'COMPLETE',
-        usage: { requestsUsed: 1, tokensUsed: 64 },
-        evidenceCount: 1,
-        candidateCount: 0,
+        expectedAssessmentRevision: admitted.link.assessmentRevision,
+        contributionId: contribution.contributionId,
+        contributionDigest: contribution.contributionDigest,
         milestones: [{
           milestoneId: 'INITIAL_CONTRIBUTION_FROZEN',
-          state: 'REACHED',
+          state: 'REACHED' as const,
           recordedAt: '2026-09-13T00:00:03.000Z',
         }],
-      })
+      }
+      const completed = persistence.completeRoleAttempt(completionInput)
+      const completionReplay = persistence.completeRoleAttempt(completionInput)
+      expect(completionReplay).toEqual(completed)
+      expect(() => persistence.completeRoleAttempt({
+        ...completionInput,
+        milestones: [],
+      })).toThrow(/already completed|different result/iu)
       expect(completed).toMatchObject({
-        assessmentRevision: link.assessmentRevision + 1,
+        assessmentRevision: admitted.link.assessmentRevision + 1,
         lifecycleState: 'COMPLETED',
+        budget: { requestsUsed: 1, tokensUsed: 40 },
         evidenceCount: 1,
+        candidateCount: 0,
       })
       expect(persistence.getAssessmentRecord(grant.assessmentId)).toMatchObject({
-        assessmentRevision: link.assessmentRevision + 1,
+        assessmentRevision: admitted.link.assessmentRevision + 1,
         modelInvocationEvidenceLinks: [link],
+        roleContributionLinks: [admitted.link],
         roleCards: [{
           attempt: { lifecycleState: 'COMPLETED' },
           evidenceCount: 1,
         }],
       })
+    } finally {
+      persistence.close()
+    }
+  })
+
+  it('fails closed until Contribution invocation lineage is complete and exact', async () => {
+    const { grant, record, expected } = settledInvocationFixture()
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-role-contribution-lineage-'))
+    temporaryRoots.push(securityRoot)
+    const publication = await publishModelInvocationEvidenceV1({
+      securityRoot,
+      contextGrant: grant,
+      record,
+      expected,
+    })
+    const contribution = roleContributionFixture(grant, record, publication.artifactId)
+    const { persistence, running } = await runningAssessmentPersistence(securityRoot, grant)
+    try {
+      expect(() => persistence.admitRoleContribution({
+        contextGrant: grant,
+        expectedAssessmentRevision: running.assessmentRevision,
+        contribution,
+        modelInvocationRecords: [record],
+      })).toThrow(/every durable Model Invocation Evidence link/iu)
+      expect(persistence.getRoleContribution(
+        grant.assessmentId,
+        contribution.contributionId,
+      )).toBeUndefined()
+      expect(persistence.getAssessmentRecord(grant.assessmentId)).toEqual(running)
+
+      const link = persistence.linkModelInvocationEvidence({
+        contextGrant: grant,
+        expectedAssessmentRevision: running.assessmentRevision,
+        receipt: publication,
+        record,
+        expected,
+      })
+      const { contributionDigest: _contributionDigest, ...contributionCore } = contribution
+      const driftedContribution = createRoleContributionV1({
+        ...contributionCore,
+        modelInvocations: [{
+          ...contribution.modelInvocations[0]!,
+          responseDigest: binaryDigest(
+            record.responseDigest.mediaType,
+            Buffer.from('drifted-response', 'utf8'),
+          ),
+        }],
+      })
+      expect(() => persistence.admitRoleContribution({
+        contextGrant: grant,
+        expectedAssessmentRevision: link.assessmentRevision,
+        contribution: driftedContribution,
+        modelInvocationRecords: [record],
+      })).toThrow(/lineage is incomplete or drifted/iu)
+      expect(persistence.getRoleContribution(
+        grant.assessmentId,
+        contribution.contributionId,
+      )).toBeUndefined()
+      expect(persistence.getAssessmentRecord(grant.assessmentId)?.assessmentRevision)
+        .toBe(link.assessmentRevision)
     } finally {
       persistence.close()
     }
@@ -1034,7 +1177,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
     }
   })
 
-  it('opens a released schema-v1 Store only after verified v2 and v3 migrations', async () => {
+  it('opens a released schema-v1 Store only after verified v2, v3, and v4 migrations', async () => {
     const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-model-invocation-migration-'))
     temporaryRoots.push(securityRoot)
     const databasePath = join(securityRoot, 'security-assurance.sqlite')
@@ -1048,7 +1191,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
 
     const migrated = new DatabaseSync(databasePath, { readOnly: true })
     try {
-      expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 3 })
+      expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 4 })
       expect(migrated.prepare(`
         SELECT source_version, target_version, committed_at
         FROM schema_migrations ORDER BY target_version
@@ -1061,6 +1204,11 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
         {
           source_version: 2,
           target_version: 3,
+          committed_at: '2026-09-13T00:00:04.000Z',
+        },
+        {
+          source_version: 3,
+          target_version: 4,
           committed_at: '2026-09-13T00:00:04.000Z',
         },
       ])
@@ -1082,6 +1230,13 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
           source_state_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
           result_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
         }),
+        expect.objectContaining({
+          backup_name: expect.stringMatching(
+            /^security-assurance\.sqlite\.pre-migration-v3-[0-9a-f-]{36}\.sqlite$/u,
+          ),
+          source_state_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+          result_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+        }),
       ])
       expect(migrated.prepare(`
         SELECT name FROM sqlite_master
@@ -1090,15 +1245,18 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
       expect(migrated.prepare(`
         SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'role_attempts'
       `).get()).toEqual({ name: 'role_attempts' })
+      expect(migrated.prepare(`
+        SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'role_contributions'
+      `).get()).toEqual({ name: 'role_contributions' })
     } finally {
       migrated.close()
     }
 
     const backupNames = (await readdir(securityRoot)).filter(name => (
-      /^security-assurance\.sqlite\.pre-migration-v[12]-[0-9a-f-]{36}\.sqlite$/u.test(name)
+      /^security-assurance\.sqlite\.pre-migration-v[123]-[0-9a-f-]{36}\.sqlite$/u.test(name)
     ))
-    expect(backupNames).toHaveLength(2)
-    for (const version of [1, 2]) {
+    expect(backupNames).toHaveLength(3)
+    for (const version of [1, 2, 3]) {
       const backupName = backupNames.find(name => name.includes(`migration-v${version}-`))
       expect(backupName).toBeDefined()
       const backup = new DatabaseSync(join(securityRoot, backupName!), { readOnly: true })
@@ -1115,7 +1273,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
     const tampered = new DatabaseSync(databasePath)
     try {
       tampered.prepare(`
-        UPDATE schema_migrations SET result_digest = ? WHERE target_version = 3
+        UPDATE schema_migrations SET result_digest = ? WHERE target_version = 4
       `).run(`sha256:${'0'.repeat(64)}`)
     } finally {
       tampered.close()

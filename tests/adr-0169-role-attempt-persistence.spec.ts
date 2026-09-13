@@ -12,6 +12,7 @@ import {
   MODEL_INVOCATION_TOOL_SCHEMA_MEDIA_TYPE,
 } from '../src/internal/model-invocation-settlement.ts'
 import { openSecurityPersistence } from '../src/internal/persistence.ts'
+import { ROLE_CONTRIBUTION_MEDIA_TYPE } from '../src/internal/role-contribution.ts'
 import { ROLE_ATTEMPT_RECORD_MEDIA_TYPE } from '../src/internal/role-attempt.ts'
 import { SOURCE_SLICE_EGRESS_ATTEMPT_FENCE_MEDIA_TYPE } from '../src/internal/source-slice-egress-invocation.ts'
 import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
@@ -183,10 +184,11 @@ function completionInput(expectedAssessmentRevision: number) {
     generation: 1,
     fenceDigest: attemptFenceDigest,
     expectedAssessmentRevision,
-    completionDisposition: 'COMPLETE' as const,
-    usage: { requestsUsed: 1, tokensUsed: 40 },
-    evidenceCount: 1,
-    candidateCount: 1,
+    contributionId: 'role-contribution-00000000-0000-0000-0000-000000000169',
+    contributionDigest: structuredDigest(
+      ROLE_CONTRIBUTION_MEDIA_TYPE,
+      { contribution: 'not-admitted' },
+    ),
     milestones: [{
       milestoneId: 'INITIAL_CONTRIBUTION_FROZEN',
       state: 'REACHED' as const,
@@ -293,7 +295,7 @@ describe('ADR 0169 durable Role Attempt persistence', () => {
     }
   })
 
-  it('completes one current fenced Role Attempt at most once', async () => {
+  it('refuses to complete a Role Attempt before its terminal Contribution is admitted', async () => {
     const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-role-attempt-complete-'))
     temporaryRoots.push(securityRoot)
     const { contextGrant, persistence, running } = await runningAssessment(securityRoot)
@@ -303,38 +305,10 @@ describe('ADR 0169 durable Role Attempt persistence', () => {
       )
       const input = completionInput(started.assessmentRevision)
 
-      const completed = persistence.completeRoleAttempt(input)
-      const replay = persistence.completeRoleAttempt(input)
-      const startReplay = persistence.startRoleAttempt(
-        startInput(contextGrant, running.assessmentRevision),
-      )
-
-      expect(replay).toEqual(completed)
-      expect(startReplay).toEqual(completed)
-      expect(completed).toMatchObject({
-        assessmentRevision: started.assessmentRevision + 1,
-        lifecycleState: 'COMPLETED',
-        completedAt: '2026-09-13T01:00:00.000Z',
-        completionDisposition: 'COMPLETE',
-        budget: {
-          requestLimit: 4,
-          requestsUsed: 1,
-          tokenLimit: 8_192,
-          tokensUsed: 40,
-        },
-        evidenceCount: 1,
-        candidateCount: 1,
-      })
-      expect(persistence.getAssessmentRecord(assessmentId)).toMatchObject({
-        assessmentRevision: started.assessmentRevision + 1,
-        roleCards: [{
-          attempt: {
-            attemptId,
-            lifecycleState: 'COMPLETED',
-          },
-          completionDisposition: 'COMPLETE',
-        }],
-      })
+      expect(() => persistence.completeRoleAttempt(input)).toThrow(/admitted Role Contribution/iu)
+      expect(persistence.getRoleAttempt(assessmentId, attemptId, 1)).toEqual(started)
+      expect(persistence.getAssessmentRecord(assessmentId)?.assessmentRevision)
+        .toBe(started.assessmentRevision)
     } finally {
       persistence.close()
     }
@@ -370,35 +344,6 @@ describe('ADR 0169 durable Role Attempt persistence', () => {
             attemptId,
             lifecycleState: 'RUNNING',
           },
-        }],
-      })
-    } finally {
-      persistence.close()
-    }
-  })
-
-  it('rejects a conflicting completion replay without rewriting the first result', async () => {
-    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-role-attempt-conflict-'))
-    temporaryRoots.push(securityRoot)
-    const { contextGrant, persistence, running } = await runningAssessment(securityRoot)
-    try {
-      const started = persistence.startRoleAttempt(
-        startInput(contextGrant, running.assessmentRevision),
-      )
-      const input = completionInput(started.assessmentRevision)
-      const completed = persistence.completeRoleAttempt(input)
-
-      expect(() => persistence.completeRoleAttempt({
-        ...input,
-        evidenceCount: 2,
-      })).toThrow(/already completed|different result/iu)
-
-      expect(persistence.getRoleAttempt(assessmentId, attemptId, 1)).toEqual(completed)
-      expect(persistence.getAssessmentRecord(assessmentId)).toMatchObject({
-        assessmentRevision: completed.assessmentRevision,
-        roleCards: [{
-          evidenceCount: 1,
-          attempt: { lifecycleState: 'COMPLETED' },
         }],
       })
     } finally {

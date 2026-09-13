@@ -41,6 +41,7 @@ import type {
 } from './deterministic-kernel.ts'
 import type { EvidencePublicationReceiptV1 } from './evidence-persistence.ts'
 import type { RoleContextGrantV1 } from '../role-context-grant.ts'
+import { parseRoleContextGrantV1 } from '../role-context-grant.ts'
 import type {
   ModelInvocationRecordBindingsV1,
   ModelInvocationRecordV1,
@@ -60,6 +61,15 @@ import type {
   RoleAttemptRecordV1,
   RoleAttemptStartBindingsV1,
 } from './role-attempt.ts'
+import type {
+  RoleContributionAdmissionLinkV1,
+  RoleContributionV1,
+} from './role-contribution.ts'
+import {
+  createRoleContributionAdmissionLinkV1,
+  parseRoleContributionAdmissionLinkV1,
+  parseRoleContributionV1,
+} from './role-contribution.ts'
 import {
   cancelRoleAttemptV1,
   completeRoleAttemptV1,
@@ -70,7 +80,7 @@ import {
 } from './role-attempt.ts'
 
 const APPLICATION_ID = 0x4453_4853
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 
 export type SecurityPersistenceErrorCode =
   | 'foreign_database'
@@ -81,6 +91,8 @@ export type SecurityPersistenceErrorCode =
   | 'repository_not_found'
   | 'assessment_not_found'
   | 'model_invocation_conflict'
+  | 'role_contribution_conflict'
+  | 'role_contribution_not_found'
   | 'role_attempt_conflict'
   | 'role_attempt_not_found'
   | 'revision_conflict'
@@ -211,12 +223,22 @@ export interface StartRoleAttemptPersistenceInput extends RoleAttemptStartBindin
   readonly expectedAssessmentRevision: number
 }
 
-export interface CompleteRoleAttemptPersistenceInput extends CompleteRoleAttemptValuesV1 {
+export interface AdmitRoleContributionPersistenceInput {
+  readonly contextGrant: RoleContextGrantV1
+  readonly expectedAssessmentRevision: number
+  readonly contribution: RoleContributionV1
+  readonly modelInvocationRecords: readonly ModelInvocationRecordV1[]
+}
+
+export interface CompleteRoleAttemptPersistenceInput {
   readonly assessmentId: AssessmentId
   readonly attemptId: string
   readonly generation: number
   readonly fenceDigest: DigestEnvelopeV1
   readonly expectedAssessmentRevision: number
+  readonly contributionId: string
+  readonly contributionDigest: DigestEnvelopeV1
+  readonly milestones: CompleteRoleAttemptValuesV1['milestones']
 }
 
 export interface FailRoleAttemptPersistenceInput extends FailRoleAttemptValuesV1 {
@@ -287,6 +309,26 @@ interface RoleAttemptRow {
   readonly record_json: string
   readonly created_at: string
   readonly updated_at: string
+}
+
+interface RoleContributionRow {
+  readonly assessment_id: AssessmentId
+  readonly contribution_id: string
+  readonly assessment_revision: number
+  readonly attempt_id: string
+  readonly attempt_generation: number
+  readonly attempt_fence_digest: string
+  readonly context_grant_digest: string
+  readonly contribution_digest: string
+  readonly link_digest: string
+  readonly contribution_json: string
+  readonly link_json: string
+  readonly committed_at: string
+}
+
+export interface AdmittedRoleContributionV1 {
+  readonly contribution: RoleContributionV1
+  readonly link: RoleContributionAdmissionLinkV1
 }
 
 function sameRoleAttemptStart(
@@ -397,6 +439,14 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
       'created_at', 'updated_at',
     ])
   }
+  if (schemaVersion >= 4) {
+    expected.set('role_contributions', [
+      'assessment_id', 'contribution_id', 'assessment_revision', 'attempt_id',
+      'attempt_generation', 'attempt_fence_digest', 'context_grant_digest',
+      'contribution_digest', 'link_digest', 'contribution_json', 'link_json',
+      'committed_at',
+    ])
+  }
   const tables = db.prepare(`
     SELECT name FROM sqlite_master
     WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
@@ -439,6 +489,9 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
   }
   if (schemaVersion >= 3) {
     primaryKeys.set('role_attempts', ['assessment_id', 'attempt_id', 'generation'])
+  }
+  if (schemaVersion >= 4) {
+    primaryKeys.set('role_contributions', ['assessment_id', 'contribution_id'])
   }
   for (const [table, columns] of primaryKeys) {
     const observed = db.prepare(`PRAGMA table_info('${table}')`).all() as unknown as readonly {
@@ -483,6 +536,15 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
       ['assessment_revision', 'assessment_revisions', 'assessment_revision'],
     ])
     foreignKeys.set('model_invocation_evidence_links', [
+      ['assessment_id', 'assessment_revisions', 'assessment_id'],
+      ['assessment_revision', 'assessment_revisions', 'assessment_revision'],
+      ['assessment_id', 'role_attempts', 'assessment_id'],
+      ['attempt_id', 'role_attempts', 'attempt_id'],
+      ['attempt_generation', 'role_attempts', 'generation'],
+    ])
+  }
+  if (schemaVersion >= 4) {
+    foreignKeys.set('role_contributions', [
       ['assessment_id', 'assessment_revisions', 'assessment_id'],
       ['assessment_revision', 'assessment_revisions', 'assessment_revision'],
       ['assessment_id', 'role_attempts', 'assessment_id'],
@@ -592,6 +654,31 @@ function installSchemaV3Objects(db: DatabaseSync): void {
   `)
 }
 
+function installSchemaV4Objects(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE role_contributions (
+      assessment_id         TEXT NOT NULL,
+      contribution_id       TEXT NOT NULL,
+      assessment_revision   INTEGER NOT NULL,
+      attempt_id            TEXT NOT NULL,
+      attempt_generation    INTEGER NOT NULL CHECK (attempt_generation > 0),
+      attempt_fence_digest  TEXT NOT NULL,
+      context_grant_digest  TEXT NOT NULL,
+      contribution_digest   TEXT NOT NULL,
+      link_digest           TEXT NOT NULL,
+      contribution_json     TEXT NOT NULL,
+      link_json             TEXT NOT NULL,
+      committed_at          TEXT NOT NULL,
+      PRIMARY KEY (assessment_id, contribution_id),
+      UNIQUE (assessment_id, attempt_id, attempt_generation),
+      FOREIGN KEY (assessment_id, assessment_revision)
+        REFERENCES assessment_revisions(assessment_id, assessment_revision),
+      FOREIGN KEY (assessment_id, attempt_id, attempt_generation)
+        REFERENCES role_attempts(assessment_id, attempt_id, generation)
+    ) STRICT;
+  `)
+}
+
 function installSchema(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE repositories (
@@ -646,6 +733,7 @@ function installSchema(db: DatabaseSync): void {
   `)
   installSchemaV2Objects(db)
   installSchemaV3Objects(db)
+  installSchemaV4Objects(db)
   db.exec(`PRAGMA application_id = ${APPLICATION_ID}`)
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
 }
@@ -676,6 +764,11 @@ function schemaStateDigest(db: DatabaseSync, schemaVersion: number): string {
   if (schemaVersion >= 3) {
     queries.push(['role_attempts', `
       SELECT * FROM role_attempts ORDER BY assessment_id, attempt_id, generation
+    `])
+  }
+  if (schemaVersion >= 4) {
+    queries.push(['role_contributions', `
+      SELECT * FROM role_contributions ORDER BY assessment_id, contribution_id
     `])
   }
   let stateDigest = digest({ schemaVersion })
@@ -757,8 +850,8 @@ async function migrateSchemaStep(
   db: DatabaseSync,
   path: string,
   now: () => string,
-  sourceVersion: 1 | 2,
-  targetVersion: 2 | 3,
+  sourceVersion: 1 | 2 | 3,
+  targetVersion: 2 | 3 | 4,
   installTargetObjects: (db: DatabaseSync) => void,
 ): Promise<void> {
   verifySchema(db, sourceVersion)
@@ -869,6 +962,10 @@ async function openDatabase(path: string, now: () => string): Promise<DatabaseSy
     if (admittedVersion === 2) {
       await migrateSchemaStep(db, path, now, 2, 3, installSchemaV3Objects)
       admittedVersion = 3
+    }
+    if (admittedVersion === 3) {
+      await migrateSchemaStep(db, path, now, 3, 4, installSchemaV4Objects)
+      admittedVersion = 4
     }
     if (admittedVersion !== SCHEMA_VERSION) {
       throw new SecurityPersistenceError('unsupported_schema', 'SQLite schema version is unsupported')
@@ -1538,6 +1635,156 @@ export class SecurityPersistence {
     return row === undefined ? undefined : this.parseRoleAttemptRow(row)
   }
 
+  /** Admit one immutable terminal Role proposal after all of its invocation Evidence is durable. */
+  admitRoleContribution(
+    input: AdmitRoleContributionPersistenceInput,
+  ): AdmittedRoleContributionV1 {
+    this.requireOpen()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const contextGrant = parseRoleContextGrantV1(input.contextGrant)
+      const contribution = parseRoleContributionV1(input.contribution)
+      const currentAttempt = this.getRoleAttempt(
+        contribution.assessmentId,
+        contribution.parentAttempt.attemptId,
+        contribution.parentAttempt.generation,
+      )
+      if (currentAttempt === undefined) {
+        throw new SecurityPersistenceError(
+          'role_attempt_not_found',
+          'Role Contribution requires its exact durable Role Attempt',
+        )
+      }
+      const currentAssessment = this.getAssessmentRecord(contribution.assessmentId)
+      if (currentAssessment === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
+      this.validateRoleContributionLineage({
+        contextGrant,
+        contribution,
+        modelInvocationRecords: input.modelInvocationRecords,
+        roleAttempt: currentAttempt,
+        subjectDigest: currentAssessment.subject.digest,
+      })
+
+      const replay = this.getRoleContribution(
+        contribution.assessmentId,
+        contribution.contributionId,
+      )
+      if (replay !== undefined) {
+        const expectedReplay = createRoleContributionAdmissionLinkV1({
+          contribution,
+          assessmentRevision: replay.link.assessmentRevision,
+          admittedAt: replay.link.admittedAt,
+        })
+        if (
+          replay.link.assessmentRevision !== input.expectedAssessmentRevision + 1
+          || canonicalJson(replay.contribution) !== canonicalJson(contribution)
+          || canonicalJson(replay.link) !== canonicalJson(expectedReplay)
+        ) {
+          throw new SecurityPersistenceError(
+            'role_contribution_conflict',
+            'Role Contribution identity is already admitted with different bindings',
+          )
+        }
+        this.db.exec('COMMIT')
+        return replay
+      }
+
+      const attemptAdmission = this.db.prepare(`
+        SELECT contribution_id FROM role_contributions
+        WHERE assessment_id = ? AND attempt_id = ? AND attempt_generation = ?
+      `).get(
+        contribution.assessmentId,
+        contribution.parentAttempt.attemptId,
+        contribution.parentAttempt.generation,
+      ) as { readonly contribution_id: string } | undefined
+      if (attemptAdmission !== undefined) {
+        throw new SecurityPersistenceError(
+          'role_contribution_conflict',
+          'Role Attempt generation already has a different admitted Contribution',
+        )
+      }
+      if (
+        currentAttempt.lifecycleState !== 'RUNNING'
+        || currentAssessment.state !== 'RUNNING'
+        || currentAssessment.assessmentRevision !== input.expectedAssessmentRevision
+        || currentAssessment.pendingCancellation !== null
+      ) {
+        throw new SecurityPersistenceError(
+          'revision_conflict',
+          'Role Contribution cannot be admitted at this Assessment revision',
+        )
+      }
+      if (currentAssessment.roleContributionLinks.length >= 128) {
+        throw new SecurityPersistenceError(
+          'role_contribution_conflict',
+          'Assessment Role Contribution admission limit is exhausted',
+        )
+      }
+      if (
+        contribution.resourceUse.requests > currentAttempt.budget.requestLimit
+        || contribution.resourceUse.tokens > currentAttempt.budget.tokenLimit
+      ) {
+        throw new SecurityPersistenceError(
+          'role_contribution_conflict',
+          'Role Contribution exceeds its durable Role Attempt budget',
+        )
+      }
+
+      const committedAt = this.now()
+      const link = createRoleContributionAdmissionLinkV1({
+        contribution,
+        assessmentRevision: currentAssessment.assessmentRevision + 1,
+        admittedAt: committedAt,
+      })
+      const admitted = internalAssessmentRecordV1Schema.parse({
+        ...currentAssessment,
+        assessmentRevision: link.assessmentRevision,
+        roleContributionLinks: [...currentAssessment.roleContributionLinks, link],
+        updatedAt: committedAt,
+      })
+      this.commitAssessmentRevision(admitted, 'role_contribution_admitted', committedAt)
+      this.db.prepare(`
+        INSERT INTO role_contributions (
+          assessment_id, contribution_id, assessment_revision, attempt_id,
+          attempt_generation, attempt_fence_digest, context_grant_digest,
+          contribution_digest, link_digest, contribution_json, link_json, committed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        contribution.assessmentId,
+        contribution.contributionId,
+        link.assessmentRevision,
+        contribution.parentAttempt.attemptId,
+        contribution.parentAttempt.generation,
+        contribution.parentAttempt.fenceDigest.value,
+        contribution.contextGrantDigest.value,
+        contribution.contributionDigest.value,
+        link.linkDigest.value,
+        canonicalJson(contribution),
+        canonicalJson(link),
+        committedAt,
+      )
+      this.db.exec('COMMIT')
+      return Object.freeze({ contribution, link })
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  getRoleContribution(
+    assessmentId: AssessmentId,
+    contributionId: string,
+  ): AdmittedRoleContributionV1 | undefined {
+    this.requireOpen()
+    const row = this.db.prepare(`
+      SELECT * FROM role_contributions
+      WHERE assessment_id = ? AND contribution_id = ?
+    `).get(assessmentId, contributionId) as RoleContributionRow | undefined
+    return row === undefined ? undefined : this.parseRoleContributionRow(row)
+  }
+
   /** Admit one terminal Role result only from the current durable generation and fence. */
   completeRoleAttempt(input: CompleteRoleAttemptPersistenceInput): RoleAttemptRecordV1 {
     this.requireOpen()
@@ -1551,27 +1798,10 @@ export class SecurityPersistence {
       if (currentAttempt === undefined) {
         throw new SecurityPersistenceError('role_attempt_not_found', 'Role Attempt does not exist')
       }
-      const exactCompletion = (
-        currentAttempt.assessmentRevision === input.expectedAssessmentRevision + 1
-        && canonicalJson(currentAttempt.fenceDigest) === canonicalJson(input.fenceDigest)
-        && currentAttempt.completionDisposition === input.completionDisposition
-        && currentAttempt.budget.requestsUsed === input.usage.requestsUsed
-        && currentAttempt.budget.tokensUsed === input.usage.tokensUsed
-        && currentAttempt.evidenceCount === input.evidenceCount
-        && currentAttempt.candidateCount === input.candidateCount
-        && canonicalJson(currentAttempt.milestones) === canonicalJson(input.milestones)
-      )
-      if (currentAttempt.lifecycleState === 'COMPLETED') {
-        if (!exactCompletion) {
-          throw new SecurityPersistenceError(
-            'role_attempt_conflict',
-            'Role Attempt is already completed with a different result',
-          )
-        }
-        this.db.exec('COMMIT')
-        return currentAttempt
-      }
-      if (currentAttempt.lifecycleState !== 'RUNNING') {
+      if (
+        currentAttempt.lifecycleState !== 'RUNNING'
+        && currentAttempt.lifecycleState !== 'COMPLETED'
+      ) {
         throw new SecurityPersistenceError(
           'role_attempt_conflict',
           'Role Attempt already has a different terminal result',
@@ -1584,15 +1814,79 @@ export class SecurityPersistence {
         )
       }
       const currentAssessment = this.getAssessmentRecord(input.assessmentId)
+      if (currentAssessment === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
       if (
-        currentAssessment === undefined
-        || currentAssessment.state !== 'RUNNING'
-        || currentAssessment.assessmentRevision !== input.expectedAssessmentRevision
-        || currentAssessment.pendingCancellation !== null
+        currentAttempt.lifecycleState === 'RUNNING'
+        && (
+          currentAssessment.state !== 'RUNNING'
+          || currentAssessment.assessmentRevision !== input.expectedAssessmentRevision
+          || currentAssessment.pendingCancellation !== null
+        )
       ) {
         throw new SecurityPersistenceError(
           'revision_conflict',
           'Role Attempt cannot complete at this Assessment revision',
+        )
+      }
+      const admitted = this.getRoleContribution(input.assessmentId, input.contributionId)
+      if (admitted === undefined) {
+        throw new SecurityPersistenceError(
+          'role_contribution_not_found',
+          'Role Attempt completion requires an admitted Role Contribution',
+        )
+      }
+      const contribution = admitted.contribution
+      if (
+        canonicalJson(contribution.contributionDigest)
+          !== canonicalJson(input.contributionDigest)
+        || contribution.parentAttempt.attemptId !== input.attemptId
+        || contribution.parentAttempt.generation !== input.generation
+        || canonicalJson(contribution.parentAttempt.fenceDigest)
+          !== canonicalJson(input.fenceDigest)
+      ) {
+        throw new SecurityPersistenceError(
+          'role_contribution_conflict',
+          'Role Attempt completion does not bind its admitted Role Contribution',
+        )
+      }
+      const derivedCompletion: CompleteRoleAttemptValuesV1 = {
+        completionDisposition: contribution.completionDisposition,
+        usage: {
+          requestsUsed: contribution.resourceUse.requests,
+          tokensUsed: contribution.resourceUse.tokens,
+        },
+        evidenceCount: contribution.evidenceArtifactIds.length,
+        candidateCount: contribution.candidateFindings.length,
+        milestones: input.milestones,
+      }
+      const exactCompletion = (
+        currentAttempt.assessmentRevision === input.expectedAssessmentRevision + 1
+        && canonicalJson(currentAttempt.fenceDigest) === canonicalJson(input.fenceDigest)
+        && currentAttempt.completionDisposition === derivedCompletion.completionDisposition
+        && currentAttempt.budget.requestsUsed === derivedCompletion.usage.requestsUsed
+        && currentAttempt.budget.tokensUsed === derivedCompletion.usage.tokensUsed
+        && currentAttempt.evidenceCount === derivedCompletion.evidenceCount
+        && currentAttempt.candidateCount === derivedCompletion.candidateCount
+        && canonicalJson(currentAttempt.milestones) === canonicalJson(input.milestones)
+      )
+      if (currentAttempt.lifecycleState === 'COMPLETED') {
+        if (!exactCompletion) {
+          throw new SecurityPersistenceError(
+            'role_attempt_conflict',
+            'Role Attempt is already completed with a different result',
+          )
+        }
+        this.db.exec('COMMIT')
+        return currentAttempt
+      }
+      if (!currentAssessment.roleContributionLinks.some(
+        link => canonicalJson(link) === canonicalJson(admitted.link),
+      )) {
+        throw new SecurityPersistenceError(
+          'corrupt_database',
+          'Admitted Role Contribution is missing from the current Assessment projection',
         )
       }
       const cardIndex = currentAssessment.roleCards.findIndex(
@@ -1609,11 +1903,7 @@ export class SecurityPersistence {
         current: currentAttempt,
         assessmentRevision: currentAssessment.assessmentRevision + 1,
         completedAt: committedAt,
-        completionDisposition: input.completionDisposition,
-        usage: input.usage,
-        evidenceCount: input.evidenceCount,
-        candidateCount: input.candidateCount,
-        milestones: input.milestones,
+        ...derivedCompletion,
       })
       const roleCards = [...currentAssessment.roleCards]
       roleCards[cardIndex] = projectRoleAttemptCardV1(completed)
@@ -2766,6 +3056,160 @@ export class SecurityPersistence {
       )
     }
     return link
+  }
+
+  private parseRoleContributionRow(row: RoleContributionRow): AdmittedRoleContributionV1 {
+    const contribution = parseRoleContributionV1(JSON.parse(row.contribution_json))
+    const link = parseRoleContributionAdmissionLinkV1(JSON.parse(row.link_json))
+    if (
+      row.contribution_json !== canonicalJson(contribution)
+      || row.link_json !== canonicalJson(link)
+      || row.assessment_id !== contribution.assessmentId
+      || row.assessment_id !== link.assessmentId
+      || row.contribution_id !== contribution.contributionId
+      || row.contribution_id !== link.contributionId
+      || row.assessment_revision !== link.assessmentRevision
+      || row.attempt_id !== contribution.parentAttempt.attemptId
+      || row.attempt_id !== link.parentAttempt.attemptId
+      || row.attempt_generation !== contribution.parentAttempt.generation
+      || row.attempt_generation !== link.parentAttempt.generation
+      || row.attempt_fence_digest !== contribution.parentAttempt.fenceDigest.value
+      || row.attempt_fence_digest !== link.parentAttempt.fenceDigest.value
+      || row.context_grant_digest !== contribution.contextGrantDigest.value
+      || row.context_grant_digest !== link.contextGrantDigest.value
+      || row.contribution_digest !== contribution.contributionDigest.value
+      || row.contribution_digest !== link.contributionDigest.value
+      || row.link_digest !== link.linkDigest.value
+      || row.committed_at !== link.admittedAt
+    ) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'Role Contribution row does not match its canonical record and projection',
+      )
+    }
+    return Object.freeze({ contribution, link })
+  }
+
+  private validateRoleContributionLineage(input: {
+    readonly contextGrant: RoleContextGrantV1
+    readonly contribution: RoleContributionV1
+    readonly modelInvocationRecords: readonly ModelInvocationRecordV1[]
+    readonly roleAttempt: RoleAttemptRecordV1
+    readonly subjectDigest: DigestEnvelopeV1
+  }): void {
+    const { contextGrant, contribution, modelInvocationRecords, roleAttempt, subjectDigest } = input
+    const contributionRole = contribution.roleDefinition
+    const attemptRole = {
+      roleId: roleAttempt.roleDefinition.roleId,
+      roleVersion: roleAttempt.roleDefinition.roleVersion,
+      definitionDigest: roleAttempt.roleDefinition.definitionDigest,
+    }
+    if (
+      contribution.assessmentId !== contextGrant.assessmentId
+      || contribution.assessmentId !== roleAttempt.assessmentId
+      || canonicalJson(contribution.subjectDigest) !== canonicalJson(subjectDigest)
+      || canonicalJson(contextGrant.subject.digest) !== canonicalJson(subjectDigest)
+      || contribution.parentAttempt.attemptId !== contextGrant.roleAttemptId
+      || contribution.parentAttempt.attemptId !== roleAttempt.attemptId
+      || contribution.parentAttempt.generation !== roleAttempt.generation
+      || canonicalJson(contribution.parentAttempt.fenceDigest)
+        !== canonicalJson(roleAttempt.fenceDigest)
+      || canonicalJson(contribution.contextGrantDigest)
+        !== canonicalJson(contextGrant.grantDigest)
+      || canonicalJson(contribution.contextGrantDigest)
+        !== canonicalJson(roleAttempt.contextGrantDigest)
+      || canonicalJson(contributionRole) !== canonicalJson(contextGrant.roleDefinition)
+      || canonicalJson(contributionRole) !== canonicalJson(attemptRole)
+    ) {
+      throw new SecurityPersistenceError(
+        'role_contribution_conflict',
+        'Role Contribution does not bind the durable Assessment, Subject, Grant, or Attempt',
+      )
+    }
+
+    const contributionInvocationIds = contribution.modelInvocations
+      .map(invocation => invocation.invocationId)
+      .sort()
+    const linkedInvocationIds = (this.db.prepare(`
+      SELECT invocation_id FROM model_invocation_evidence_links
+      WHERE assessment_id = ? AND attempt_id = ? AND attempt_generation = ?
+      ORDER BY invocation_id
+    `).all(
+      contribution.assessmentId,
+      roleAttempt.attemptId,
+      roleAttempt.generation,
+    ) as unknown as readonly { readonly invocation_id: string }[])
+      .map(row => row.invocation_id)
+    if (
+      modelInvocationRecords.length !== contribution.modelInvocations.length
+      || canonicalJson(linkedInvocationIds) !== canonicalJson(contributionInvocationIds)
+    ) {
+      throw new SecurityPersistenceError(
+        'role_contribution_conflict',
+        'Role Contribution must close over every durable Model Invocation Evidence link',
+      )
+    }
+    const recordsById = new Map(modelInvocationRecords.map(record => [record.invocationId, record]))
+    if (recordsById.size !== modelInvocationRecords.length) {
+      throw new SecurityPersistenceError(
+        'role_contribution_conflict',
+        'Role Contribution Model Invocation records must be unique',
+      )
+    }
+
+    for (const invocation of contribution.modelInvocations) {
+      const candidate = recordsById.get(invocation.invocationId)
+      if (candidate === undefined) {
+        throw new SecurityPersistenceError(
+          'role_contribution_conflict',
+          'Role Contribution lacks one protected Model Invocation Record',
+        )
+      }
+      let record: ModelInvocationRecordV1
+      try {
+        record = parseModelInvocationRecordV1(candidate, {
+          invocationId: candidate.invocationId,
+          attemptId: roleAttempt.attemptId,
+          attemptGeneration: roleAttempt.generation,
+          attemptFenceDigest: roleAttempt.fenceDigest,
+          contextGrantDigest: roleAttempt.contextGrantDigest,
+          reservationDigest: candidate.budgetSettlement.reservationDigest,
+          receiptDigest: candidate.receiptDigest,
+        })
+      } catch {
+        throw new SecurityPersistenceError(
+          'role_contribution_conflict',
+          'Role Contribution contains an invalid Model Invocation Record',
+        )
+      }
+      const evidenceLink = this.getModelInvocationEvidenceLink(
+        contribution.assessmentId,
+        invocation.invocationId,
+      )
+      if (
+        evidenceLink === undefined
+        || canonicalJson(evidenceLink.publicationReceipt.recordDigest)
+          !== canonicalJson(record.recordDigest)
+        || canonicalJson(evidenceLink.publicationReceipt.subjectDigest)
+          !== canonicalJson(subjectDigest)
+        || canonicalJson(record.roleDefinition) !== canonicalJson(contributionRole)
+        || canonicalJson({
+          providerId: record.provider.providerId,
+          modelId: record.provider.modelId,
+          movingProvider: record.provider.movingProvider,
+        }) !== canonicalJson(roleAttempt.provider)
+        || canonicalJson(record.prompt) !== canonicalJson(roleAttempt.prompt)
+        || canonicalJson(invocation.recordDigest) !== canonicalJson(record.recordDigest)
+        || canonicalJson(invocation.responseDigest) !== canonicalJson(record.responseDigest)
+        || invocation.inputTokens !== record.usage.inputTokens
+        || invocation.outputTokens !== record.usage.outputTokens
+      ) {
+        throw new SecurityPersistenceError(
+          'role_contribution_conflict',
+          'Role Contribution Model Invocation lineage is incomplete or drifted',
+        )
+      }
+    }
   }
 
   private requireOpen(): void {

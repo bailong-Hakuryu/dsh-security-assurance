@@ -4,8 +4,11 @@ import {
 } from '../src/role-context-grant.ts'
 import { binaryDigest, structuredDigest } from '../src/internal/canonical.ts'
 import {
+  createRoleContributionAdmissionLinkV1,
   createRoleContributionV1,
+  parseRoleContributionAdmissionLinkV1,
   parseRoleContributionV1,
+  ROLE_CONTRIBUTION_ADMISSION_LINK_MEDIA_TYPE,
   ROLE_CONTRIBUTION_MEDIA_TYPE,
 } from '../src/internal/role-contribution.ts'
 import { MODEL_INVOCATION_RECORD_MEDIA_TYPE } from '../src/internal/model-invocation-settlement.ts'
@@ -154,6 +157,34 @@ describe('ADR 0176 Role Contribution contract', () => {
       ...contributionInput(),
       riskAcceptance: { decision: 'ACCEPTED' },
     })).toThrow()
+  })
+
+  it('projects a compact digest-bound durable admission link', () => {
+    const contribution = createRoleContributionV1(contributionInput())
+    const link = createRoleContributionAdmissionLinkV1({
+      contribution,
+      assessmentRevision: 9,
+      admittedAt: '2026-09-13T02:00:00.000Z',
+    })
+
+    expect(link).toMatchObject({
+      assessmentId: ASSESSMENT_ID,
+      assessmentRevision: 9,
+      contributionId: CONTRIBUTION_ID,
+      contributionDigest: contribution.contributionDigest,
+      modelInvocationIds: ['invocation-1'],
+      completionDisposition: 'PARTIAL',
+      evidenceCount: 2,
+      candidateCount: 1,
+    })
+    expect(link.linkDigest.mediaType).toBe(ROLE_CONTRIBUTION_ADMISSION_LINK_MEDIA_TYPE)
+    expect(parseRoleContributionAdmissionLinkV1(structuredClone(link))).toEqual(link)
+    expect(Object.isFrozen(link)).toBe(true)
+
+    expect(() => parseRoleContributionAdmissionLinkV1({
+      ...structuredClone(link),
+      evidenceCount: 1,
+    })).toThrow(/digest is invalid/u)
   })
 
   it('requires resource use to equal the exact Model Invocation lineage', () => {

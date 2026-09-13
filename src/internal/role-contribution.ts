@@ -17,6 +17,8 @@ import { SOURCE_SLICE_EGRESS_ATTEMPT_FENCE_MEDIA_TYPE } from './source-slice-egr
 
 export const ROLE_CONTRIBUTION_MEDIA_TYPE =
   'application/vnd.dsh.security.role-contribution+json'
+export const ROLE_CONTRIBUTION_ADMISSION_LINK_MEDIA_TYPE =
+  'application/vnd.dsh.security.role-contribution-admission-link+json'
 
 const MAX_CONTRIBUTION_BYTES = 1024 * 1024
 const boundedIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._/-]{0,127}$/iu)
@@ -79,6 +81,13 @@ const contributionDigestSchema = digestEnvelopeV1Schema.refine(
     && digest.canonicalization === 'dsh-canonical-json-v1'
   ),
   'Role Contributions must use the contribution media type',
+)
+const contributionAdmissionLinkDigestSchema = digestEnvelopeV1Schema.refine(
+  digest => (
+    digest.mediaType === ROLE_CONTRIBUTION_ADMISSION_LINK_MEDIA_TYPE
+    && digest.canonicalization === 'dsh-canonical-json-v1'
+  ),
+  'Role Contribution Admission Links must use the admission-link media type',
 )
 
 export interface RoleContributionSourceAnchorV1 {
@@ -422,4 +431,119 @@ export function parseRoleContributionV1(candidate: unknown): RoleContributionV1 
     throw new TypeError('Role Contribution digest is invalid')
   }
   return deepFreeze({ ...core, contributionDigest })
+}
+
+export interface RoleContributionAdmissionLinkCoreV1 {
+  readonly schemaVersion: 1
+  readonly assessmentId: AssessmentId
+  readonly assessmentRevision: number
+  readonly contributionId: string
+  readonly contributionDigest: DigestEnvelopeV1
+  readonly parentAttempt: RoleContributionV1['parentAttempt']
+  readonly contextGrantDigest: DigestEnvelopeV1
+  readonly modelInvocationIds: readonly string[]
+  readonly completionDisposition: RoleContributionV1['completionDisposition']
+  readonly resourceUse: RoleContributionV1['resourceUse']
+  readonly evidenceCount: number
+  readonly candidateCount: number
+  readonly admittedAt: string
+}
+
+export interface RoleContributionAdmissionLinkV1
+  extends RoleContributionAdmissionLinkCoreV1 {
+  readonly linkDigest: DigestEnvelopeV1
+}
+
+const roleContributionAdmissionLinkCoreShape = {
+  schemaVersion: z.literal(1),
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  contributionId: contributionIdSchema,
+  contributionDigest: contributionDigestSchema,
+  parentAttempt: z.strictObject({
+    attemptId: roleAttemptIdSchema,
+    generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    fenceDigest: attemptFenceDigestSchema,
+  }),
+  contextGrantDigest: contextGrantDigestSchema,
+  modelInvocationIds: z.array(boundedIdSchema).min(1).max(64),
+  completionDisposition: z.enum(['COMPLETE', 'PARTIAL']),
+  resourceUse: roleContributionCoreShape.resourceUse,
+  evidenceCount: z.number().int().nonnegative().max(256),
+  candidateCount: z.number().int().nonnegative().max(256),
+  admittedAt: z.iso.datetime({ offset: true }),
+} as const
+
+const roleContributionAdmissionLinkCoreV1Schema:
+z.ZodType<RoleContributionAdmissionLinkCoreV1> = z.strictObject(
+  roleContributionAdmissionLinkCoreShape,
+).superRefine((link, context) => {
+  if (!unique(link.modelInvocationIds)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['modelInvocationIds'],
+      message: 'Role Contribution Admission Link invocation identities must be unique',
+    })
+  }
+})
+
+export const roleContributionAdmissionLinkV1Schema:
+z.ZodType<RoleContributionAdmissionLinkV1> = z.strictObject({
+  ...roleContributionAdmissionLinkCoreShape,
+  linkDigest: contributionAdmissionLinkDigestSchema,
+}).superRefine((link, context) => {
+  if (!unique(link.modelInvocationIds)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['modelInvocationIds'],
+      message: 'Role Contribution Admission Link invocation identities must be unique',
+    })
+  }
+})
+
+export interface CreateRoleContributionAdmissionLinkOptionsV1 {
+  readonly contribution: RoleContributionV1
+  readonly assessmentRevision: number
+  readonly admittedAt: string
+}
+
+/** Project one admitted protected Contribution without exposing its full semantic payload. */
+export function createRoleContributionAdmissionLinkV1(
+  options: CreateRoleContributionAdmissionLinkOptionsV1,
+): RoleContributionAdmissionLinkV1 {
+  const contribution = parseRoleContributionV1(options.contribution)
+  const core = roleContributionAdmissionLinkCoreV1Schema.parse({
+    schemaVersion: 1,
+    assessmentId: contribution.assessmentId,
+    assessmentRevision: options.assessmentRevision,
+    contributionId: contribution.contributionId,
+    contributionDigest: contribution.contributionDigest,
+    parentAttempt: contribution.parentAttempt,
+    contextGrantDigest: contribution.contextGrantDigest,
+    modelInvocationIds: contribution.modelInvocations.map(invocation => invocation.invocationId),
+    completionDisposition: contribution.completionDisposition,
+    resourceUse: contribution.resourceUse,
+    evidenceCount: contribution.evidenceArtifactIds.length,
+    candidateCount: contribution.candidateFindings.length,
+    admittedAt: options.admittedAt,
+  })
+  return deepFreeze({
+    ...core,
+    linkDigest: structuredDigest(ROLE_CONTRIBUTION_ADMISSION_LINK_MEDIA_TYPE, core),
+  })
+}
+
+/** Recompute one compact durable admission projection before use. */
+export function parseRoleContributionAdmissionLinkV1(
+  candidate: unknown,
+): RoleContributionAdmissionLinkV1 {
+  const link = roleContributionAdmissionLinkV1Schema.parse(candidate)
+  const { linkDigest, ...candidateCore } = link
+  const core = roleContributionAdmissionLinkCoreV1Schema.parse(candidateCore)
+  if (canonicalJson(
+    linkDigest,
+  ) !== canonicalJson(structuredDigest(ROLE_CONTRIBUTION_ADMISSION_LINK_MEDIA_TYPE, core))) {
+    throw new TypeError('Role Contribution Admission Link digest is invalid')
+  }
+  return deepFreeze({ ...core, linkDigest })
 }

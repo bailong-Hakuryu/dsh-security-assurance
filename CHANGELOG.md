@@ -140,9 +140,22 @@
   limitations, uncertainty, completion disposition, and exact aggregate usage.
   Strict parsing rejects unknown authority-bearing fields, duplicate or dangling
   references, non-canonical or unsafe Source Anchors, usage drift, oversized
-  contributions, and digest tampering. This contract creates no durable
-  admission, Finding, Coverage resolution, Verdict, Risk Acceptance, Provider
-  call, or public capability.
+  contributions, and digest tampering. The pure contract itself creates no
+  durable side effect, Finding, Coverage resolution, Verdict, Risk Acceptance,
+  Provider call, or public capability.
+- Add package-private durable Role Contribution admission. Schema v4 stores the
+  protected canonical Contribution separately from its compact, digest-bound
+  Assessment projection and relates both to the exact Role Attempt generation.
+  Admission requires a current RUNNING Assessment and Attempt, an exact Context
+  Grant and Subject, every and only the already-linked Model Invocation Evidence
+  record, exact response digests and token usage, and the Attempt budget. Exact
+  replay is idempotent; stale revisions, missing or extra invocations, lineage
+  drift, duplicate Attempt contributions, cancellation, or budget overflow roll
+  back fail closed. Successful Role Attempt completion now cites the admitted
+  Contribution and derives its disposition, request/token use, Evidence count,
+  and Candidate count from that immutable record instead of caller-supplied
+  summaries. No Finding, Coverage Resolution, Verdict, Risk Acceptance,
+  Provider call, public API, or automatic session scheduling is added.
 
 ## [0.1.0-rc.14] - 2026-09-11
 
