@@ -24,6 +24,7 @@ import type {
   AssessmentSnapshotV1,
 } from '../contracts.ts'
 import { analyzerPortfolioEntryV1Schema } from '../analyzer.ts'
+import { modelInvocationEvidenceLinkV1Schema } from './model-invocation-evidence.ts'
 
 const preparedContractV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -109,6 +110,9 @@ export const internalAssessmentRecordV1Schema = z.strictObject({
     requestedAt: z.iso.datetime({ offset: true }),
   }).nullable().default(null),
   roleCards: z.array(assessmentRoleCardV1Schema).max(128).default([]),
+  modelInvocationEvidenceLinks: z.array(modelInvocationEvidenceLinkV1Schema)
+    .max(256)
+    .default([]),
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
 })

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { chmod, mkdir, rename, unlink } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
+import { backup, DatabaseSync } from 'node:sqlite'
 import {
   repositoryCommandReceiptV1Schema,
   repositorySnapshotV1Schema,
@@ -40,9 +40,19 @@ import type {
   PreparedAssessmentContractV1,
 } from './deterministic-kernel.ts'
 import type { EvidencePublicationReceiptV1 } from './evidence-persistence.ts'
+import type { RoleContextGrantV1 } from '../role-context-grant.ts'
+import type { ModelInvocationRecordBindingsV1 } from './model-invocation-settlement.ts'
+import type {
+  ModelInvocationEvidenceLinkV1,
+  ModelInvocationEvidencePublicationReceiptV1,
+} from './model-invocation-evidence.ts'
+import {
+  createModelInvocationEvidenceLinkV1,
+  parseModelInvocationEvidenceLinkV1,
+} from './model-invocation-evidence.ts'
 
 const APPLICATION_ID = 0x4453_4853
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 
 export type SecurityPersistenceErrorCode =
   | 'foreign_database'
@@ -52,6 +62,7 @@ export type SecurityPersistenceErrorCode =
   | 'repository_conflict'
   | 'repository_not_found'
   | 'assessment_not_found'
+  | 'model_invocation_conflict'
   | 'revision_conflict'
 
 export class SecurityPersistenceError extends Error {
@@ -167,6 +178,13 @@ export interface RecordRiskDecisionPersistenceInput {
   readonly authorizationMode?: RiskDecisionAuthorizationModeV1
 }
 
+export interface LinkModelInvocationEvidencePersistenceInput {
+  readonly contextGrant: RoleContextGrantV1
+  readonly expectedAssessmentRevision: number
+  readonly receipt: ModelInvocationEvidencePublicationReceiptV1
+  readonly expected: ModelInvocationRecordBindingsV1
+}
+
 export interface SecurityPersistenceOptions {
   readonly databasePath: string
   readonly now?: () => string
@@ -187,6 +205,32 @@ interface RepositoryRow {
 
 interface AssessmentRow {
   readonly snapshot_json: string
+}
+
+interface ModelInvocationEvidenceLinkRow {
+  readonly assessment_id: AssessmentId
+  readonly invocation_id: string
+  readonly assessment_revision: number
+  readonly attempt_id: string
+  readonly attempt_generation: number
+  readonly attempt_fence_digest: string
+  readonly context_grant_digest: string
+  readonly artifact_id: string
+  readonly evidence_schema_id: string
+  readonly evidence_digest: string
+  readonly record_digest: string
+  readonly publication_receipt_digest: string
+  readonly link_json: string
+  readonly committed_at: string
+}
+
+interface SchemaMigrationRow {
+  readonly target_version: number
+  readonly source_version: number
+  readonly backup_name: string
+  readonly source_state_digest: string
+  readonly result_digest: string
+  readonly committed_at: string
 }
 
 export interface AssessmentListKey {
@@ -225,7 +269,7 @@ function verifyIntegrity(db: DatabaseSync): void {
   }
 }
 
-function verifySchema(db: DatabaseSync): void {
+function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
   const expected = new Map<string, readonly string[]>([
     ['repositories', [
       'repository_id', 'canonical_root', 'current_revision', 'snapshot_json', 'created_at', 'updated_at',
@@ -245,6 +289,18 @@ function verifySchema(db: DatabaseSync): void {
       'assessment_id', 'assessment_revision', 'event_kind', 'snapshot_json', 'committed_at',
     ]],
   ])
+  if (schemaVersion >= 2) {
+    expected.set('schema_migrations', [
+      'target_version', 'source_version', 'backup_name', 'source_state_digest',
+      'result_digest', 'committed_at',
+    ])
+    expected.set('model_invocation_evidence_links', [
+      'assessment_id', 'invocation_id', 'assessment_revision', 'attempt_id',
+      'attempt_generation', 'attempt_fence_digest', 'context_grant_digest',
+      'artifact_id', 'evidence_schema_id', 'evidence_digest', 'record_digest',
+      'publication_receipt_digest', 'link_json', 'committed_at',
+    ])
+  }
   const tables = db.prepare(`
     SELECT name FROM sqlite_master
     WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
@@ -281,6 +337,10 @@ function verifySchema(db: DatabaseSync): void {
     ['assessments', ['assessment_id']],
     ['assessment_revisions', ['assessment_id', 'assessment_revision']],
   ])
+  if (schemaVersion >= 2) {
+    primaryKeys.set('schema_migrations', ['target_version'])
+    primaryKeys.set('model_invocation_evidence_links', ['assessment_id', 'invocation_id'])
+  }
   for (const [table, columns] of primaryKeys) {
     const observed = db.prepare(`PRAGMA table_info('${table}')`).all() as unknown as readonly {
       readonly name: string
@@ -312,17 +372,60 @@ function verifySchema(db: DatabaseSync): void {
     ['assessments', [['repository_id', 'repositories', 'repository_id']]],
     ['assessment_revisions', [['assessment_id', 'assessments', 'assessment_id']]],
   ])
+  if (schemaVersion >= 2) {
+    foreignKeys.set('model_invocation_evidence_links', [
+      ['assessment_id', 'assessment_revisions', 'assessment_id'],
+      ['assessment_revision', 'assessment_revisions', 'assessment_revision'],
+    ])
+  }
   for (const [table, expectedForeignKeys] of foreignKeys) {
     const observed = db.prepare(`PRAGMA foreign_key_list('${table}')`).all() as unknown as readonly {
       readonly from: string
       readonly table: string
       readonly to: string
     }[]
-    const actual = observed.map(row => [row.from, row.table, row.to] as const)
-    if (canonicalJson(actual) !== canonicalJson(expectedForeignKeys)) {
+    const actual = observed
+      .map(row => [row.from, row.table, row.to] as const)
+      .sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)))
+    const expectedSorted = [...expectedForeignKeys]
+      .sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)))
+    if (canonicalJson(actual) !== canonicalJson(expectedSorted)) {
       throw new SecurityPersistenceError('corrupt_database', `SQLite table ${table} has invalid foreign keys`)
     }
   }
+}
+
+function installSchemaV2Objects(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE schema_migrations (
+      target_version INTEGER NOT NULL PRIMARY KEY,
+      source_version INTEGER NOT NULL,
+      backup_name    TEXT NOT NULL,
+      source_state_digest TEXT NOT NULL,
+      result_digest  TEXT NOT NULL,
+      committed_at   TEXT NOT NULL
+    ) STRICT;
+
+    CREATE TABLE model_invocation_evidence_links (
+      assessment_id              TEXT NOT NULL,
+      invocation_id              TEXT NOT NULL,
+      assessment_revision        INTEGER NOT NULL,
+      attempt_id                 TEXT NOT NULL,
+      attempt_generation         INTEGER NOT NULL CHECK (attempt_generation > 0),
+      attempt_fence_digest       TEXT NOT NULL,
+      context_grant_digest       TEXT NOT NULL,
+      artifact_id                TEXT NOT NULL,
+      evidence_schema_id         TEXT NOT NULL,
+      evidence_digest            TEXT NOT NULL,
+      record_digest              TEXT NOT NULL,
+      publication_receipt_digest TEXT NOT NULL,
+      link_json                  TEXT NOT NULL,
+      committed_at               TEXT NOT NULL,
+      PRIMARY KEY (assessment_id, invocation_id),
+      FOREIGN KEY (assessment_id, assessment_revision)
+        REFERENCES assessment_revisions(assessment_id, assessment_revision)
+    ) STRICT;
+  `)
 }
 
 function installSchema(db: DatabaseSync): void {
@@ -377,11 +480,155 @@ function installSchema(db: DatabaseSync): void {
       PRIMARY KEY (assessment_id, assessment_revision)
     ) STRICT;
   `)
+  installSchemaV2Objects(db)
   db.exec(`PRAGMA application_id = ${APPLICATION_ID}`)
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
 }
 
-function openDatabase(path: string): DatabaseSync {
+function schemaV1StateDigest(db: DatabaseSync): string {
+  const queries = [
+    ['repositories', 'SELECT * FROM repositories ORDER BY repository_id'],
+    ['repository_revisions', `
+      SELECT * FROM repository_revisions ORDER BY repository_id, repository_revision
+    `],
+    ['idempotency_records', `
+      SELECT * FROM idempotency_records
+      ORDER BY principal_id, authority_kind, operation, target_key, idempotency_key
+    `],
+    ['assessments', 'SELECT * FROM assessments ORDER BY assessment_id'],
+    ['assessment_revisions', `
+      SELECT * FROM assessment_revisions ORDER BY assessment_id, assessment_revision
+    `],
+  ] as const
+  let stateDigest = digest({ schemaVersion: 1 })
+  for (const [table, query] of queries) {
+    for (const row of db.prepare(query).iterate() as Iterable<Record<string, unknown>>) {
+      stateDigest = digest({ previousDigest: stateDigest, table, row })
+    }
+  }
+  return stateDigest
+}
+
+function verifyMigrationBackup(path: string): string {
+  const backupDatabase = new DatabaseSync(path, { readOnly: true })
+  try {
+    if (integerPragma(backupDatabase, 'application_id') !== APPLICATION_ID
+      || integerPragma(backupDatabase, 'user_version') !== 1) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'SQLite migration backup identity is invalid',
+      )
+    }
+    verifySchema(backupDatabase, 1)
+    verifyIntegrity(backupDatabase)
+    return schemaV1StateDigest(backupDatabase)
+  } finally {
+    backupDatabase.close()
+  }
+}
+
+function verifyMigrationHistory(db: DatabaseSync, path: string): void {
+  const rows = db.prepare(`
+    SELECT * FROM schema_migrations ORDER BY target_version
+  `).all() as unknown as readonly SchemaMigrationRow[]
+  if (rows.length === 0) return
+  if (rows.length !== 1) {
+    throw new SecurityPersistenceError('corrupt_database', 'SQLite migration history is invalid')
+  }
+  const [row] = rows
+  if (row === undefined) {
+    throw new SecurityPersistenceError('corrupt_database', 'SQLite migration history is missing')
+  }
+  const backupPrefix = `${basename(path)}.pre-migration-v1-`
+  const backupId = row.backup_name.startsWith(backupPrefix)
+    && row.backup_name.endsWith('.sqlite')
+    ? row.backup_name.slice(backupPrefix.length, -'.sqlite'.length)
+    : ''
+  const expectedResultDigest = digest({
+    sourceVersion: row.source_version,
+    targetVersion: row.target_version,
+    backupName: row.backup_name,
+    sourceStateDigest: row.source_state_digest,
+    committedAt: row.committed_at,
+  })
+  if (
+    row.source_version !== 1
+    || row.target_version !== 2
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+      .test(backupId)
+    || !/^sha256:[0-9a-f]{64}$/u.test(row.source_state_digest)
+    || row.result_digest !== expectedResultDigest
+    || Number.isNaN(Date.parse(row.committed_at))
+  ) {
+    throw new SecurityPersistenceError('corrupt_database', 'SQLite migration history is invalid')
+  }
+}
+
+async function migrateSchemaV1ToV2(
+  db: DatabaseSync,
+  path: string,
+  now: () => string,
+): Promise<void> {
+  verifySchema(db, 1)
+  verifyIntegrity(db)
+
+  const migrationId = randomUUID()
+  const backupName = `${basename(path)}.pre-migration-v1-${migrationId}.sqlite`
+  const backupPath = join(dirname(path), backupName)
+  const pendingBackupPath = `${backupPath}.pending`
+  let transactionOpen = false
+  let backupPublished = false
+  try {
+    await backup(db, pendingBackupPath)
+    const backupStateDigest = verifyMigrationBackup(pendingBackupPath)
+    await chmod(pendingBackupPath, 0o600)
+
+    db.exec('BEGIN EXCLUSIVE')
+    transactionOpen = true
+    verifySchema(db, 1)
+    verifyIntegrity(db)
+    if (schemaV1StateDigest(db) !== backupStateDigest) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'SQLite database changed while its migration backup was created',
+      )
+    }
+    await rename(pendingBackupPath, backupPath)
+    backupPublished = true
+
+    installSchemaV2Objects(db)
+    const committedAt = now()
+    const resultDigest = digest({
+      sourceVersion: 1,
+      targetVersion: 2,
+      backupName,
+      sourceStateDigest: backupStateDigest,
+      committedAt,
+    })
+    db.prepare(`
+      INSERT INTO schema_migrations (
+        target_version, source_version, backup_name, source_state_digest,
+        result_digest, committed_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(2, 1, backupName, backupStateDigest, resultDigest, committedAt)
+    db.exec('PRAGMA user_version = 2')
+    verifySchema(db, 2)
+    verifyIntegrity(db)
+    verifyMigrationHistory(db, path)
+    db.exec('COMMIT')
+    transactionOpen = false
+  } catch (error) {
+    if (transactionOpen) {
+      db.exec('ROLLBACK')
+    }
+    if (!backupPublished) {
+      await unlink(pendingBackupPath).catch(() => undefined)
+    }
+    throw error
+  }
+}
+
+async function openDatabase(path: string, now: () => string): Promise<DatabaseSync> {
   const db = new DatabaseSync(path)
   try {
     db.exec('PRAGMA foreign_keys = ON')
@@ -406,11 +653,14 @@ function openDatabase(path: string): DatabaseSync {
       }
     } else if (applicationId !== APPLICATION_ID) {
       throw new SecurityPersistenceError('foreign_database', 'SQLite database belongs to another application')
+    } else if (userVersion === 1) {
+      await migrateSchemaV1ToV2(db, path, now)
     } else if (userVersion !== SCHEMA_VERSION) {
       throw new SecurityPersistenceError('unsupported_schema', 'SQLite schema version is unsupported')
     }
     verifySchema(db)
     verifyIntegrity(db)
+    verifyMigrationHistory(db, path)
     db.exec('PRAGMA journal_mode = WAL')
     return db
   } catch (error) {
@@ -909,6 +1159,131 @@ export class SecurityPersistence {
       SELECT assessment_id FROM assessments WHERE state = 'CREATED' ORDER BY rowid
     `).all() as unknown as readonly { readonly assessment_id: AssessmentId }[]
     return rows.map(row => row.assessment_id)
+  }
+
+  /**
+   * Atomically append one already-published Model Invocation Evidence link to
+   * the Assessment journal and current projection.
+   */
+  linkModelInvocationEvidence(
+    input: LinkModelInvocationEvidencePersistenceInput,
+  ): ModelInvocationEvidenceLinkV1 {
+    this.requireOpen()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const replay = this.getModelInvocationEvidenceLink(
+        input.receipt.assessmentId,
+        input.receipt.invocationId,
+      )
+      if (replay !== undefined) {
+        const expectedReplay = createModelInvocationEvidenceLinkV1({
+          assessmentRevision: replay.assessmentRevision,
+          linkedAt: replay.linkedAt,
+          contextGrant: input.contextGrant,
+          receipt: input.receipt,
+          expected: input.expected,
+        })
+        if (canonicalJson(expectedReplay) !== canonicalJson(replay)) {
+          throw new SecurityPersistenceError(
+            'model_invocation_conflict',
+            'Model Invocation identity is already linked to different Evidence',
+          )
+        }
+        this.db.exec('COMMIT')
+        return replay
+      }
+
+      const current = this.getAssessmentRecord(input.receipt.assessmentId)
+      if (current === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
+      if (
+        current.state !== 'RUNNING'
+        || current.assessmentRevision !== input.expectedAssessmentRevision
+        || current.pendingCancellation !== null
+      ) {
+        throw new SecurityPersistenceError(
+          'revision_conflict',
+          'Assessment cannot link Model Invocation Evidence at this revision',
+        )
+      }
+      if (current.modelInvocationEvidenceLinks.length >= 256) {
+        throw new SecurityPersistenceError(
+          'model_invocation_conflict',
+          'Assessment Model Invocation Evidence link limit is exhausted',
+        )
+      }
+      const committedAt = this.now()
+      const link = createModelInvocationEvidenceLinkV1({
+        assessmentRevision: current.assessmentRevision + 1,
+        linkedAt: committedAt,
+        contextGrant: input.contextGrant,
+        receipt: input.receipt,
+        expected: input.expected,
+      })
+      if (
+        current.assessmentId !== link.publicationReceipt.assessmentId
+        || canonicalJson(current.subject.digest)
+          !== canonicalJson(link.publicationReceipt.subjectDigest)
+      ) {
+        throw new SecurityPersistenceError(
+          'model_invocation_conflict',
+          'Model Invocation Evidence does not bind the durable Assessment Subject',
+        )
+      }
+      const linked = internalAssessmentRecordV1Schema.parse({
+        ...current,
+        assessmentRevision: link.assessmentRevision,
+        modelInvocationEvidenceLinks: [...current.modelInvocationEvidenceLinks, link],
+        updatedAt: committedAt,
+      })
+      this.commitAssessmentRevision(
+        linked,
+        'model_invocation_evidence_linked',
+        committedAt,
+      )
+      const receipt = link.publicationReceipt
+      this.db.prepare(`
+        INSERT INTO model_invocation_evidence_links (
+          assessment_id, invocation_id, assessment_revision, attempt_id,
+          attempt_generation, attempt_fence_digest, context_grant_digest,
+          artifact_id, evidence_schema_id, evidence_digest, record_digest,
+          publication_receipt_digest, link_json, committed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        receipt.assessmentId,
+        receipt.invocationId,
+        link.assessmentRevision,
+        receipt.parentAttempt.attemptId,
+        receipt.parentAttempt.generation,
+        receipt.parentAttempt.fenceDigest.value,
+        link.contextGrantDigest.value,
+        receipt.artifactId,
+        receipt.schemaId,
+        receipt.evidenceDigest.value,
+        receipt.recordDigest.value,
+        receipt.publicationReceiptDigest.value,
+        canonicalJson(link),
+        committedAt,
+      )
+      this.db.exec('COMMIT')
+      return link
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  getModelInvocationEvidenceLink(
+    assessmentId: AssessmentId,
+    invocationId: string,
+  ): ModelInvocationEvidenceLinkV1 | undefined {
+    this.requireOpen()
+    const row = this.db.prepare(`
+      SELECT * FROM model_invocation_evidence_links
+      WHERE assessment_id = ? AND invocation_id = ?
+    `).get(assessmentId, invocationId) as ModelInvocationEvidenceLinkRow | undefined
+    return row === undefined ? undefined : this.parseModelInvocationEvidenceLinkRow(row)
   }
 
   /** Persist the durable execution boundary before any evaluation work begins. */
@@ -1593,6 +1968,35 @@ export class SecurityPersistence {
     this.db.close()
   }
 
+  private parseModelInvocationEvidenceLinkRow(
+    row: ModelInvocationEvidenceLinkRow,
+  ): ModelInvocationEvidenceLinkV1 {
+    const link = parseModelInvocationEvidenceLinkV1(JSON.parse(row.link_json))
+    const receipt = link.publicationReceipt
+    if (
+      row.link_json !== canonicalJson(link)
+      || row.assessment_id !== receipt.assessmentId
+      || row.invocation_id !== receipt.invocationId
+      || row.assessment_revision !== link.assessmentRevision
+      || row.attempt_id !== receipt.parentAttempt.attemptId
+      || row.attempt_generation !== receipt.parentAttempt.generation
+      || row.attempt_fence_digest !== receipt.parentAttempt.fenceDigest.value
+      || row.context_grant_digest !== link.contextGrantDigest.value
+      || row.artifact_id !== receipt.artifactId
+      || row.evidence_schema_id !== receipt.schemaId
+      || row.evidence_digest !== receipt.evidenceDigest.value
+      || row.record_digest !== receipt.recordDigest.value
+      || row.publication_receipt_digest !== receipt.publicationReceiptDigest.value
+      || row.committed_at !== link.linkedAt
+    ) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'Model Invocation Evidence link row does not match its canonical projection',
+      )
+    }
+    return link
+  }
+
   private requireOpen(): void {
     if (this.closed) throw new SecurityPersistenceError('corrupt_database', 'Security Persistence is closed')
   }
@@ -1694,7 +2098,8 @@ export async function openSecurityPersistence(
   options: SecurityPersistenceOptions,
 ): Promise<SecurityPersistence> {
   await mkdir(dirname(options.databasePath), { recursive: true, mode: 0o700 })
-  const database = openDatabase(options.databasePath)
+  const now = options.now ?? (() => new Date().toISOString())
+  const database = await openDatabase(options.databasePath, now)
   try {
     await chmod(options.databasePath, 0o600)
   } catch (error) {
@@ -1703,7 +2108,7 @@ export async function openSecurityPersistence(
   }
   return new SecurityPersistence(
     database,
-    options.now ?? (() => new Date().toISOString()),
+    now,
     options.nextRepositoryId ?? (() => `repo-${randomUUID()}` as RepositoryId),
     options.nextCorrelationId ?? (() => `sec-${randomUUID()}`),
     options.nextAssessmentId ?? (() => `asm-${randomUUID()}` as AssessmentId),

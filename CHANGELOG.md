@@ -95,8 +95,17 @@
   its digest-bound receipt jointly bind the assessment, Subject, record digest,
   invocation, and exact parent Attempt generation and fence. Identical
   publication is idempotent across platforms, including Windows existing-target
-  errors only after exact canonical-byte verification; no path, body, relational
-  Attempt link, Evidence Link, or canonical Bundle admission is exposed.
+  errors only after exact canonical-byte verification; the publication seam
+  exposes no path or body.
+- Add package-private relational linking for published Model Invocation Evidence.
+  One SQLite transaction binds the exact Assessment revision, Context Grant,
+  invocation, Attempt generation and fence, Evidence and publication digests,
+  then updates the Current Projection and appends the Revision Journal. Exact
+  replay is idempotent; conflicting Evidence, stale state or Subject drift rolls
+  back fail closed. Released schema-v1 Stores migrate forward to v2 only after a
+  verified content-consistent protected backup under an exclusive migration
+  lease, with digest-bound migration history; no durable Role Attempt table,
+  Evidence Link, canonical Bundle admission, or public API is added.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

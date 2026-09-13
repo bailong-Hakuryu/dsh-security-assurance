@@ -9,7 +9,10 @@ import {
   securitySubmissionJsonV1Schema,
 } from '../contracts.ts'
 import type { RoleContextGrantV1 } from '../role-context-grant.ts'
-import { parseRoleContextGrantV1 } from '../role-context-grant.ts'
+import {
+  parseRoleContextGrantV1,
+  ROLE_CONTEXT_GRANT_MEDIA_TYPE,
+} from '../role-context-grant.ts'
 import { canonicalJson, structuredDigest } from './canonical.ts'
 import {
   publishEvidenceSet,
@@ -30,6 +33,8 @@ export const MODEL_INVOCATION_EVIDENCE_SCHEMA_ID =
   'dsh/security-model-invocation-record-v1'
 export const MODEL_INVOCATION_EVIDENCE_PUBLICATION_RECEIPT_MEDIA_TYPE =
   'application/vnd.dsh.security.model-invocation-evidence-publication-receipt+json'
+export const MODEL_INVOCATION_EVIDENCE_LINK_MEDIA_TYPE =
+  'application/vnd.dsh.security.model-invocation-evidence-link+json'
 
 const MODEL_INVOCATION_ARTIFACT_ID = 'model-invocation-record'
 
@@ -52,6 +57,14 @@ const publicationReceiptDigestSchema = digestEnvelopeV1Schema.refine(
   digest => digest.mediaType
     === MODEL_INVOCATION_EVIDENCE_PUBLICATION_RECEIPT_MEDIA_TYPE,
   'Model Invocation Evidence publication receipts must use the receipt media type',
+)
+const contextGrantDigestSchema = digestEnvelopeV1Schema.refine(
+  digest => digest.mediaType === ROLE_CONTEXT_GRANT_MEDIA_TYPE,
+  'Model Invocation Evidence links must bind a Context Grant digest',
+)
+const linkDigestSchema = digestEnvelopeV1Schema.refine(
+  digest => digest.mediaType === MODEL_INVOCATION_EVIDENCE_LINK_MEDIA_TYPE,
+  'Model Invocation Evidence links must use the link media type',
 )
 
 export interface ModelInvocationEvidencePublicationReceiptCoreV1 {
@@ -131,6 +144,103 @@ function exactPublicationContext(
   return contextGrant
 }
 
+function exactPublicationReceipt(
+  candidate: ModelInvocationEvidencePublicationReceiptV1,
+  contextGrant: RoleContextGrantV1,
+  expected: ModelInvocationRecordBindingsV1,
+): ModelInvocationEvidencePublicationReceiptV1 {
+  const receipt = parsePublicationReceipt(candidate)
+  if (
+    receipt.assessmentId !== contextGrant.assessmentId
+    || !sameValue(receipt.subjectDigest, contextGrant.subject.digest)
+    || receipt.invocationId !== expected.invocationId
+    || receipt.parentAttempt.attemptId !== expected.attemptId
+    || receipt.parentAttempt.generation !== expected.attemptGeneration
+    || !sameValue(receipt.parentAttempt.fenceDigest, expected.attemptFenceDigest)
+  ) {
+    throw new TypeError('Model Invocation Evidence does not bind the expected subject or Attempt')
+  }
+  return receipt
+}
+
+export interface ModelInvocationEvidenceLinkCoreV1 {
+  readonly schemaVersion: 1
+  readonly assessmentRevision: number
+  readonly contextGrantDigest: DigestEnvelopeV1
+  readonly publicationReceipt: ModelInvocationEvidencePublicationReceiptV1
+  readonly linkedAt: string
+}
+
+export interface ModelInvocationEvidenceLinkV1
+  extends ModelInvocationEvidenceLinkCoreV1 {
+  readonly linkDigest: DigestEnvelopeV1
+}
+
+const modelInvocationEvidenceLinkCoreShape = {
+  schemaVersion: z.literal(1),
+  assessmentRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  contextGrantDigest: contextGrantDigestSchema,
+  publicationReceipt: publicationReceiptV1Schema,
+  linkedAt: z.iso.datetime({ offset: true }),
+} as const
+
+export const modelInvocationEvidenceLinkV1Schema:
+  z.ZodType<ModelInvocationEvidenceLinkV1> = z.strictObject({
+    ...modelInvocationEvidenceLinkCoreShape,
+    linkDigest: linkDigestSchema,
+  })
+
+export interface CreateModelInvocationEvidenceLinkOptionsV1 {
+  readonly assessmentRevision: number
+  readonly linkedAt: string
+  readonly contextGrant: RoleContextGrantV1
+  readonly receipt: ModelInvocationEvidencePublicationReceiptV1
+  readonly expected: ModelInvocationRecordBindingsV1
+}
+
+/** Create one immutable relational projection after publication and before commit. */
+export function createModelInvocationEvidenceLinkV1(
+  options: CreateModelInvocationEvidenceLinkOptionsV1,
+): ModelInvocationEvidenceLinkV1 {
+  const contextGrant = exactPublicationContext(options.contextGrant, options.expected)
+  const publicationReceipt = exactPublicationReceipt(
+    options.receipt,
+    contextGrant,
+    options.expected,
+  )
+  const core = z.strictObject(modelInvocationEvidenceLinkCoreShape).parse({
+    schemaVersion: 1,
+    assessmentRevision: options.assessmentRevision,
+    contextGrantDigest: contextGrant.grantDigest,
+    publicationReceipt,
+    linkedAt: options.linkedAt,
+  })
+  return deepFreeze({
+    ...core,
+    linkDigest: structuredDigest(MODEL_INVOCATION_EVIDENCE_LINK_MEDIA_TYPE, core),
+  })
+}
+
+/** Recompute one stored relational link and its nested publication receipt. */
+export function parseModelInvocationEvidenceLinkV1(
+  candidate: unknown,
+): ModelInvocationEvidenceLinkV1 {
+  const parsed = modelInvocationEvidenceLinkV1Schema.parse(candidate)
+  const publicationReceipt = parsePublicationReceipt(parsed.publicationReceipt)
+  const { linkDigest, ...parsedCore } = parsed
+  const core: ModelInvocationEvidenceLinkCoreV1 = {
+    ...parsedCore,
+    publicationReceipt,
+  }
+  if (!sameValue(
+    linkDigest,
+    structuredDigest(MODEL_INVOCATION_EVIDENCE_LINK_MEDIA_TYPE, core),
+  )) {
+    throw new TypeError('Model Invocation Evidence link digest is invalid')
+  }
+  return deepFreeze({ ...core, linkDigest })
+}
+
 /**
  * Publish one protected record through the content-addressed Evidence layer.
  * The immutable object carries its exact parent Attempt; no path or Store handle escapes.
@@ -199,17 +309,7 @@ export async function readPublishedModelInvocationEvidenceV1(
   const contextGrant = exactPublicationContext(options.contextGrant, options.expected)
   const assessmentId = contextGrant.assessmentId
   const subjectDigest = contextGrant.subject.digest
-  const receipt = parsePublicationReceipt(options.receipt)
-  if (
-    receipt.assessmentId !== assessmentId
-    || !sameValue(receipt.subjectDigest, subjectDigest)
-    || receipt.invocationId !== options.expected.invocationId
-    || receipt.parentAttempt.attemptId !== options.expected.attemptId
-    || receipt.parentAttempt.generation !== options.expected.attemptGeneration
-    || !sameValue(receipt.parentAttempt.fenceDigest, options.expected.attemptFenceDigest)
-  ) {
-    throw new TypeError('Model Invocation Evidence does not bind the expected subject or Attempt')
-  }
+  const receipt = exactPublicationReceipt(options.receipt, contextGrant, options.expected)
   const records = await readPublishedEvidenceSet(
     options.securityRoot,
     assessmentId,
