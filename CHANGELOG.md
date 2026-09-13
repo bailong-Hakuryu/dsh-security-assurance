@@ -73,6 +73,13 @@
   bindings all agree. Complete Evidence advances only to
   `BROKER_INVOCATION_REQUIRED`; no credential, network, or Provider operation is
   performed.
+- Add a package-private Attempt-scoped Source Slice Egress Capability that
+  re-admits the exact Broker and destination Evidence at issuance, fixes one
+  redacted request to the Role Attempt generation, hashed fencing token, policy,
+  quota and effective deadline, and invokes only the matching injected Broker
+  Adapter. The non-serializable handle is one-use, aborts on settlement or
+  timeout, rejects drifted scope and usage, and emits a text-free digest-bound
+  success or failure receipt without granting any public or durable authority.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

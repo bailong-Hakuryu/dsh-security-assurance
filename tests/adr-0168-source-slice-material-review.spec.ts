@@ -15,6 +15,14 @@ import type {
 } from '../src/analyzer.ts'
 import { analyzerContributionV1Schema } from '../src/analyzer.ts'
 import { binaryDigest, structuredDigest } from '../src/internal/canonical.ts'
+import type {
+  SourceSliceEgressBrokerRequestV1,
+} from '../src/internal/source-slice-egress-invocation.ts'
+import {
+  issueAttemptScopedSourceSliceEgressCapability,
+  parseSourceSliceEgressInvocationReceipt,
+  SOURCE_SLICE_EGRESS_INVOCATION_RECEIPT_MEDIA_TYPE,
+} from '../src/internal/source-slice-egress-invocation.ts'
 import {
   parseProtectedSourceSliceMaterialReview,
   reviewRequestedSourceSliceMaterial,
@@ -491,6 +499,369 @@ describe('ADR 0168 protected Source Slice material review record', () => {
     }
   })
 
+  it('invokes one exact redacted Slice through a one-use Attempt-scoped Broker capability', async () => {
+    const fixture = await materialReviewFixture('egress/host-qualified-v1')
+    try {
+      const secretReview = await qualifiedSecretReview(fixture)
+      const egressEvidence = qualifiedEgressAuthorization(fixture, secretReview)
+      const requests: SourceSliceEgressBrokerRequestV1[] = []
+      const times = [
+        '2026-09-12T00:05:00.000Z',
+        '2026-09-12T00:05:01.000Z',
+        '2026-09-12T00:05:02.000Z',
+      ]
+      const issued = issueAttemptScopedSourceSliceEgressCapability({
+        invocationId: 'egress-invocation-00000000-0000-0000-0000-000000000168',
+        attempt: {
+          attemptId: fixture.contextGrant.roleAttemptId,
+          generation: 1,
+          fencingToken: 'fence/role-attempt-0168/generation-1',
+          deadlineAt: '2026-09-12T00:06:00.000Z',
+        },
+        contextGrant: fixture.contextGrant,
+        request: fixture.request,
+        material: secretReview.material,
+        redaction: secretReview.redaction,
+        secretReview: secretReview.admitted,
+        ...egressEvidence,
+        broker: {
+          identity: egressEvidence.brokerQualification.brokerIdentity,
+          async invoke(request) {
+            requests.push(request)
+            return {
+              schemaVersion: 1,
+              brokerIdentity: egressEvidence.brokerQualification.brokerIdentity,
+              providerId: 'provider/reference',
+              destinationId: 'provider/reference',
+              providerRequestId: 'provider-request/fixture-0168',
+              backendId: 'backend/reference',
+              deploymentId: 'deployment/reference',
+              modelId: 'model/reference',
+              response: { mediaType: 'text/plain', text: 'bounded analysis result' },
+              usage: {
+                requestCount: 1,
+                requestBytes: secretReview.redaction.redactedDigest.byteLength,
+                inputTokens: 32,
+                outputTokens: 8,
+              },
+              finishReason: 'STOP',
+              diagnostics: [],
+            }
+          },
+        },
+        now: () => times.shift()!,
+      })
+
+      const result = await issued.capability.invoke()
+
+      expect(result.status).toBe('COMPLETED')
+      expect(result.receipt.receiptDigest.mediaType)
+        .toBe(SOURCE_SLICE_EGRESS_INVOCATION_RECEIPT_MEDIA_TYPE)
+      expect(result.response?.text).toBe('bounded analysis result')
+      expect(requests).toHaveLength(1)
+      expect(requests[0]?.content.text).toBe(secretReview.redaction.redactedText)
+      expect(requests[0]?.content.text).not.toContain('correct-horse-battery-staple')
+      expect(requests[0]?.dataEgressPolicyId).toBe('egress/host-qualified-v1')
+      expect(JSON.stringify(result.receipt)).not.toContain('bounded analysis result')
+      expect(JSON.stringify(result.receipt)).not.toContain(sourceText)
+      expect(parseSourceSliceEgressInvocationReceipt(result.receipt, {
+        invocationId: requests[0]!.invocationId,
+        attemptId: requests[0]!.attemptId,
+        attemptGeneration: requests[0]!.attemptGeneration,
+        attemptFenceDigest: requests[0]!.attemptFenceDigest,
+        egressAuthorizationDigest: requests[0]!.egressAuthorizationDigest,
+        brokerRequestDigest: requests[0]!.brokerRequestDigest,
+      })).toEqual(result.receipt)
+      expect(() => parseSourceSliceEgressInvocationReceipt({
+        ...result.receipt,
+        responseDigest: { ...result.receipt.responseDigest!, value: '0'.repeat(64) },
+      }, {
+        invocationId: requests[0]!.invocationId,
+        attemptId: requests[0]!.attemptId,
+        attemptGeneration: requests[0]!.attemptGeneration,
+        attemptFenceDigest: requests[0]!.attemptFenceDigest,
+        egressAuthorizationDigest: requests[0]!.egressAuthorizationDigest,
+        brokerRequestDigest: requests[0]!.brokerRequestDigest,
+      })).toThrow(/receipt|digest/iu)
+      const { receiptDigest: _receiptDigest, ...forgedUsageCore } = {
+        ...result.receipt,
+        usage: { ...result.receipt.usage!, outputTokens: 129 },
+      }
+      expect(() => parseSourceSliceEgressInvocationReceipt({
+        ...forgedUsageCore,
+        receiptDigest: structuredDigest(
+          SOURCE_SLICE_EGRESS_INVOCATION_RECEIPT_MEDIA_TYPE,
+          forgedUsageCore,
+        ),
+      }, {
+        invocationId: requests[0]!.invocationId,
+        attemptId: requests[0]!.attemptId,
+        attemptGeneration: requests[0]!.attemptGeneration,
+        attemptFenceDigest: requests[0]!.attemptFenceDigest,
+        egressAuthorizationDigest: requests[0]!.egressAuthorizationDigest,
+        brokerRequestDigest: requests[0]!.brokerRequestDigest,
+      })).toThrow(/receipt|usage|quota/iu)
+      expect(JSON.stringify(issued.capability)).toBe('{}')
+      await expect(issued.capability.invoke()).rejects.toThrow(/consumed/iu)
+    } finally {
+      await fixture.subprocessFiber.dispose()
+    }
+  })
+
+  it('fails closed with bounded receipts when the Broker response drifts scope or usage', async () => {
+    const fixture = await materialReviewFixture('egress/host-qualified-v1')
+    try {
+      const secretReview = await qualifiedSecretReview(fixture)
+      const egressEvidence = qualifiedEgressAuthorization(fixture, secretReview)
+      const baseResponse = {
+        schemaVersion: 1 as const,
+        brokerIdentity: egressEvidence.brokerQualification.brokerIdentity,
+        providerId: 'provider/reference',
+        destinationId: 'provider/reference',
+        providerRequestId: 'provider-request/fixture-0168',
+        backendId: 'backend/reference',
+        deploymentId: 'deployment/reference',
+        modelId: 'model/reference',
+        response: { mediaType: 'text/plain', text: 'broker response must not enter a failed receipt' },
+        usage: {
+          requestCount: 1 as const,
+          requestBytes: secretReview.redaction.redactedDigest.byteLength,
+          inputTokens: 32,
+          outputTokens: 8,
+        },
+        finishReason: 'STOP' as const,
+        diagnostics: [] as const,
+      }
+      const cases = [
+        {
+          name: 'Provider drift',
+          expectedFailure: 'BROKER_RESPONSE_SCOPE_MISMATCH',
+          response: { ...baseResponse, providerId: 'provider/other' },
+        },
+        {
+          name: 'token expansion',
+          expectedFailure: 'BROKER_USAGE_EXCEEDED',
+          response: { ...baseResponse, usage: { ...baseResponse.usage, outputTokens: 129 } },
+        },
+        {
+          name: 'invalid response',
+          expectedFailure: 'BROKER_RESPONSE_INVALID',
+          response: { ...baseResponse, diagnostics: ['unbounded broker detail'] },
+        },
+      ] as const
+
+      for (const [index, testCase] of cases.entries()) {
+        const requests: SourceSliceEgressBrokerRequestV1[] = []
+        const times = [
+          '2026-09-12T00:05:00.000Z',
+          '2026-09-12T00:05:01.000Z',
+          '2026-09-12T00:05:02.000Z',
+        ]
+        const issued = issueAttemptScopedSourceSliceEgressCapability({
+          invocationId: `egress-invocation-00000000-0000-0000-0000-00000000017${index}`,
+          attempt: {
+            attemptId: fixture.contextGrant.roleAttemptId,
+            generation: index + 1,
+            fencingToken: `fence/role-attempt-0168/generation-${index + 1}`,
+            deadlineAt: '2026-09-12T00:06:00.000Z',
+          },
+          contextGrant: fixture.contextGrant,
+          request: fixture.request,
+          material: secretReview.material,
+          redaction: secretReview.redaction,
+          secretReview: secretReview.admitted,
+          ...egressEvidence,
+          broker: {
+            identity: egressEvidence.brokerQualification.brokerIdentity,
+            async invoke(request) {
+              requests.push(request)
+              return testCase.response as never
+            },
+          },
+          now: () => times.shift()!,
+        })
+
+        const result = await issued.capability.invoke()
+
+        expect(result.status, testCase.name).toBe('FAILED')
+        expect(result.response, testCase.name).toBeNull()
+        expect(result.receipt.failureCode, testCase.name).toBe(testCase.expectedFailure)
+        expect(result.receipt.diagnosticCodes, testCase.name).toEqual([testCase.expectedFailure])
+        expect(JSON.stringify(result.receipt), testCase.name)
+          .not.toContain('broker response must not enter a failed receipt')
+        expect(requests, testCase.name).toHaveLength(1)
+        await expect(issued.capability.invoke()).rejects.toThrow(/consumed/iu)
+      }
+    } finally {
+      await fixture.subprocessFiber.dispose()
+    }
+  })
+
+  it('fences a Broker result when the parent Attempt settles in flight', async () => {
+    const fixture = await materialReviewFixture('egress/host-qualified-v1')
+    try {
+      const secretReview = await qualifiedSecretReview(fixture)
+      const egressEvidence = qualifiedEgressAuthorization(fixture, secretReview)
+      const requests: SourceSliceEgressBrokerRequestV1[] = []
+      let brokerSignal: AbortSignal | undefined
+      let completeBroker!: () => void
+      const brokerSettled = new Promise<void>((resolve) => {
+        completeBroker = resolve
+      })
+      const times = [
+        '2026-09-12T00:05:00.000Z',
+        '2026-09-12T00:05:01.000Z',
+        '2026-09-12T00:05:02.000Z',
+      ]
+      const issued = issueAttemptScopedSourceSliceEgressCapability({
+        invocationId: 'egress-invocation-00000000-0000-0000-0000-000000000180',
+        attempt: {
+          attemptId: fixture.contextGrant.roleAttemptId,
+          generation: 2,
+          fencingToken: 'fence/role-attempt-0168/generation-2',
+          deadlineAt: '2026-09-12T00:06:00.000Z',
+        },
+        contextGrant: fixture.contextGrant,
+        request: fixture.request,
+        material: secretReview.material,
+        redaction: secretReview.redaction,
+        secretReview: secretReview.admitted,
+        ...egressEvidence,
+        broker: {
+          identity: egressEvidence.brokerQualification.brokerIdentity,
+          async invoke(request, options) {
+            requests.push(request)
+            brokerSignal = options.signal
+            await brokerSettled
+            return {
+              schemaVersion: 1,
+              brokerIdentity: egressEvidence.brokerQualification.brokerIdentity,
+              providerId: 'provider/reference',
+              destinationId: 'provider/reference',
+              providerRequestId: 'provider-request/late-fixture-0168',
+              backendId: 'backend/reference',
+              deploymentId: 'deployment/reference',
+              modelId: 'model/reference',
+              response: { mediaType: 'text/plain', text: 'late result must be rejected' },
+              usage: {
+                requestCount: 1,
+                requestBytes: secretReview.redaction.redactedDigest.byteLength,
+                inputTokens: 32,
+                outputTokens: 8,
+              },
+              finishReason: 'STOP',
+              diagnostics: [],
+            }
+          },
+        },
+        now: () => times.shift()!,
+      })
+
+      const pending = issued.capability.invoke()
+      expect(requests).toHaveLength(1)
+      issued.settle()
+      expect(brokerSignal?.aborted).toBe(true)
+      completeBroker()
+      const result = await pending
+
+      expect(result.status).toBe('FAILED')
+      expect(result.receipt.failureCode).toBe('ATTEMPT_SETTLED')
+      expect(result.response).toBeNull()
+      expect(JSON.stringify(result.receipt)).not.toContain('late result must be rejected')
+      await expect(issued.capability.invoke()).rejects.toThrow(/settled/iu)
+    } finally {
+      await fixture.subprocessFiber.dispose()
+    }
+  })
+
+  it('does not invoke after cancellation and enforces its deadline when a Broker ignores abort', async () => {
+    const fixture = await materialReviewFixture('egress/host-qualified-v1')
+    try {
+      const secretReview = await qualifiedSecretReview(fixture)
+      const egressEvidence = qualifiedEgressAuthorization(fixture, secretReview)
+      let invocationCount = 0
+      const canceledTimes = [
+        '2026-09-12T00:05:00.000Z',
+        '2026-09-12T00:05:01.000Z',
+        '2026-09-12T00:05:02.000Z',
+      ]
+      const canceled = issueAttemptScopedSourceSliceEgressCapability({
+        invocationId: 'egress-invocation-00000000-0000-0000-0000-000000000181',
+        attempt: {
+          attemptId: fixture.contextGrant.roleAttemptId,
+          generation: 3,
+          fencingToken: 'fence/role-attempt-0168/generation-3',
+          deadlineAt: '2026-09-12T00:06:00.000Z',
+        },
+        contextGrant: fixture.contextGrant,
+        request: fixture.request,
+        material: secretReview.material,
+        redaction: secretReview.redaction,
+        secretReview: secretReview.admitted,
+        ...egressEvidence,
+        broker: {
+          identity: egressEvidence.brokerQualification.brokerIdentity,
+          async invoke() {
+            invocationCount += 1
+            throw new Error('must not be called')
+          },
+        },
+        now: () => canceledTimes.shift()!,
+      })
+      const controller = new AbortController()
+      controller.abort()
+
+      const canceledResult = await canceled.capability.invoke({ signal: controller.signal })
+
+      expect(canceledResult.status).toBe('FAILED')
+      expect(canceledResult.receipt.failureCode).toBe('INVOCATION_ABORTED')
+      expect(invocationCount).toBe(0)
+
+      let brokerSignal: AbortSignal | undefined
+      const timeoutEvidence = qualifiedEgressAuthorization(fixture, secretReview, {
+        timeoutMilliseconds: 10,
+      })
+      const timeoutTimes = [
+        '2026-09-12T00:05:00.000Z',
+        '2026-09-12T00:05:00.001Z',
+        '2026-09-12T00:05:00.011Z',
+      ]
+      const timed = issueAttemptScopedSourceSliceEgressCapability({
+        invocationId: 'egress-invocation-00000000-0000-0000-0000-000000000182',
+        attempt: {
+          attemptId: fixture.contextGrant.roleAttemptId,
+          generation: 4,
+          fencingToken: 'fence/role-attempt-0168/generation-4',
+          deadlineAt: '2026-09-12T00:06:00.000Z',
+        },
+        contextGrant: fixture.contextGrant,
+        request: fixture.request,
+        material: secretReview.material,
+        redaction: secretReview.redaction,
+        secretReview: secretReview.admitted,
+        ...timeoutEvidence,
+        broker: {
+          identity: timeoutEvidence.brokerQualification.brokerIdentity,
+          invoke(_request, options) {
+            invocationCount += 1
+            brokerSignal = options.signal
+            return new Promise<never>(() => {})
+          },
+        },
+        now: () => timeoutTimes.shift()!,
+      })
+
+      const timedResult = await timed.capability.invoke()
+
+      expect(timedResult.status).toBe('FAILED')
+      expect(timedResult.receipt.failureCode).toBe('ATTEMPT_DEADLINE_EXCEEDED')
+      expect(brokerSignal?.aborted).toBe(true)
+      expect(invocationCount).toBe(1)
+    } finally {
+      await fixture.subprocessFiber.dispose()
+    }
+  })
+
   it.each([
     ['expired Broker qualification', { qualificationExpiresAt: '2026-09-12T00:04:00.000Z' }],
     ['Provider scope mismatch', { providerId: 'provider/unqualified' }],
@@ -798,5 +1169,7 @@ describe('ADR 0168 protected Source Slice material review record', () => {
     expect(packageRoot).not.toHaveProperty('parseProtectedSourceSliceSecretReview')
     expect(packageRoot).not.toHaveProperty('admitProtectedSourceSliceEgressAuthorization')
     expect(packageRoot).not.toHaveProperty('parseProtectedSourceSliceEgressAuthorization')
+    expect(packageRoot).not.toHaveProperty('issueAttemptScopedSourceSliceEgressCapability')
+    expect(packageRoot).not.toHaveProperty('parseSourceSliceEgressInvocationReceipt')
   })
 })
