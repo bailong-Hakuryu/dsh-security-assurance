@@ -24,6 +24,10 @@ import {
   SOURCE_SLICE_EGRESS_INVOCATION_RECEIPT_MEDIA_TYPE,
 } from '../src/internal/source-slice-egress-invocation.ts'
 import {
+  createModelInvocationBudgetReservationV1,
+  settleSourceSliceModelInvocationV1,
+} from '../src/internal/model-invocation-settlement.ts'
+import {
   parseProtectedSourceSliceMaterialReview,
   reviewRequestedSourceSliceMaterial,
   SOURCE_SLICE_MATERIAL_REVIEW_MEDIA_TYPE,
@@ -499,7 +503,7 @@ describe('ADR 0168 protected Source Slice material review record', () => {
     }
   })
 
-  it('invokes one exact redacted Slice through a one-use Attempt-scoped Broker capability', async () => {
+  it('invokes one exact redacted Slice and settles its protected Model Invocation lineage', async () => {
     const fixture = await materialReviewFixture('egress/host-qualified-v1')
     try {
       const secretReview = await qualifiedSecretReview(fixture)
@@ -572,6 +576,56 @@ describe('ADR 0168 protected Source Slice material review record', () => {
         egressAuthorizationDigest: requests[0]!.egressAuthorizationDigest,
         brokerRequestDigest: requests[0]!.brokerRequestDigest,
       })).toEqual(result.receipt)
+      const reservation = createModelInvocationBudgetReservationV1({
+        schemaVersion: 1,
+        reservationId: 'reservation/source-slice-invocation-0168',
+        invocationId: requests[0]!.invocationId,
+        attemptId: requests[0]!.attemptId,
+        attemptGeneration: requests[0]!.attemptGeneration,
+        attemptFenceDigest: requests[0]!.attemptFenceDigest,
+        contextGrantDigest: fixture.contextGrant.grantDigest,
+        egressAuthorizationDigest: requests[0]!.egressAuthorizationDigest,
+        brokerRequestDigest: requests[0]!.brokerRequestDigest,
+        requestLimit: 1,
+        tokenLimit: requests[0]!.limits.tokenLimit,
+        reservedAt: requests[0]!.issuedAt,
+        deadlineAt: requests[0]!.deadlineAt,
+      })
+      const invocationRecord = settleSourceSliceModelInvocationV1({
+        contextGrant: fixture.contextGrant,
+        reservation,
+        receipt: result.receipt,
+        lineage: {
+          provider: { movingProvider: false },
+          prompt: {
+            promptId: 'security/deep-discovery',
+            promptVersion: '1.0.0',
+            promptDigest: structuredDigest(
+              'application/vnd.dsh.security.role-prompt+json',
+              { prompt: 'fixture-0168' },
+            ),
+            toolSchemaDigest: structuredDigest(
+              'application/schema+json',
+              { tool: 'source-slice' },
+            ),
+          },
+          parameters: {
+            maxOutputTokens: 64,
+            temperature: null,
+            topP: null,
+            randomnessStrategyId: 'deterministic/provider-default-v1',
+          },
+        },
+      })
+      expect(invocationRecord.budgetSettlement).toMatchObject({
+        requestsUsed: 1,
+        tokenLimit: 128,
+        tokensUsed: 40,
+        tokensReleased: 88,
+      })
+      expect(invocationRecord.receiptDigest).toEqual(result.receipt.receiptDigest)
+      expect(JSON.stringify(invocationRecord)).not.toContain('bounded analysis result')
+      expect(JSON.stringify(invocationRecord)).not.toContain(sourceText)
       expect(() => parseSourceSliceEgressInvocationReceipt({
         ...result.receipt,
         responseDigest: { ...result.receipt.responseDigest!, value: '0'.repeat(64) },

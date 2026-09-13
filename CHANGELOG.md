@@ -80,6 +80,16 @@
   Adapter. The non-serializable handle is one-use, aborts on settlement or
   timeout, rejects drifted scope and usage, and emits a text-free digest-bound
   success or failure receipt without granting any public or durable authority.
+- Add package-private pure Model Invocation settlement for completed Source
+  Slice Broker receipts. A Kernel-owned reservation now digest-binds the exact
+  Context Grant, Role Attempt generation and fence, egress authorization,
+  Broker request, one-request quota, token ceiling and deadline before
+  settlement. The module revalidates complete Provider, Role, Prompt, Tool
+  Schema, parameter, timing, response-byte and diagnostic lineage, charges
+  actual input/output tokens, releases only the unused reservation, and emits a
+  text-free protected record. Failed or unverifiable receipts remain rejected;
+  no Store write, canonical Bundle admission, production Broker, or public
+  capability is added.
 
 ## [0.1.0-rc.14] - 2026-09-11
 
