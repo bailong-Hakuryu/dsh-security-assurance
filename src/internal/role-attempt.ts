@@ -52,6 +52,7 @@ const recordDigestSchema = digestEnvelopeV1Schema.refine(
   digest => digest.mediaType === ROLE_ATTEMPT_RECORD_MEDIA_TYPE,
   'Role Attempt records must use the record media type',
 )
+const failureCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/u)
 
 export interface RoleAttemptStartBindingsV1 {
   readonly generation: number
@@ -94,10 +95,12 @@ export interface RoleAttemptRecordCoreV1 {
     readonly tokenLimit: number
     readonly tokensUsed: number
   }
-  readonly lifecycleState: 'RUNNING' | 'COMPLETED'
+  readonly lifecycleState: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELED'
   readonly startedAt: string
   readonly completedAt: string | null
-  readonly completionDisposition: 'NOT_AVAILABLE' | 'COMPLETE' | 'PARTIAL'
+  readonly completionDisposition: 'NOT_AVAILABLE' | 'COMPLETE' | 'PARTIAL' | 'FAILED' | 'CANCELED'
+  readonly failureCode?: string | undefined
+  readonly cancellationRevision?: number | undefined
   readonly milestones: AssessmentRoleCardV1['milestones']
   readonly evidenceCount: number
   readonly candidateCount: number
@@ -110,6 +113,17 @@ export interface RoleAttemptRecordV1 extends RoleAttemptRecordCoreV1 {
 
 export interface CompleteRoleAttemptValuesV1 {
   readonly completionDisposition: 'COMPLETE' | 'PARTIAL'
+  readonly usage: {
+    readonly requestsUsed: number
+    readonly tokensUsed: number
+  }
+  readonly evidenceCount: number
+  readonly candidateCount: number
+  readonly milestones: AssessmentRoleCardV1['milestones']
+}
+
+export interface FailRoleAttemptValuesV1 {
+  readonly failureCode: string
   readonly usage: {
     readonly requestsUsed: number
     readonly tokensUsed: number
@@ -151,10 +165,12 @@ const roleAttemptRecordCoreShape = {
     tokenLimit: z.number().int().positive().max(4_000_000),
     tokensUsed: z.number().int().nonnegative().max(4_000_000),
   }),
-  lifecycleState: z.enum(['RUNNING', 'COMPLETED']),
+  lifecycleState: z.enum(['RUNNING', 'COMPLETED', 'FAILED', 'CANCELED']),
   startedAt: z.iso.datetime({ offset: true }),
   completedAt: z.iso.datetime({ offset: true }).nullable(),
-  completionDisposition: z.enum(['NOT_AVAILABLE', 'COMPLETE', 'PARTIAL']),
+  completionDisposition: z.enum(['NOT_AVAILABLE', 'COMPLETE', 'PARTIAL', 'FAILED', 'CANCELED']),
+  failureCode: failureCodeSchema.optional(),
+  cancellationRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   milestones: z.array(z.strictObject({
     milestoneId: boundedIdSchema,
     state: z.enum(['PENDING', 'REACHED']),
@@ -177,8 +193,16 @@ function validateRoleAttemptRecord(
     || record.budget.requestsUsed > record.budget.requestLimit
     || record.budget.tokensUsed > record.budget.tokenLimit
     || (record.lifecycleState === 'RUNNING') !== (record.completedAt === null)
-    || (record.lifecycleState === 'RUNNING')
-      !== (record.completionDisposition === 'NOT_AVAILABLE')
+    || (record.lifecycleState === 'RUNNING'
+      ? record.completionDisposition !== 'NOT_AVAILABLE'
+      : record.lifecycleState === 'COMPLETED'
+        ? record.completionDisposition !== 'COMPLETE'
+          && record.completionDisposition !== 'PARTIAL'
+        : record.lifecycleState === 'FAILED'
+          ? record.completionDisposition !== 'FAILED'
+          : record.completionDisposition !== 'CANCELED')
+    || (record.lifecycleState === 'FAILED') !== (record.failureCode !== undefined)
+    || (record.lifecycleState === 'CANCELED') !== (record.cancellationRevision !== undefined)
     || (
       record.completedAt !== null
       && Date.parse(record.completedAt) < Date.parse(record.startedAt)
@@ -291,6 +315,72 @@ export function completeRoleAttemptV1(
     milestones: options.milestones,
     evidenceCount: options.evidenceCount,
     candidateCount: options.candidateCount,
+  })
+  return deepFreeze({
+    ...core,
+    recordDigest: structuredDigest(ROLE_ATTEMPT_RECORD_MEDIA_TYPE, core),
+  })
+}
+
+export interface FailRoleAttemptOptionsV1 extends FailRoleAttemptValuesV1 {
+  readonly current: RoleAttemptRecordV1
+  readonly assessmentRevision: number
+  readonly failedAt: string
+}
+
+/** Fail one current generation exactly once without discarding its frozen lineage. */
+export function failRoleAttemptV1(
+  options: FailRoleAttemptOptionsV1,
+): RoleAttemptRecordV1 {
+  const current = parseRoleAttemptRecordV1(options.current)
+  if (current.lifecycleState !== 'RUNNING') {
+    throw new TypeError('Only a RUNNING Role Attempt can fail')
+  }
+  const { recordDigest: _recordDigest, ...currentCore } = current
+  const core = roleAttemptRecordCoreV1Schema.parse({
+    ...currentCore,
+    assessmentRevision: options.assessmentRevision,
+    budget: {
+      ...current.budget,
+      ...options.usage,
+    },
+    lifecycleState: 'FAILED',
+    completedAt: options.failedAt,
+    completionDisposition: 'FAILED',
+    failureCode: options.failureCode,
+    milestones: options.milestones,
+    evidenceCount: options.evidenceCount,
+    candidateCount: options.candidateCount,
+  })
+  return deepFreeze({
+    ...core,
+    recordDigest: structuredDigest(ROLE_ATTEMPT_RECORD_MEDIA_TYPE, core),
+  })
+}
+
+export interface CancelRoleAttemptOptionsV1 {
+  readonly current: RoleAttemptRecordV1
+  readonly assessmentRevision: number
+  readonly canceledAt: string
+  readonly cancellationRevision: number
+}
+
+/** Close one RUNNING Role Attempt after Assessment-level quiescence is proved. */
+export function cancelRoleAttemptV1(
+  options: CancelRoleAttemptOptionsV1,
+): RoleAttemptRecordV1 {
+  const current = parseRoleAttemptRecordV1(options.current)
+  if (current.lifecycleState !== 'RUNNING') {
+    throw new TypeError('Only a RUNNING Role Attempt can be canceled')
+  }
+  const { recordDigest: _recordDigest, ...currentCore } = current
+  const core = roleAttemptRecordCoreV1Schema.parse({
+    ...currentCore,
+    assessmentRevision: options.assessmentRevision,
+    lifecycleState: 'CANCELED',
+    completedAt: options.canceledAt,
+    completionDisposition: 'CANCELED',
+    cancellationRevision: options.cancellationRevision,
   })
   return deepFreeze({
     ...core,

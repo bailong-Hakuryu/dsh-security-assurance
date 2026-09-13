@@ -1679,7 +1679,7 @@ export interface AssessmentBlockedRecoveryV1 {
   readonly schemaVersion: 1
   readonly blocker: {
     readonly code: string
-    readonly phase: 'ASSESSMENT_EXECUTION' | 'RISK_DECISION'
+    readonly phase: 'ASSESSMENT_EXECUTION' | 'ROLE_EXECUTION' | 'RISK_DECISION'
     readonly interruption: 'FAILED' | 'INTERRUPTED' | 'GOVERNANCE_HOLD'
     readonly affectedObligations: readonly {
       readonly obligationId: string
@@ -1690,7 +1690,7 @@ export interface AssessmentBlockedRecoveryV1 {
     | {
         readonly status: 'IDENTIFIED'
         readonly attemptId: string
-        readonly attemptKind: 'ASSESSMENT_EXECUTION'
+        readonly attemptKind: 'ASSESSMENT_EXECUTION' | 'ROLE_EXECUTION'
         readonly lifecycleState: 'FAILED' | 'INTERRUPTED'
       }
     | { readonly status: 'NOT_APPLICABLE' }
@@ -1731,7 +1731,7 @@ export const assessmentBlockedRecoveryV1Schema: z.ZodType<AssessmentBlockedRecov
     schemaVersion: z.literal(1),
     blocker: z.strictObject({
       code: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/),
-      phase: z.enum(['ASSESSMENT_EXECUTION', 'RISK_DECISION']),
+      phase: z.enum(['ASSESSMENT_EXECUTION', 'ROLE_EXECUTION', 'RISK_DECISION']),
       interruption: z.enum(['FAILED', 'INTERRUPTED', 'GOVERNANCE_HOLD']),
       affectedObligations: z.array(z.strictObject({
         obligationId: boundedBindingId,
@@ -1748,7 +1748,7 @@ export const assessmentBlockedRecoveryV1Schema: z.ZodType<AssessmentBlockedRecov
       z.strictObject({
         status: z.literal('IDENTIFIED'),
         attemptId: z.string().min(1).max(384).regex(/^[a-zA-Z0-9._:/-]+$/),
-        attemptKind: z.literal('ASSESSMENT_EXECUTION'),
+        attemptKind: z.enum(['ASSESSMENT_EXECUTION', 'ROLE_EXECUTION']),
         lifecycleState: z.enum(['FAILED', 'INTERRUPTED']),
       }),
       z.strictObject({ status: z.literal('NOT_APPLICABLE') }),

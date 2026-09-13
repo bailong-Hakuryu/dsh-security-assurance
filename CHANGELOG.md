@@ -117,9 +117,21 @@
   Prompt and Tool Schema lineage against that Attempt.
   Schema-v1 Stores advance through separately backed-up and verified v2 and v3
   migrations; a v2 Store containing legacy links is rejected because its missing
-  Attempt records cannot be safely inferred. Failed/canceled Attempt settlement,
-  session spawning, ADR 0197 Evidence Links, canonical Bundle admission and a
-  public API remain outside this slice.
+  Attempt records cannot be safely inferred. Session spawning, ADR 0197 Evidence
+  Links, canonical Bundle admission and a public API remain outside this slice.
+- Extend durable Role Attempt settlement with explicit `FAILED` and `CANCELED`
+  terminal states. A required Role failure now freezes its exact failure code,
+  usage and partial counts, and—only after every peer Attempt is non-RUNNING—
+  atomically changes the Assessment to `BLOCKED`. The public projection exposes
+  an identified `ROLE_EXECUTION` blocker that requires authorized Resume.
+  Assessment cancellation keeps RUNNING Attempts fenced until the
+  caller proves quiescence, then cancels their aggregates and Role Cards in the
+  same terminal revision. Exact replays remain idempotent; stale fences, late or
+  conflicting terminal results, missing/different/non-terminal parents, and a
+  recovery Attempt without its failed parent lineage all fail closed. Resume
+  preserves the old terminal record and permits only a new Attempt identity for
+  the same Role definition. Automatic execution-graph scheduling, production
+  session spawning, and per-Role cleanup proof remain outside this slice.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

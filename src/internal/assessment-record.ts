@@ -93,7 +93,7 @@ export const internalAssessmentRecordV1Schema = z.strictObject({
   failureCode: z.string().nullable(),
   blockingAttempt: z.strictObject({
     attemptId: z.string().min(1).max(384).regex(/^[a-zA-Z0-9._:/-]+$/),
-    attemptKind: z.literal('ASSESSMENT_EXECUTION'),
+    attemptKind: z.enum(['ASSESSMENT_EXECUTION', 'ROLE_EXECUTION']),
     lifecycleState: z.enum(['FAILED', 'INTERRUPTED']),
   }).nullable().default(null),
   riskDecisionWindow: riskDecisionWindowV1Schema.nullable().default(null),
@@ -169,13 +169,16 @@ function projectBlockedRecovery(
   }
   const riskDecision = record.failureCode === 'RISK_DECISION_WINDOW'
   const hostRestart = record.failureCode === 'HOST_RESTART_DURING_EVALUATION'
+  const roleExecution = record.blockingAttempt?.attemptKind === 'ROLE_EXECUTION'
   const coverageReconciliationRequired = record.coverage.status === 'GAP'
   const actionKinds = [...new Set(availableActions.map(action => action.kind))]
   return {
     schemaVersion: 1,
     blocker: {
       code: record.failureCode,
-      phase: riskDecision ? 'RISK_DECISION' : 'ASSESSMENT_EXECUTION',
+      phase: riskDecision
+        ? 'RISK_DECISION'
+        : roleExecution ? 'ROLE_EXECUTION' : 'ASSESSMENT_EXECUTION',
       interruption: riskDecision
         ? 'GOVERNANCE_HOLD'
         : hostRestart ? 'INTERRUPTED' : 'FAILED',
@@ -196,7 +199,7 @@ function projectBlockedRecovery(
     recovery: {
       requiredCondition: riskDecision
         ? 'RISK_DECISION_REQUIRED'
-        : record.failureCode === 'ASSESSMENT_EXECUTION_FAILED' || hostRestart
+        : roleExecution || record.failureCode === 'ASSESSMENT_EXECUTION_FAILED' || hostRestart
           ? 'EXPLICIT_RESUME_REQUIRED'
           : 'EXTERNAL_INTERVENTION_REQUIRED',
       remainingExecutionBudget: { status: 'NOT_REPORTED' },

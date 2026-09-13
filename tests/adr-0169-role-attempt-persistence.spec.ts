@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { assessmentSnapshotV1Schema } from '../src/contracts.ts'
 import { createRoleContextGrantV1 } from '../src/role-context-grant.ts'
+import { publicAssessmentSnapshot } from '../src/internal/assessment-record.ts'
 import { structuredDigest } from '../src/internal/canonical.ts'
 import { prepareAssessmentContract } from '../src/internal/deterministic-kernel.ts'
 import {
@@ -31,11 +33,11 @@ const attemptFenceDigest = structuredDigest(
   },
 )
 
-function roleContextGrant() {
+function roleContextGrant(roleAttemptId = attemptId) {
   return createRoleContextGrantV1({
     schemaVersion: 1,
     assessmentId,
-    roleAttemptId: attemptId,
+    roleAttemptId,
     roleDefinition: {
       roleId: 'discovery-analyst',
       roleVersion: '1.0.0',
@@ -190,6 +192,21 @@ function completionInput(expectedAssessmentRevision: number) {
       state: 'REACHED' as const,
       recordedAt: '2026-09-13T01:00:00.000Z',
     }],
+  }
+}
+
+function failureInput(expectedAssessmentRevision: number) {
+  return {
+    assessmentId,
+    attemptId,
+    generation: 1,
+    fenceDigest: attemptFenceDigest,
+    expectedAssessmentRevision,
+    failureCode: 'ROLE_PROVIDER_FAILED',
+    usage: { requestsUsed: 1, tokensUsed: 16 },
+    evidenceCount: 0,
+    candidateCount: 0,
+    milestones: [],
   }
 }
 
@@ -383,6 +400,289 @@ describe('ADR 0169 durable Role Attempt persistence', () => {
           evidenceCount: 1,
           attempt: { lifecycleState: 'COMPLETED' },
         }],
+      })
+    } finally {
+      persistence.close()
+    }
+  })
+
+  it('atomically fails one required Role Attempt and blocks its Assessment', async () => {
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-role-attempt-failed-'))
+    temporaryRoots.push(securityRoot)
+    const { contextGrant, persistence, running } = await runningAssessment(securityRoot)
+    try {
+      const started = persistence.startRoleAttempt(
+        startInput(contextGrant, running.assessmentRevision),
+      )
+      const input = failureInput(started.assessmentRevision)
+      const staleFenceDigest = structuredDigest(
+        SOURCE_SLICE_EGRESS_ATTEMPT_FENCE_MEDIA_TYPE,
+        {
+          attemptId,
+          generation: 1,
+          fencingToken: 'fence/role-attempt-0169/stale-failure',
+        },
+      )
+
+      expect(() => persistence.failRoleAttempt({
+        ...input,
+        fenceDigest: staleFenceDigest,
+      })).toThrow(/stale|different fence/iu)
+      expect(persistence.getRoleAttempt(assessmentId, attemptId, 1)).toEqual(started)
+
+      const failed = persistence.failRoleAttempt(input)
+      const replay = persistence.failRoleAttempt(input)
+
+      expect(replay).toEqual(failed)
+      expect(() => persistence.failRoleAttempt({
+        ...input,
+        failureCode: 'ROLE_TIMEOUT',
+      })).toThrow(/already failed|different result/iu)
+      expect(() => persistence.completeRoleAttempt(
+        completionInput(started.assessmentRevision),
+      )).toThrow(/terminal result/iu)
+      expect(persistence.getRoleAttempt(assessmentId, attemptId, 1)).toEqual(failed)
+      expect(failed).toMatchObject({
+        assessmentRevision: started.assessmentRevision + 1,
+        lifecycleState: 'FAILED',
+        completedAt: '2026-09-13T01:00:00.000Z',
+        completionDisposition: 'FAILED',
+        failureCode: 'ROLE_PROVIDER_FAILED',
+        budget: {
+          requestLimit: 4,
+          requestsUsed: 1,
+          tokenLimit: 8_192,
+          tokensUsed: 16,
+        },
+      })
+      const blockedAssessment = persistence.getAssessmentRecord(assessmentId)
+      expect(blockedAssessment).toMatchObject({
+        assessmentRevision: failed.assessmentRevision,
+        state: 'BLOCKED',
+        failureCode: 'ROLE_PROVIDER_FAILED',
+        blockingAttempt: {
+          attemptId,
+          attemptKind: 'ROLE_EXECUTION',
+          lifecycleState: 'FAILED',
+        },
+        roleCards: [{
+          attempt: { attemptId, lifecycleState: 'FAILED' },
+          completionDisposition: 'FAILED',
+        }],
+      })
+      if (blockedAssessment === undefined) throw new Error('blocked Assessment was not persisted')
+      expect(assessmentSnapshotV1Schema.parse(
+        publicAssessmentSnapshot(blockedAssessment, []),
+      ).blockedRecovery).toMatchObject({
+        blocker: {
+          code: 'ROLE_PROVIDER_FAILED',
+          phase: 'ROLE_EXECUTION',
+          interruption: 'FAILED',
+        },
+        attempt: {
+          status: 'IDENTIFIED',
+          attemptId,
+          attemptKind: 'ROLE_EXECUTION',
+          lifecycleState: 'FAILED',
+        },
+        recovery: { requiredCondition: 'EXPLICIT_RESUME_REQUIRED' },
+      })
+    } finally {
+      persistence.close()
+    }
+  })
+
+  it('does not block on one Role failure while another Role Attempt is still running', async () => {
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-role-attempt-failure-quiescence-'))
+    temporaryRoots.push(securityRoot)
+    const { contextGrant, persistence, running } = await runningAssessment(securityRoot)
+    try {
+      const started = persistence.startRoleAttempt(
+        startInput(contextGrant, running.assessmentRevision),
+      )
+      const secondAttemptId = 'role-attempt-00000000-0000-0000-0000-000000000172'
+      const secondFence = structuredDigest(
+        SOURCE_SLICE_EGRESS_ATTEMPT_FENCE_MEDIA_TYPE,
+        {
+          attemptId: secondAttemptId,
+          generation: 1,
+          fencingToken: 'fence/role-attempt-0172/generation-1',
+        },
+      )
+      const secondStarted = persistence.startRoleAttempt({
+        ...startInput(roleContextGrant(secondAttemptId), started.assessmentRevision),
+        fenceDigest: secondFence,
+      })
+
+      expect(() => persistence.failRoleAttempt(
+        failureInput(secondStarted.assessmentRevision),
+      )).toThrow(/another|running|quiescence/iu)
+
+      expect(persistence.getRoleAttempt(assessmentId, attemptId, 1)).toEqual(started)
+      expect(persistence.getRoleAttempt(assessmentId, secondAttemptId, 1)).toEqual(secondStarted)
+      expect(persistence.getAssessmentRecord(assessmentId)).toMatchObject({
+        state: 'RUNNING',
+        assessmentRevision: secondStarted.assessmentRevision,
+        roleCards: [
+          { attempt: { attemptId, lifecycleState: 'RUNNING' } },
+          { attempt: { attemptId: secondAttemptId, lifecycleState: 'RUNNING' } },
+        ],
+      })
+    } finally {
+      persistence.close()
+    }
+  })
+
+  it('cancels every RUNNING Role Attempt only after Assessment quiescence is proved', async () => {
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-role-attempt-canceled-'))
+    temporaryRoots.push(securityRoot)
+    const { contextGrant, persistence, running } = await runningAssessment(securityRoot)
+    try {
+      const started = persistence.startRoleAttempt(
+        startInput(contextGrant, running.assessmentRevision),
+      )
+      const secondAttemptId = 'role-attempt-00000000-0000-0000-0000-000000000171'
+      const secondFence = structuredDigest(
+        SOURCE_SLICE_EGRESS_ATTEMPT_FENCE_MEDIA_TYPE,
+        {
+          attemptId: secondAttemptId,
+          generation: 1,
+          fencingToken: 'fence/role-attempt-0171/generation-1',
+        },
+      )
+      const secondStarted = persistence.startRoleAttempt({
+        ...startInput(roleContextGrant(secondAttemptId), started.assessmentRevision),
+        fenceDigest: secondFence,
+      })
+      const cancellation = persistence.requestAssessmentCancellation({
+        principalId: 'operator:role-attempt-fixture',
+        authorityKind: 'host-operator',
+        idempotencyKey: 'cancel-running-role-attempt',
+        assessmentId,
+        expectedAssessmentRevision: secondStarted.assessmentRevision,
+        reason: { code: 'OPERATOR_CANCEL', summary: 'Stop the running Role Attempt.' },
+        canonicalRequest: { operation: 'cancel-running-role-attempt' },
+      })
+
+      expect(persistence.getRoleAttempt(assessmentId, attemptId, 1)?.lifecycleState)
+        .toBe('RUNNING')
+      expect(persistence.getRoleAttempt(assessmentId, secondAttemptId, 1)?.lifecycleState)
+        .toBe('RUNNING')
+      expect(() => persistence.completeRoleAttempt(
+        completionInput(cancellation.assessmentRevision),
+      )).toThrow(/revision|complete/iu)
+
+      const canceledAssessment = persistence.completeAssessmentCancellation(
+        assessmentId,
+        cancellation.assessmentRevision,
+      )
+      const replay = persistence.completeAssessmentCancellation(
+        assessmentId,
+        cancellation.assessmentRevision,
+      )
+      const canceledAttempt = persistence.getRoleAttempt(assessmentId, attemptId, 1)
+
+      expect(replay).toEqual(canceledAssessment)
+      expect(canceledAssessment).toMatchObject({
+        state: 'CANCELED',
+        assessmentRevision: cancellation.assessmentRevision + 1,
+        roleCards: [{
+          attempt: { attemptId, lifecycleState: 'CANCELED' },
+          completionDisposition: 'CANCELED',
+        }, {
+          attempt: { attemptId: secondAttemptId, lifecycleState: 'CANCELED' },
+          completionDisposition: 'CANCELED',
+        }],
+      })
+      expect(canceledAttempt).toMatchObject({
+        lifecycleState: 'CANCELED',
+        completionDisposition: 'CANCELED',
+        cancellationRevision: cancellation.assessmentRevision,
+        assessmentRevision: canceledAssessment.assessmentRevision,
+      })
+      expect(() => persistence.completeRoleAttempt(
+        completionInput(started.assessmentRevision),
+      )).toThrow(/terminal result/iu)
+      expect(persistence.getRoleAttempt(assessmentId, attemptId, 1)).toEqual(canceledAttempt)
+      expect(persistence.getRoleAttempt(assessmentId, secondAttemptId, 1)).toMatchObject({
+        lifecycleState: 'CANCELED',
+        cancellationRevision: cancellation.assessmentRevision,
+        assessmentRevision: canceledAssessment.assessmentRevision,
+      })
+    } finally {
+      persistence.close()
+    }
+  })
+
+  it('resumes a failed Role only through a new Attempt with durable parent lineage', async () => {
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-role-attempt-resume-'))
+    temporaryRoots.push(securityRoot)
+    const { contextGrant, persistence, running } = await runningAssessment(securityRoot)
+    try {
+      const started = persistence.startRoleAttempt(
+        startInput(contextGrant, running.assessmentRevision),
+      )
+      const failed = persistence.failRoleAttempt(failureInput(started.assessmentRevision))
+      const retryAttemptId = 'role-attempt-00000000-0000-0000-0000-000000000170'
+      const retryGrant = roleContextGrant(retryAttemptId)
+      const retryFence = structuredDigest(
+        SOURCE_SLICE_EGRESS_ATTEMPT_FENCE_MEDIA_TYPE,
+        {
+          attemptId: retryAttemptId,
+          generation: 1,
+          fencingToken: 'fence/role-attempt-0170/generation-1',
+        },
+      )
+      const retryStart = {
+        ...startInput(retryGrant, failed.assessmentRevision),
+        parentAttemptId: attemptId,
+        fenceDigest: retryFence,
+      }
+
+      expect(() => persistence.startRoleAttempt(retryStart)).toThrow(/revision/iu)
+      const resume = persistence.resumeAssessment({
+        principalId: 'operator:role-attempt-fixture',
+        authorityKind: 'host-operator',
+        idempotencyKey: 'resume-failed-role-attempt',
+        assessmentId,
+        expectedAssessmentRevision: failed.assessmentRevision,
+        reason: { code: 'OPERATOR_RETRY', summary: 'Retry the failed required Role.' },
+        canonicalRequest: { operation: 'resume-failed-role-attempt' },
+      })
+      const resumed = persistence.beginAssessment(assessmentId)
+      if (resumed === undefined) throw new Error('resumed Assessment did not begin')
+
+      expect(() => persistence.startRoleAttempt({
+        ...retryStart,
+        expectedAssessmentRevision: resumed.assessmentRevision,
+        parentAttemptId: 'role-attempt-00000000-0000-0000-0000-000000000999',
+      })).toThrow(/parent/iu)
+      expect(() => persistence.startRoleAttempt({
+        ...retryStart,
+        expectedAssessmentRevision: resumed.assessmentRevision,
+        parentAttemptId: null,
+      })).toThrow(/parent|lineage/iu)
+
+      const retry = persistence.startRoleAttempt({
+        ...retryStart,
+        expectedAssessmentRevision: resumed.assessmentRevision,
+      })
+
+      expect(resume).toMatchObject({ state: 'CREATED' })
+      expect(retry).toMatchObject({
+        attemptId: retryAttemptId,
+        parentAttemptId: attemptId,
+        lifecycleState: 'RUNNING',
+      })
+      expect(persistence.getRoleAttempt(assessmentId, attemptId, 1)).toEqual(failed)
+      expect(persistence.getAssessmentRecord(assessmentId)).toMatchObject({
+        state: 'RUNNING',
+        failureCode: null,
+        blockingAttempt: null,
+        roleCards: [
+          { attempt: { attemptId, lifecycleState: 'FAILED' } },
+          { attempt: { attemptId: retryAttemptId, lifecycleState: 'RUNNING' } },
+        ],
       })
     } finally {
       persistence.close()

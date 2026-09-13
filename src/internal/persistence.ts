@@ -56,12 +56,15 @@ import {
 } from './model-invocation-evidence.ts'
 import type {
   CompleteRoleAttemptValuesV1,
+  FailRoleAttemptValuesV1,
   RoleAttemptRecordV1,
   RoleAttemptStartBindingsV1,
 } from './role-attempt.ts'
 import {
+  cancelRoleAttemptV1,
   completeRoleAttemptV1,
   createRunningRoleAttemptV1,
+  failRoleAttemptV1,
   parseRoleAttemptRecordV1,
   projectRoleAttemptCardV1,
 } from './role-attempt.ts'
@@ -209,6 +212,14 @@ export interface StartRoleAttemptPersistenceInput extends RoleAttemptStartBindin
 }
 
 export interface CompleteRoleAttemptPersistenceInput extends CompleteRoleAttemptValuesV1 {
+  readonly assessmentId: AssessmentId
+  readonly attemptId: string
+  readonly generation: number
+  readonly fenceDigest: DigestEnvelopeV1
+  readonly expectedAssessmentRevision: number
+}
+
+export interface FailRoleAttemptPersistenceInput extends FailRoleAttemptValuesV1 {
   readonly assessmentId: AssessmentId
   readonly attemptId: string
   readonly generation: number
@@ -1433,6 +1444,46 @@ export class SecurityPersistence {
           'Role Attempt does not bind the durable Assessment contract or capacity',
         )
       }
+      const expectedRoleDefinition = {
+        ...input.contextGrant.roleDefinition,
+        independenceClass: input.independenceClass,
+      }
+      const priorAttempts = (this.db.prepare(`
+        SELECT * FROM role_attempts
+        WHERE assessment_id = ?
+        ORDER BY attempt_id, generation
+      `).all(input.contextGrant.assessmentId) as unknown as readonly RoleAttemptRow[])
+        .map(row => this.parseRoleAttemptRow(row))
+      const incompleteSameRole = priorAttempts.filter(attempt => (
+        (attempt.lifecycleState === 'FAILED' || attempt.lifecycleState === 'CANCELED')
+        && canonicalJson(attempt.roleDefinition) === canonicalJson(expectedRoleDefinition)
+      ))
+      if (input.parentAttemptId === null && incompleteSameRole.length > 0) {
+        throw new SecurityPersistenceError(
+          'role_attempt_conflict',
+          'Role Attempt recovery must bind its terminal incomplete parent lineage',
+        )
+      }
+      if (input.parentAttemptId !== null) {
+        const parent = priorAttempts.find(
+          attempt => attempt.attemptId === input.parentAttemptId,
+        )
+        if (parent === undefined) {
+          throw new SecurityPersistenceError(
+            'role_attempt_conflict',
+            'Role Attempt parent does not exist in this Assessment',
+          )
+        }
+        if (
+          (parent.lifecycleState !== 'FAILED' && parent.lifecycleState !== 'CANCELED')
+          || canonicalJson(parent.roleDefinition) !== canonicalJson(expectedRoleDefinition)
+        ) {
+          throw new SecurityPersistenceError(
+            'role_attempt_conflict',
+            'Role Attempt parent must be a terminal incomplete Attempt for the same Role definition',
+          )
+        }
+      }
       const committedAt = this.now()
       const attempt = createRunningRoleAttemptV1({
         ...input,
@@ -1520,6 +1571,12 @@ export class SecurityPersistence {
         this.db.exec('COMMIT')
         return currentAttempt
       }
+      if (currentAttempt.lifecycleState !== 'RUNNING') {
+        throw new SecurityPersistenceError(
+          'role_attempt_conflict',
+          'Role Attempt already has a different terminal result',
+        )
+      }
       if (canonicalJson(currentAttempt.fenceDigest) !== canonicalJson(input.fenceDigest)) {
         throw new SecurityPersistenceError(
           'role_attempt_conflict',
@@ -1591,6 +1648,156 @@ export class SecurityPersistence {
       }
       this.db.exec('COMMIT')
       return completed
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Fail one current required Role Attempt and block its Assessment atomically. */
+  failRoleAttempt(input: FailRoleAttemptPersistenceInput): RoleAttemptRecordV1 {
+    this.requireOpen()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const currentAttempt = this.getRoleAttempt(
+        input.assessmentId,
+        input.attemptId,
+        input.generation,
+      )
+      if (currentAttempt === undefined) {
+        throw new SecurityPersistenceError('role_attempt_not_found', 'Role Attempt does not exist')
+      }
+      const exactFailure = (
+        currentAttempt.assessmentRevision === input.expectedAssessmentRevision + 1
+        && canonicalJson(currentAttempt.fenceDigest) === canonicalJson(input.fenceDigest)
+        && currentAttempt.failureCode === input.failureCode
+        && currentAttempt.budget.requestsUsed === input.usage.requestsUsed
+        && currentAttempt.budget.tokensUsed === input.usage.tokensUsed
+        && currentAttempt.evidenceCount === input.evidenceCount
+        && currentAttempt.candidateCount === input.candidateCount
+        && canonicalJson(currentAttempt.milestones) === canonicalJson(input.milestones)
+      )
+      if (currentAttempt.lifecycleState === 'FAILED') {
+        if (!exactFailure) {
+          throw new SecurityPersistenceError(
+            'role_attempt_conflict',
+            'Role Attempt is already failed with a different result',
+          )
+        }
+        this.db.exec('COMMIT')
+        return currentAttempt
+      }
+      if (currentAttempt.lifecycleState !== 'RUNNING') {
+        throw new SecurityPersistenceError(
+          'role_attempt_conflict',
+          'Role Attempt already has a different terminal result',
+        )
+      }
+      if (canonicalJson(currentAttempt.fenceDigest) !== canonicalJson(input.fenceDigest)) {
+        throw new SecurityPersistenceError(
+          'role_attempt_conflict',
+          'Role Attempt failure carries a stale or different fence',
+        )
+      }
+      const currentAssessment = this.getAssessmentRecord(input.assessmentId)
+      if (
+        currentAssessment === undefined
+        || currentAssessment.state !== 'RUNNING'
+        || currentAssessment.assessmentRevision !== input.expectedAssessmentRevision
+        || currentAssessment.pendingCancellation !== null
+      ) {
+        throw new SecurityPersistenceError(
+          'revision_conflict',
+          'Role Attempt cannot fail at this Assessment revision',
+        )
+      }
+      const cardIndex = currentAssessment.roleCards.findIndex(
+        card => card.attempt.attemptId === input.attemptId,
+      )
+      if (cardIndex < 0) {
+        throw new SecurityPersistenceError(
+          'corrupt_database',
+          'Role Attempt current projection is missing',
+        )
+      }
+      if (currentAssessment.roleCards[cardIndex]?.attempt.lifecycleState !== 'RUNNING') {
+        throw new SecurityPersistenceError(
+          'corrupt_database',
+          'RUNNING Role Attempt does not match its current Assessment projection',
+        )
+      }
+      const runningPeer = this.db.prepare(`
+        SELECT 1 AS present FROM role_attempts
+        WHERE assessment_id = ? AND state = 'RUNNING'
+          AND NOT (attempt_id = ? AND generation = ?)
+        LIMIT 1
+      `).get(
+        input.assessmentId,
+        input.attemptId,
+        input.generation,
+      ) as { readonly present: 1 } | undefined
+      if (
+        runningPeer !== undefined
+        || currentAssessment.roleCards.some((card, index) => (
+          index !== cardIndex && card.attempt.lifecycleState === 'RUNNING'
+        ))
+      ) {
+        throw new SecurityPersistenceError(
+          'role_attempt_conflict',
+          'Role Attempt failure cannot block while another Role Attempt remains RUNNING',
+        )
+      }
+      const committedAt = this.now()
+      const failed = failRoleAttemptV1({
+        current: currentAttempt,
+        assessmentRevision: currentAssessment.assessmentRevision + 1,
+        failedAt: committedAt,
+        failureCode: input.failureCode,
+        usage: input.usage,
+        evidenceCount: input.evidenceCount,
+        candidateCount: input.candidateCount,
+        milestones: input.milestones,
+      })
+      const roleCards = [...currentAssessment.roleCards]
+      roleCards[cardIndex] = projectRoleAttemptCardV1(failed)
+      const assessment = internalAssessmentRecordV1Schema.parse({
+        ...currentAssessment,
+        assessmentRevision: failed.assessmentRevision,
+        state: 'BLOCKED',
+        failureCode: failed.failureCode,
+        blockingAttempt: {
+          attemptId: failed.attemptId,
+          attemptKind: 'ROLE_EXECUTION',
+          lifecycleState: 'FAILED',
+        },
+        roleCards,
+        updatedAt: committedAt,
+      })
+      this.commitAssessmentRevision(assessment, 'role_attempt_failed', committedAt)
+      const changed = this.db.prepare(`
+        UPDATE role_attempts
+        SET assessment_revision = ?, state = ?, record_digest = ?, record_json = ?, updated_at = ?
+        WHERE assessment_id = ? AND attempt_id = ? AND generation = ?
+          AND state = 'RUNNING' AND fence_digest = ?
+      `).run(
+        failed.assessmentRevision,
+        failed.lifecycleState,
+        failed.recordDigest.value,
+        canonicalJson(failed),
+        committedAt,
+        failed.assessmentId,
+        failed.attemptId,
+        failed.generation,
+        failed.fenceDigest.value,
+      )
+      if (changed.changes !== 1) {
+        throw new SecurityPersistenceError(
+          'role_attempt_conflict',
+          'Role Attempt generation changed during failure settlement',
+        )
+      }
+      this.db.exec('COMMIT')
+      return failed
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
@@ -1997,6 +2204,12 @@ export class SecurityPersistence {
         current.state === 'CANCELED'
         && current.pendingCancellation?.requestRevision === requestRevision
       ) {
+        if (current.roleCards.some(card => card.attempt.lifecycleState === 'RUNNING')) {
+          throw new SecurityPersistenceError(
+            'corrupt_database',
+            'Canceled Assessment retains a RUNNING Role Attempt projection',
+          )
+        }
         this.db.exec('COMMIT')
         return current
       }
@@ -2009,9 +2222,41 @@ export class SecurityPersistence {
         throw new SecurityPersistenceError('revision_conflict', 'Assessment cancellation cannot complete')
       }
       const committedAt = this.now()
+      const targetRevision = current.assessmentRevision + 1
+      const runningAttemptRows = this.db.prepare(`
+        SELECT * FROM role_attempts
+        WHERE assessment_id = ? AND state = 'RUNNING'
+        ORDER BY attempt_id, generation
+      `).all(assessmentId) as unknown as readonly RoleAttemptRow[]
+      const canceledAttempts = runningAttemptRows.map(row => cancelRoleAttemptV1({
+        current: this.parseRoleAttemptRow(row),
+        assessmentRevision: targetRevision,
+        canceledAt: committedAt,
+        cancellationRevision: requestRevision,
+      }))
+      const roleCards = [...current.roleCards]
+      for (const attempt of canceledAttempts) {
+        const cardIndex = roleCards.findIndex(card => (
+          card.attempt.attemptId === attempt.attemptId
+          && card.attempt.lifecycleState === 'RUNNING'
+        ))
+        if (cardIndex < 0) {
+          throw new SecurityPersistenceError(
+            'corrupt_database',
+            'RUNNING Role Attempt has no current Assessment projection',
+          )
+        }
+        roleCards[cardIndex] = projectRoleAttemptCardV1(attempt)
+      }
+      if (roleCards.some(card => card.attempt.lifecycleState === 'RUNNING')) {
+        throw new SecurityPersistenceError(
+          'corrupt_database',
+          'RUNNING Role Attempt projection has no durable aggregate',
+        )
+      }
       const canceled = internalAssessmentRecordV1Schema.parse({
         ...current,
-        assessmentRevision: current.assessmentRevision + 1,
+        assessmentRevision: targetRevision,
         state: 'CANCELED',
         coverage: current.contract.coverage,
         findings: [],
@@ -2023,9 +2268,35 @@ export class SecurityPersistence {
         publicationDigest: null,
         failureCode: null,
         blockingAttempt: null,
+        roleCards,
         updatedAt: committedAt,
       })
       this.commitAssessmentRevision(canceled, 'assessment_canceled', committedAt)
+      const update = this.db.prepare(`
+        UPDATE role_attempts
+        SET assessment_revision = ?, state = ?, record_digest = ?, record_json = ?, updated_at = ?
+        WHERE assessment_id = ? AND attempt_id = ? AND generation = ?
+          AND state = 'RUNNING' AND fence_digest = ?
+      `)
+      for (const attempt of canceledAttempts) {
+        const changed = update.run(
+          attempt.assessmentRevision,
+          attempt.lifecycleState,
+          attempt.recordDigest.value,
+          canonicalJson(attempt),
+          committedAt,
+          attempt.assessmentId,
+          attempt.attemptId,
+          attempt.generation,
+          attempt.fenceDigest.value,
+        )
+        if (changed.changes !== 1) {
+          throw new SecurityPersistenceError(
+            'role_attempt_conflict',
+            'Role Attempt generation changed during cancellation settlement',
+          )
+        }
+      }
       this.db.exec('COMMIT')
       return canceled
     } catch (error) {
