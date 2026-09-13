@@ -90,6 +90,13 @@
   text-free protected record. Failed or unverifiable receipts remain rejected;
   no Store write, canonical Bundle admission, production Broker, or public
   capability is added.
+- Add package-private content-addressed publication and verified readback for
+  settled Model Invocation Records. One canonical immutable Evidence object and
+  its digest-bound receipt jointly bind the assessment, Subject, record digest,
+  invocation, and exact parent Attempt generation and fence. Identical
+  publication is idempotent across platforms, including Windows existing-target
+  errors only after exact canonical-byte verification; no path, body, relational
+  Attempt link, Evidence Link, or canonical Bundle admission is exposed.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createRoleContextGrantV1 } from '../src/role-context-grant.ts'
 import { binaryDigest, structuredDigest } from '../src/internal/canonical.ts'
 import type {
@@ -23,6 +26,19 @@ import {
 import type {
   ModelInvocationBudgetReservationCoreV1,
 } from '../src/internal/model-invocation-settlement.ts'
+import {
+  MODEL_INVOCATION_EVIDENCE_SCHEMA_ID,
+  MODEL_INVOCATION_EVIDENCE_PUBLICATION_RECEIPT_MEDIA_TYPE,
+  publishModelInvocationEvidenceV1,
+  readPublishedModelInvocationEvidenceV1,
+} from '../src/internal/model-invocation-evidence.ts'
+import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
+
+const temporaryRoots: string[] = []
+
+afterEach(async () => {
+  await removeTemporaryRoots(temporaryRoots)
+})
 
 const attemptId = 'role-attempt-00000000-0000-0000-0000-000000000178'
 const invocationId = 'egress-invocation-00000000-0000-0000-0000-000000000178'
@@ -187,6 +203,28 @@ function budgetReservation(
     deadlineAt: '2026-09-13T00:01:00.000Z',
     ...overrides,
   })
+}
+
+function settledInvocationFixture() {
+  const grant = contextGrant()
+  const receipt = completedReceipt()
+  const reservation = budgetReservation(grant)
+  const record = settleSourceSliceModelInvocationV1({
+    contextGrant: grant,
+    reservation,
+    receipt,
+    lineage: lineage(),
+  })
+  const expected = {
+    invocationId,
+    attemptId,
+    attemptGeneration: 1,
+    attemptFenceDigest,
+    contextGrantDigest: grant.grantDigest,
+    reservationDigest: reservation.reservationDigest,
+    receiptDigest: receipt.receiptDigest,
+  }
+  return { grant, record, expected }
 }
 
 describe('ADR 0178 Model Invocation settlement', () => {
@@ -446,5 +484,133 @@ describe('ADR 0178 Model Invocation settlement', () => {
       reservationDigest: reservation.reservationDigest,
       receiptDigest: receipt.receiptDigest,
     })).toThrow(/usage|settlement|token|budget/iu)
+  })
+})
+
+describe('ADR 0178 Model Invocation Evidence publication', () => {
+  it('atomically publishes one exact Attempt-bound record and reads it back idempotently', async () => {
+    const { grant, record, expected } = settledInvocationFixture()
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-model-invocation-evidence-'))
+    temporaryRoots.push(securityRoot)
+    const input = {
+      securityRoot,
+      contextGrant: grant,
+      record,
+      expected,
+    }
+
+    const publication = await publishModelInvocationEvidenceV1(input)
+    const repeatedPublication = await publishModelInvocationEvidenceV1(input)
+
+    expect(repeatedPublication).toEqual(publication)
+    expect(publication).toMatchObject({
+      schemaVersion: 1,
+      assessmentId: grant.assessmentId,
+      subjectDigest: grant.subject.digest,
+      schemaId: MODEL_INVOCATION_EVIDENCE_SCHEMA_ID,
+      invocationId,
+      parentAttempt: {
+        attemptId,
+        generation: 1,
+        fenceDigest: attemptFenceDigest,
+      },
+      recordDigest: record.recordDigest,
+    })
+    expect(Object.isFrozen(publication)).toBe(true)
+    expect(JSON.stringify(publication)).not.toContain(securityRoot)
+    expect(JSON.stringify(publication)).not.toContain('protected')
+
+    const readRecord = await readPublishedModelInvocationEvidenceV1({
+      securityRoot,
+      contextGrant: grant,
+      receipt: publication,
+      expected,
+    })
+
+    expect(readRecord).toEqual(record)
+    expect(Object.isFrozen(readRecord)).toBe(true)
+  })
+
+  it('refuses a self-consistent publication receipt rebound to another Attempt generation', async () => {
+    const { grant, record, expected } = settledInvocationFixture()
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-model-invocation-evidence-'))
+    temporaryRoots.push(securityRoot)
+    const publication = await publishModelInvocationEvidenceV1({
+      securityRoot,
+      contextGrant: grant,
+      record,
+      expected,
+    })
+    const { publicationReceiptDigest: _publicationReceiptDigest, ...publicationCore } = publication
+    const reboundCore = {
+      ...publicationCore,
+      parentAttempt: {
+        ...publicationCore.parentAttempt,
+        generation: 2,
+      },
+    }
+    const reboundReceipt = {
+      ...reboundCore,
+      publicationReceiptDigest: structuredDigest(
+        MODEL_INVOCATION_EVIDENCE_PUBLICATION_RECEIPT_MEDIA_TYPE,
+        reboundCore,
+      ),
+    }
+
+    await expect(readPublishedModelInvocationEvidenceV1({
+      securityRoot,
+      contextGrant: grant,
+      receipt: reboundReceipt,
+      expected,
+    })).rejects.toThrow(/Attempt|expected|binding/iu)
+  })
+
+  it('refuses to publish a settled record under another assessment', async () => {
+    const { grant, record, expected } = settledInvocationFixture()
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-model-invocation-evidence-'))
+    temporaryRoots.push(securityRoot)
+    const { grantDigest: _grantDigest, ...grantCore } = grant
+    const otherAssessmentGrant = createRoleContextGrantV1({
+      ...grantCore,
+      assessmentId: 'asm-00000000-0000-0000-0000-000000000179',
+    })
+
+    await expect(publishModelInvocationEvidenceV1({
+      securityRoot,
+      contextGrant: otherAssessmentGrant,
+      record,
+      expected,
+    })).rejects.toThrow(/assessment|grant|binding|lineage/iu)
+  })
+
+  it('refuses to read an Evidence object through another Subject binding', async () => {
+    const { grant, record, expected } = settledInvocationFixture()
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-model-invocation-evidence-'))
+    temporaryRoots.push(securityRoot)
+    const publication = await publishModelInvocationEvidenceV1({
+      securityRoot,
+      contextGrant: grant,
+      record,
+      expected,
+    })
+    const otherSubjectDigest = structuredDigest(
+      'application/vnd.dsh.security.subject-manifest+json',
+      { commit: 'b'.repeat(40) },
+    )
+    const { grantDigest: _grantDigest, ...grantCore } = grant
+    const otherSubjectGrant = createRoleContextGrantV1({
+      ...grantCore,
+      subject: {
+        ...grant.subject,
+        digest: otherSubjectDigest,
+      },
+    })
+
+    await expect(readPublishedModelInvocationEvidenceV1({
+      securityRoot,
+      contextGrant: otherSubjectGrant,
+      receipt: publication,
+      expected,
+    })).rejects.toThrow(/subject|grant|expected|binding|lineage/iu)
   })
 })

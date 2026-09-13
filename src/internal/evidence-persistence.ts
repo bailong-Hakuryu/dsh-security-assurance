@@ -157,7 +157,13 @@ export async function publishEvidenceSet(
         await rename(staging, destination)
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code
-        if (code !== 'EEXIST' && code !== 'ENOTEMPTY') throw error
+        const isWindowsExistingDestination = process.platform === 'win32'
+          && (code === 'EPERM' || code === 'EACCES')
+        if (
+          code !== 'EEXIST'
+          && code !== 'ENOTEMPTY'
+          && !isWindowsExistingDestination
+        ) throw error
         await verifyRegularCanonicalFile(destinationFile, bytes)
         await rm(staging, { recursive: true, force: true })
       }
