@@ -132,6 +132,17 @@
   preserves the old terminal record and permits only a new Attempt identity for
   the same Role definition. Automatic execution-graph scheduling, production
   session spawning, and per-Role cleanup proof remain outside this slice.
+- Add a package-private `RoleContributionV1` terminal-proposal contract. Its
+  canonical digest binds the Assessment, Subject, Context Grant, exact Role
+  Attempt generation and fence, Role Definition, every Model Invocation record
+  and response digest, structured hypotheses, Candidate Findings, Coverage
+  observations, Evidence context and requests, challenges, Follow-up Requests,
+  limitations, uncertainty, completion disposition, and exact aggregate usage.
+  Strict parsing rejects unknown authority-bearing fields, duplicate or dangling
+  references, non-canonical or unsafe Source Anchors, usage drift, oversized
+  contributions, and digest tampering. This contract creates no durable
+  admission, Finding, Coverage resolution, Verdict, Risk Acceptance, Provider
+  call, or public capability.
 
 ## [0.1.0-rc.14] - 2026-09-11
 
