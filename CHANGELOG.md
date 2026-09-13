@@ -67,6 +67,12 @@
   review for the same exact Slice. `CLEAR` removes only the secret-review gap,
   `SECRET_FOUND` rejects egress, and Broker qualification plus destination
   authorization remain mandatory with no approved or Provider-calling state.
+- Admit exact Host-attested Egress Broker Qualification and Host Destination
+  Authorization records only when their Provider, credential reference, policy,
+  destination, category, Source Slice lineage, validity, quota, timeout and audit
+  bindings all agree. Complete Evidence advances only to
+  `BROKER_INVOCATION_REQUIRED`; no credential, network, or Provider operation is
+  performed.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

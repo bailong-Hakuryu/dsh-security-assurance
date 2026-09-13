@@ -10,6 +10,13 @@ import {
   preflightSourceSliceRequestV1,
 } from '../source-slice-request.ts'
 import { binaryDigest, canonicalJson, structuredDigest } from './canonical.ts'
+import type { ProtectedSourceSliceEgressAuthorizationV1 } from './source-slice-egress-authorization.ts'
+import {
+  parseProtectedSourceSliceEgressAuthorization,
+  SOURCE_SLICE_DESTINATION_AUTHORIZATION_MEDIA_TYPE,
+  SOURCE_SLICE_EGRESS_AUTHORIZATION_MEDIA_TYPE,
+  SOURCE_SLICE_EGRESS_BROKER_QUALIFICATION_MEDIA_TYPE,
+} from './source-slice-egress-authorization.ts'
 import { deepFreeze } from './freeze.ts'
 import type {
   ProtectedSourceSliceSecretReviewDecisionV1,
@@ -103,10 +110,20 @@ export type ProtectedSourceSliceEgressReasonV1 =
   | 'RESIDUAL_SECRET_DETECTED'
   | 'BROKER_QUALIFICATION_REQUIRED'
   | 'DESTINATION_AUTHORIZATION_REQUIRED'
+  | 'BROKER_INVOCATION_REQUIRED'
 
 export interface ProtectedSourceSliceEgressSecretReviewSummaryV1 {
   readonly secretReviewDigest: DigestEnvelopeV1
   readonly decision: ProtectedSourceSliceSecretReviewDecisionV1
+}
+
+export interface ProtectedSourceSliceEgressAuthorizationSummaryV1 {
+  readonly egressAuthorizationDigest: DigestEnvelopeV1
+  readonly brokerQualificationDigest: DigestEnvelopeV1
+  readonly destinationAuthorizationDigest: DigestEnvelopeV1
+  readonly brokerId: string
+  readonly providerId: string
+  readonly credentialBindingId: string
 }
 
 export interface ProtectedSourceSliceEgressReviewCoreV1 {
@@ -118,6 +135,7 @@ export interface ProtectedSourceSliceEgressReviewCoreV1 {
   readonly redactionDigest: DigestEnvelopeV1
   readonly redactedDigest: DigestEnvelopeV1
   readonly secretReview: ProtectedSourceSliceEgressSecretReviewSummaryV1 | null
+  readonly egressAuthorization: ProtectedSourceSliceEgressAuthorizationSummaryV1 | null
   readonly disclosure: {
     readonly dataEgressPolicyId: string
     readonly destinationId: string
@@ -125,7 +143,7 @@ export interface ProtectedSourceSliceEgressReviewCoreV1 {
   }
   readonly observedRedactedBytes: number
   readonly requestedContextBytes: number
-  readonly decision: 'REJECTED' | 'BROKER_REVIEW_REQUIRED'
+  readonly decision: 'REJECTED' | 'BROKER_REVIEW_REQUIRED' | 'BROKER_INVOCATION_REQUIRED'
   readonly reasonCodes: readonly ProtectedSourceSliceEgressReasonV1[]
 }
 
@@ -140,6 +158,7 @@ export interface ReviewProtectedSourceSliceEgressOptionsV1 {
   readonly material: ProtectedSourceSliceMaterialV1
   readonly redaction: ProtectedSourceSliceRedactionV1
   readonly secretReview?: ProtectedSourceSliceSecretReviewV1 | undefined
+  readonly egressAuthorization?: ProtectedSourceSliceEgressAuthorizationV1 | undefined
 }
 
 export interface ProtectedSourceSliceEgressReviewBindingsV1 {
@@ -147,6 +166,7 @@ export interface ProtectedSourceSliceEgressReviewBindingsV1 {
   readonly requestDigest: DigestEnvelopeV1
   readonly redactionDigest: DigestEnvelopeV1
   readonly secretReview?: ProtectedSourceSliceSecretReviewV1 | undefined
+  readonly egressAuthorization?: ProtectedSourceSliceEgressAuthorizationV1 | undefined
 }
 
 interface SecretCandidate {
@@ -346,6 +366,7 @@ const SOURCE_SLICE_EGRESS_REASON_CODES = [
   'RESIDUAL_SECRET_DETECTED',
   'BROKER_QUALIFICATION_REQUIRED',
   'DESTINATION_AUTHORIZATION_REQUIRED',
+  'BROKER_INVOCATION_REQUIRED',
 ] as const satisfies readonly ProtectedSourceSliceEgressReasonV1[]
 
 const sourceSliceEgressReviewV1Schema = z.strictObject({
@@ -360,6 +381,14 @@ const sourceSliceEgressReviewV1Schema = z.strictObject({
     secretReviewDigest: digestEnvelopeV1Schema,
     decision: z.enum(['CLEAR', 'SECRET_FOUND', 'INDETERMINATE']),
   }).nullable(),
+  egressAuthorization: z.strictObject({
+    egressAuthorizationDigest: digestEnvelopeV1Schema,
+    brokerQualificationDigest: digestEnvelopeV1Schema,
+    destinationAuthorizationDigest: digestEnvelopeV1Schema,
+    brokerId: fingerprintKeyIdSchema,
+    providerId: fingerprintKeyIdSchema,
+    credentialBindingId: fingerprintKeyIdSchema,
+  }).nullable(),
   disclosure: z.strictObject({
     dataEgressPolicyId: fingerprintKeyIdSchema,
     destinationId: fingerprintKeyIdSchema,
@@ -367,8 +396,8 @@ const sourceSliceEgressReviewV1Schema = z.strictObject({
   }),
   observedRedactedBytes: z.number().int().nonnegative().max(2 * 1024 * 1024),
   requestedContextBytes: z.number().int().positive().max(64 * 1024 * 1024),
-  decision: z.enum(['REJECTED', 'BROKER_REVIEW_REQUIRED']),
-  reasonCodes: z.array(z.enum(SOURCE_SLICE_EGRESS_REASON_CODES)).min(1).max(5),
+  decision: z.enum(['REJECTED', 'BROKER_REVIEW_REQUIRED', 'BROKER_INVOCATION_REQUIRED']),
+  reasonCodes: z.array(z.enum(SOURCE_SLICE_EGRESS_REASON_CODES)).min(1).max(6),
   egressReviewDigest: digestEnvelopeV1Schema,
 })
 
@@ -460,6 +489,7 @@ export function deriveProtectedSourceSliceEgressDisposition(
   observedRedactedBytes: number,
   requestedContextBytes: number,
   secretReviewDecision: ProtectedSourceSliceSecretReviewDecisionV1 | null = null,
+  hasEgressAuthorization = false,
 ): {
   readonly decision: ProtectedSourceSliceEgressReviewCoreV1['decision']
   readonly reasonCodes: readonly ProtectedSourceSliceEgressReasonV1[]
@@ -474,14 +504,24 @@ export function deriveProtectedSourceSliceEgressDisposition(
     if (secretReviewDecision !== 'CLEAR' && secretReviewDecision !== 'SECRET_FOUND') {
       reasons.push('SECRET_REVIEW_INCOMPLETE')
     }
-    reasons.push('BROKER_QUALIFICATION_REQUIRED', 'DESTINATION_AUTHORIZATION_REQUIRED')
+    if (
+      hasEgressAuthorization
+      && secretReviewDecision === 'CLEAR'
+      && !reasons.includes('REDACTED_BYTE_BUDGET_EXCEEDED')
+    ) {
+      reasons.push('BROKER_INVOCATION_REQUIRED')
+    } else {
+      reasons.push('BROKER_QUALIFICATION_REQUIRED', 'DESTINATION_AUTHORIZATION_REQUIRED')
+    }
   }
   return deepFreeze({
     decision: reasons.includes('POLICY_DENIES_EGRESS')
       || reasons.includes('REDACTED_BYTE_BUDGET_EXCEEDED')
       || reasons.includes('RESIDUAL_SECRET_DETECTED')
       ? 'REJECTED'
-      : 'BROKER_REVIEW_REQUIRED',
+      : reasons.includes('BROKER_INVOCATION_REQUIRED')
+        ? 'BROKER_INVOCATION_REQUIRED'
+        : 'BROKER_REVIEW_REQUIRED',
     reasonCodes: reasons,
   })
 }
@@ -526,6 +566,42 @@ function bindQualifiedSecretReviewToEgress(
   return deepFreeze({ secretReviewDigest, decision: review.decision })
 }
 
+function bindQualifiedEgressAuthorization(
+  authorization: ProtectedSourceSliceEgressAuthorizationV1,
+  contextGrant: RoleContextGrantV1,
+  request: SourceSliceRequestV1,
+  material: ProtectedSourceSliceMaterialV1,
+  redaction: ProtectedSourceSliceRedactionV1,
+  secretReview: ProtectedSourceSliceEgressSecretReviewSummaryV1 | null,
+): ProtectedSourceSliceEgressAuthorizationSummaryV1 {
+  if (secretReview?.decision !== 'CLEAR') {
+    throw new TypeError('Source Slice egress authorization requires complete CLEAR secret review')
+  }
+  const admitted = parseProtectedSourceSliceEgressAuthorization(authorization, {
+    contextGrantDigest: contextGrant.grantDigest,
+    requestDigest: request.requestDigest,
+    subjectDigest: material.subjectDigest,
+    sourceDigest: material.digest,
+    path: material.path,
+    redactionDigest: redaction.redactionDigest,
+    redactedDigest: redaction.redactedDigest,
+    secretReviewDigest: secretReview.secretReviewDigest,
+    dataEgressPolicyId: request.disclosure.dataEgressPolicyId,
+    destinationId: request.disclosure.destinationId,
+    categoryId: request.disclosure.categoryId,
+    requestedContextBytes: request.budget.contextBytes,
+    observedRedactedBytes: Buffer.byteLength(redaction.redactedText, 'utf8'),
+  })
+  return deepFreeze({
+    egressAuthorizationDigest: admitted.egressAuthorizationDigest,
+    brokerQualificationDigest: admitted.brokerQualificationDigest,
+    destinationAuthorizationDigest: admitted.destinationAuthorizationDigest,
+    brokerId: admitted.brokerIdentity.brokerId,
+    providerId: admitted.providerId,
+    credentialBindingId: admitted.credentialBindingId,
+  })
+}
+
 /**
  * Enforce local deny-by-default and identify remaining Host/Broker checks.
  * This function performs no network or Provider operation and cannot approve egress.
@@ -551,11 +627,22 @@ export function reviewProtectedSourceSliceEgress(
   const secretReview = options.secretReview === undefined
     ? null
     : bindQualifiedSecretReviewToEgress(options.secretReview, contextGrant, request, material, redaction)
+  const egressAuthorization = options.egressAuthorization === undefined
+    ? null
+    : bindQualifiedEgressAuthorization(
+        options.egressAuthorization,
+        contextGrant,
+        request,
+        material,
+        redaction,
+        secretReview,
+      )
   const disposition = deriveProtectedSourceSliceEgressDisposition(
     request.disclosure.dataEgressPolicyId,
     observedRedactedBytes,
     request.budget.contextBytes,
     secretReview?.decision ?? null,
+    egressAuthorization !== null,
   )
   const core: ProtectedSourceSliceEgressReviewCoreV1 = {
     schemaVersion: 1,
@@ -566,6 +653,7 @@ export function reviewProtectedSourceSliceEgress(
     redactionDigest: redaction.redactionDigest,
     redactedDigest: redaction.redactedDigest,
     secretReview,
+    egressAuthorization,
     disclosure: request.disclosure,
     observedRedactedBytes,
     requestedContextBytes: request.budget.contextBytes,
@@ -589,6 +677,8 @@ export function parseProtectedSourceSliceEgressReview(
     || !sameDigest(review.requestDigest, expectedBindings.requestDigest)
     || !sameDigest(review.redactionDigest, expectedBindings.redactionDigest)
     || (review.secretReview === null) !== (expectedBindings.secretReview === undefined)
+    || (review.egressAuthorization === null)
+      !== (expectedBindings.egressAuthorization === undefined)
   ) {
     throw new TypeError('Source Slice egress review does not bind its expected inputs')
   }
@@ -605,11 +695,37 @@ export function parseProtectedSourceSliceEgressReview(
   ) {
     throw new TypeError('Source Slice egress review does not bind its expected secret review')
   }
+  if (
+    review.egressAuthorization !== null
+    && expectedBindings.egressAuthorization !== undefined
+    && (
+      !sameDigest(
+        review.egressAuthorization.egressAuthorizationDigest,
+        expectedBindings.egressAuthorization.egressAuthorizationDigest,
+      )
+      || !sameDigest(
+        review.egressAuthorization.brokerQualificationDigest,
+        expectedBindings.egressAuthorization.brokerQualificationDigest,
+      )
+      || !sameDigest(
+        review.egressAuthorization.destinationAuthorizationDigest,
+        expectedBindings.egressAuthorization.destinationAuthorizationDigest,
+      )
+      || review.egressAuthorization.brokerId
+        !== expectedBindings.egressAuthorization.brokerIdentity.brokerId
+      || review.egressAuthorization.providerId !== expectedBindings.egressAuthorization.providerId
+      || review.egressAuthorization.credentialBindingId
+        !== expectedBindings.egressAuthorization.credentialBindingId
+    )
+  ) {
+    throw new TypeError('Source Slice egress review does not bind its expected egress authorization')
+  }
   const disposition = deriveProtectedSourceSliceEgressDisposition(
     review.disclosure.dataEgressPolicyId,
     review.observedRedactedBytes,
     review.requestedContextBytes,
     review.secretReview?.decision ?? null,
+    review.egressAuthorization !== null,
   )
   if (
     review.redactedDigest.mediaType !== REDACTED_SOURCE_SLICE_MEDIA_TYPE
@@ -617,6 +733,16 @@ export function parseProtectedSourceSliceEgressReview(
     || (review.secretReview !== null
       && review.secretReview.secretReviewDigest.mediaType
         !== QUALIFIED_SOURCE_SLICE_SECRET_REVIEW_MEDIA_TYPE)
+    || (review.egressAuthorization !== null
+      && (
+        review.egressAuthorization.egressAuthorizationDigest.mediaType
+          !== SOURCE_SLICE_EGRESS_AUTHORIZATION_MEDIA_TYPE
+        || review.egressAuthorization.brokerQualificationDigest.mediaType
+          !== SOURCE_SLICE_EGRESS_BROKER_QUALIFICATION_MEDIA_TYPE
+        || review.egressAuthorization.destinationAuthorizationDigest.mediaType
+          !== SOURCE_SLICE_DESTINATION_AUTHORIZATION_MEDIA_TYPE
+        || review.secretReview?.decision !== 'CLEAR'
+      ))
     || review.decision !== disposition.decision
     || canonicalJson(review.reasonCodes) !== canonicalJson(disposition.reasonCodes)
   ) {

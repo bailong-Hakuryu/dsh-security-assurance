@@ -285,7 +285,98 @@ async function qualifiedSecretReview(
     assessmentMode: fixture.contextGrant.purpose.assessmentMode,
     ...admission,
   })
-  return { admission, admitted }
+  return { admission, admitted, material, redaction }
+}
+
+function qualifiedEgressAuthorization(
+  fixture: Awaited<ReturnType<typeof materialReviewFixture>>,
+  secretReview: Awaited<ReturnType<typeof qualifiedSecretReview>>,
+  overrides: {
+    readonly qualificationExpiresAt?: string
+    readonly providerId?: string
+    readonly destinationId?: string
+    readonly requestByteLimit?: number
+    readonly auditPolicyId?: string
+    readonly timeoutMilliseconds?: number
+    readonly authorizationExpiresAt?: string
+  } = {},
+) {
+  const evaluatedAt = '2026-09-12T00:05:00.000Z'
+  const brokerIdentity = {
+    brokerId: 'fixture/model-invoker',
+    brokerVersion: '1.0.0',
+    implementationDigest: structuredDigest(
+      'application/vnd.dsh.security.egress-broker-implementation+json',
+      { implementation: 'fixture-model-invoker-v1' },
+    ),
+  }
+  const brokerQualificationCore = {
+    schemaVersion: 1 as const,
+    qualificationId: 'fixture/model-invoker/qualification-v1',
+    brokerIdentity,
+    issuerId: 'fixture/security-host',
+    level: 'HOST_ATTESTED' as const,
+    providerIds: ['provider/reference'],
+    dataEgressPolicyIds: ['egress/host-qualified-v1'],
+    destinationIds: ['provider/reference'],
+    categoryIds: ['security/source-slice'],
+    maximumRequestBytes: 512,
+    maximumRequestCount: 1,
+    maximumTimeoutMilliseconds: 30_000,
+    auditPolicyIds: ['audit/source-slice-egress-v1'],
+    issuedAt: '2026-01-01T00:00:00.000Z',
+    expiresAt: overrides.qualificationExpiresAt ?? '2027-01-01T00:00:00.000Z',
+    evidenceDigests: [structuredDigest(
+      'application/vnd.dsh.security.egress-broker-conformance+json',
+      { suite: 'fixture-model-invoker-conformance-v1' },
+    )],
+    limitations: ['One exact pre-authorized Source Slice per invocation.'],
+  }
+  const brokerQualification = {
+    ...brokerQualificationCore,
+    qualificationDigest: structuredDigest(
+      'application/vnd.dsh.security.egress-broker-qualification+json',
+      brokerQualificationCore,
+    ),
+  }
+  const destinationAuthorizationCore = {
+    schemaVersion: 1 as const,
+    authorizationId: 'fixture/source-slice-destination-authorization-v1',
+    issuerId: 'fixture/security-host',
+    level: 'HOST_AUTHORIZED' as const,
+    contextGrantDigest: fixture.contextGrant.grantDigest,
+    requestDigest: fixture.request.requestDigest,
+    subjectDigest: secretReview.material.subjectDigest,
+    sourceDigest: secretReview.material.digest,
+    path: secretReview.material.path,
+    redactionDigest: secretReview.redaction.redactionDigest,
+    redactedDigest: secretReview.redaction.redactedDigest,
+    secretReviewDigest: secretReview.admitted.secretReviewDigest,
+    brokerQualificationDigest: brokerQualification.qualificationDigest,
+    brokerId: brokerIdentity.brokerId,
+    providerId: overrides.providerId ?? 'provider/reference',
+    credentialBindingId: 'credential/model-provider-reference-v1',
+    dataEgressPolicyId: fixture.request.disclosure.dataEgressPolicyId,
+    destinationId: overrides.destinationId ?? fixture.request.disclosure.destinationId,
+    categoryId: fixture.request.disclosure.categoryId,
+    requestByteLimit: overrides.requestByteLimit ?? fixture.request.budget.contextBytes,
+    requestCountLimit: 1,
+    timeoutMilliseconds: overrides.timeoutMilliseconds ?? 30_000,
+    auditPolicyId: overrides.auditPolicyId ?? 'audit/source-slice-egress-v1',
+    authorizedAt: '2026-09-12T00:00:00.000Z',
+    expiresAt: overrides.authorizationExpiresAt ?? '2026-09-12T00:10:00.000Z',
+  }
+  return {
+    brokerQualification,
+    destinationAuthorization: {
+      ...destinationAuthorizationCore,
+      authorizationDigest: structuredDigest(
+        'application/vnd.dsh.security.source-slice-destination-authorization+json',
+        destinationAuthorizationCore,
+      ),
+    },
+    evaluatedAt,
+  }
 }
 
 describe('ADR 0168 protected Source Slice material review record', () => {
@@ -348,6 +439,98 @@ describe('ADR 0168 protected Source Slice material review record', () => {
         ],
       })
       expect(JSON.stringify(review)).not.toMatch(/APPROVED|AUTHORIZED|GRANTED/iu)
+    } finally {
+      await fixture.subprocessFiber.dispose()
+    }
+  })
+
+  it('advances exact qualified Broker and destination Evidence only to Broker invocation', async () => {
+    const fixture = await materialReviewFixture('egress/host-qualified-v1')
+    try {
+      const secretReview = await qualifiedSecretReview(fixture)
+      const review = await reviewRequestedSourceSliceMaterial({
+        securityRoot: fixture.securityRoot,
+        contextGrant: fixture.contextGrant,
+        request: fixture.request,
+        fingerprintKey,
+        fingerprintKeyId: 'host/secret-fingerprint-key-1',
+        secretReview: secretReview.admission,
+        egressAuthorization: qualifiedEgressAuthorization(fixture, secretReview),
+      })
+
+      expect(review.decision).toBe('ADDITIONAL_REVIEW_REQUIRED')
+      expect(review.egressDecision).toBe('BROKER_INVOCATION_REQUIRED')
+      expect(review.checks.find(check => check.check === 'DATA_EGRESS')).toEqual({
+        check: 'DATA_EGRESS',
+        status: 'REVIEW_REQUIRED',
+        reasonCodes: ['BROKER_INVOCATION_REQUIRED'],
+      })
+      const bindings = {
+        contextGrantDigest: fixture.contextGrant.grantDigest,
+        requestDigest: fixture.request.requestDigest,
+        subjectDigest: fixture.request.subjectDigest,
+        secretReview: secretReview.admitted,
+        egressAuthorization: review.egressAuthorization!,
+      }
+      expect(parseProtectedSourceSliceMaterialReview(review, bindings)).toEqual(review)
+      expect(() => parseProtectedSourceSliceMaterialReview(review, {
+        ...bindings,
+        egressAuthorization: undefined,
+      })).toThrow(/egress authorization/iu)
+      expect(() => parseProtectedSourceSliceMaterialReview({
+        ...review,
+        egressAuthorization: {
+          ...review.egressAuthorization!,
+          providerId: 'provider/forged',
+        },
+      }, bindings)).toThrow(/egress authorization|digest/iu)
+      expect(JSON.stringify(review)).not.toMatch(/APPROVED|AUTHORIZED|GRANTED/iu)
+      expect(JSON.stringify(review)).not.toContain(sourceText)
+    } finally {
+      await fixture.subprocessFiber.dispose()
+    }
+  })
+
+  it.each([
+    ['expired Broker qualification', { qualificationExpiresAt: '2026-09-12T00:04:00.000Z' }],
+    ['Provider scope mismatch', { providerId: 'provider/unqualified' }],
+    ['destination mismatch', { destinationId: 'provider/other' }],
+    ['Request byte expansion', { requestByteLimit: 1024 }],
+    ['audit policy mismatch', { auditPolicyId: 'audit/unqualified' }],
+    ['timeout expansion', { timeoutMilliseconds: 60_000 }],
+    ['expired destination authorization', {
+      authorizationExpiresAt: '2026-09-12T00:04:00.000Z',
+    }],
+  ] as const)('fails closed on %s', async (_name, overrides) => {
+    const fixture = await materialReviewFixture('egress/host-qualified-v1')
+    try {
+      const secretReview = await qualifiedSecretReview(fixture)
+      await expect(reviewRequestedSourceSliceMaterial({
+        securityRoot: fixture.securityRoot,
+        contextGrant: fixture.contextGrant,
+        request: fixture.request,
+        fingerprintKey,
+        fingerprintKeyId: 'host/secret-fingerprint-key-1',
+        secretReview: secretReview.admission,
+        egressAuthorization: qualifiedEgressAuthorization(fixture, secretReview, overrides),
+      })).rejects.toThrow(/authorization|qualification|bounds|inputs/iu)
+    } finally {
+      await fixture.subprocessFiber.dispose()
+    }
+  })
+
+  it('does not admit Broker Evidence without the exact complete CLEAR secret review', async () => {
+    const fixture = await materialReviewFixture('egress/host-qualified-v1')
+    try {
+      const secretReview = await qualifiedSecretReview(fixture)
+      await expect(reviewRequestedSourceSliceMaterial({
+        securityRoot: fixture.securityRoot,
+        contextGrant: fixture.contextGrant,
+        request: fixture.request,
+        fingerprintKey,
+        fingerprintKeyId: 'host/secret-fingerprint-key-1',
+        egressAuthorization: qualifiedEgressAuthorization(fixture, secretReview),
+      })).rejects.toThrow(/requires secret review/iu)
     } finally {
       await fixture.subprocessFiber.dispose()
     }
@@ -613,5 +796,7 @@ describe('ADR 0168 protected Source Slice material review record', () => {
     expect(packageRoot).not.toHaveProperty('parseProtectedSourceSliceMaterialReview')
     expect(packageRoot).not.toHaveProperty('admitQualifiedSourceSliceSecretReview')
     expect(packageRoot).not.toHaveProperty('parseProtectedSourceSliceSecretReview')
+    expect(packageRoot).not.toHaveProperty('admitProtectedSourceSliceEgressAuthorization')
+    expect(packageRoot).not.toHaveProperty('parseProtectedSourceSliceEgressAuthorization')
   })
 })
