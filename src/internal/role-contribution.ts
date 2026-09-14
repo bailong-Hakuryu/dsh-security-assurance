@@ -134,7 +134,7 @@ export interface RoleContributionCandidateFindingV1 {
   readonly evidenceArtifactIds: readonly string[]
 }
 
-const candidateFindingSchema: z.ZodType<RoleContributionCandidateFindingV1> = z.strictObject({
+export const roleContributionCandidateFindingV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   candidateId: candidateIdSchema,
   weaknessClassification: z.strictObject({
@@ -274,7 +274,7 @@ const roleContributionCoreShape = {
     securityClaim: boundedTextSchema,
     evidenceArtifactIds: z.array(artifactIdSchema).max(32),
   })).max(128),
-  candidateFindings: z.array(candidateFindingSchema).max(256),
+  candidateFindings: z.array(roleContributionCandidateFindingV1Schema).max(256),
   coverageObservations: z.array(z.strictObject({
     obligationId: boundedIdSchema,
     state: z.enum(['SUPPORTED', 'GAP', 'UNRESOLVED']),

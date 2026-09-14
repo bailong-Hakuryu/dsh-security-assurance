@@ -183,6 +183,18 @@
   post-Contribution Evidence extension fail closed, and released Stores migrate
   through a separately backed-up and verified v5 step. No Provider call,
   automatic retry, public contract, or Control Plane change is added.
+- Add package-private pure Role Candidate Admission. The all-or-nothing seam
+  reparses the exact Context Grant, admitted Role Contribution and its durable
+  Admission Link, binds every Candidate to the Assessment, Subject, Role,
+  Attempt generation and fence, contribution revision and digests, and emits a
+  separate deeply frozen Candidate and admission digest. Source Anchors must
+  match raw-byte-reverified frozen-Subject slices and remain inside their byte
+  bounds; Candidate Evidence references must name caller-confirmed durable
+  objects. Stale or substituted lineage, drifted source material, unavailable
+  Evidence, duplicate anchors or Evidence identities, ambiguous weaknesses,
+  and schema or aggregate-bound violations fail closed with fixed diagnostic
+  codes. No Candidate persistence, Validation Outcome, Finding, clustering,
+  Evidence merging, Provider call, public API, or Control Plane change is added.
 
 ## [0.1.0-rc.14] - 2026-09-11
 
