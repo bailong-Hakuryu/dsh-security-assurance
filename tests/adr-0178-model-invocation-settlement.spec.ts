@@ -1177,7 +1177,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
     }
   })
 
-  it('opens a released schema-v1 Store only after verified v2, v3, and v4 migrations', async () => {
+  it('opens a released schema-v1 Store only after verified v2 through v5 migrations', async () => {
     const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-model-invocation-migration-'))
     temporaryRoots.push(securityRoot)
     const databasePath = join(securityRoot, 'security-assurance.sqlite')
@@ -1191,7 +1191,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
 
     const migrated = new DatabaseSync(databasePath, { readOnly: true })
     try {
-      expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 4 })
+      expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 5 })
       expect(migrated.prepare(`
         SELECT source_version, target_version, committed_at
         FROM schema_migrations ORDER BY target_version
@@ -1209,6 +1209,11 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
         {
           source_version: 3,
           target_version: 4,
+          committed_at: '2026-09-13T00:00:04.000Z',
+        },
+        {
+          source_version: 4,
+          target_version: 5,
           committed_at: '2026-09-13T00:00:04.000Z',
         },
       ])
@@ -1237,6 +1242,13 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
           source_state_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
           result_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
         }),
+        expect.objectContaining({
+          backup_name: expect.stringMatching(
+            /^security-assurance\.sqlite\.pre-migration-v4-[0-9a-f-]{36}\.sqlite$/u,
+          ),
+          source_state_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+          result_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+        }),
       ])
       expect(migrated.prepare(`
         SELECT name FROM sqlite_master
@@ -1248,15 +1260,23 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
       expect(migrated.prepare(`
         SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'role_contributions'
       `).get()).toEqual({ name: 'role_contributions' })
+      expect(migrated.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'role_output_format_repair_plans'
+      `).get()).toEqual({ name: 'role_output_format_repair_plans' })
+      expect(migrated.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'role_output_format_repair_records'
+      `).get()).toEqual({ name: 'role_output_format_repair_records' })
     } finally {
       migrated.close()
     }
 
     const backupNames = (await readdir(securityRoot)).filter(name => (
-      /^security-assurance\.sqlite\.pre-migration-v[123]-[0-9a-f-]{36}\.sqlite$/u.test(name)
+      /^security-assurance\.sqlite\.pre-migration-v[1-4]-[0-9a-f-]{36}\.sqlite$/u.test(name)
     ))
-    expect(backupNames).toHaveLength(3)
-    for (const version of [1, 2, 3]) {
+    expect(backupNames).toHaveLength(4)
+    for (const version of [1, 2, 3, 4]) {
       const backupName = backupNames.find(name => name.includes(`migration-v${version}-`))
       expect(backupName).toBeDefined()
       const backup = new DatabaseSync(join(securityRoot, backupName!), { readOnly: true })
@@ -1273,7 +1293,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
     const tampered = new DatabaseSync(databasePath)
     try {
       tampered.prepare(`
-        UPDATE schema_migrations SET result_digest = ? WHERE target_version = 4
+        UPDATE schema_migrations SET result_digest = ? WHERE target_version = 5
       `).run(`sha256:${'0'.repeat(64)}`)
     } finally {
       tampered.close()

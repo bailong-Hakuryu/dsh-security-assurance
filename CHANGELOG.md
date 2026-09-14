@@ -173,6 +173,16 @@
   output, authority fields, raw-byte mismatch, or lineage/budget drift fails
   closed. This slice adds no Provider Adapter, Store write, automatic retry,
   public API, Finding, Coverage Resolution, Verdict, or Risk Acceptance.
+- Persist governed Format Repair authority and results inside the Role Attempt
+  aggregate boundary. Schema v5 stores at most one exact predeclared plan and
+  one text-free admitted result per Attempt generation. The plan is committed
+  atomically with Attempt start and cannot be added or replaced later; repair
+  Evidence must follow the original invocation, the result requires both exact
+  durable Evidence links, and Contribution admission must match the admitted
+  repair digest. Exact replay survives Store reopen, conflicting replay and
+  post-Contribution Evidence extension fail closed, and released Stores migrate
+  through a separately backed-up and verified v5 step. No Provider call,
+  automatic retry, public contract, or Control Plane change is added.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

@@ -46,7 +46,10 @@ import type {
   ModelInvocationRecordBindingsV1,
   ModelInvocationRecordV1,
 } from './model-invocation-settlement.ts'
-import { parseModelInvocationRecordV1 } from './model-invocation-settlement.ts'
+import {
+  MODEL_INVOCATION_FORMAT_REPAIR_REQUEST_MEDIA_TYPE,
+  parseModelInvocationRecordV1,
+} from './model-invocation-settlement.ts'
 import type {
   ModelInvocationEvidenceLinkV1,
   ModelInvocationEvidencePublicationReceiptV1,
@@ -70,6 +73,17 @@ import {
   parseRoleContributionAdmissionLinkV1,
   parseRoleContributionV1,
 } from './role-contribution.ts'
+import type {
+  AdmitRoleOutputFormatRepairOptionsV1,
+  AdmittedRoleOutputFormatRepairV1,
+  RoleOutputFormatRepairPlanV1,
+  RoleOutputFormatRepairRecordV1,
+} from './role-output-format-repair.ts'
+import {
+  admitRoleOutputFormatRepairV1,
+  parseRoleOutputFormatRepairPlanV1,
+  parseRoleOutputFormatRepairRecordV1,
+} from './role-output-format-repair.ts'
 import {
   cancelRoleAttemptV1,
   completeRoleAttemptV1,
@@ -80,7 +94,7 @@ import {
 } from './role-attempt.ts'
 
 const APPLICATION_ID = 0x4453_4853
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 
 export type SecurityPersistenceErrorCode =
   | 'foreign_database'
@@ -91,6 +105,8 @@ export type SecurityPersistenceErrorCode =
   | 'repository_not_found'
   | 'assessment_not_found'
   | 'model_invocation_conflict'
+  | 'role_output_format_repair_conflict'
+  | 'role_output_format_repair_not_found'
   | 'role_contribution_conflict'
   | 'role_contribution_not_found'
   | 'role_attempt_conflict'
@@ -221,6 +237,12 @@ export interface LinkModelInvocationEvidencePersistenceInput {
 export interface StartRoleAttemptPersistenceInput extends RoleAttemptStartBindingsV1 {
   readonly contextGrant: RoleContextGrantV1
   readonly expectedAssessmentRevision: number
+  readonly formatRepairPlan?: RoleOutputFormatRepairPlanV1
+}
+
+export interface AdmitRoleOutputFormatRepairPersistenceInput
+  extends AdmitRoleOutputFormatRepairOptionsV1 {
+  readonly expectedAssessmentRevision: number
 }
 
 export interface AdmitRoleContributionPersistenceInput {
@@ -323,6 +345,35 @@ interface RoleContributionRow {
   readonly link_digest: string
   readonly contribution_json: string
   readonly link_json: string
+  readonly committed_at: string
+}
+
+interface RoleOutputFormatRepairPlanRow {
+  readonly assessment_id: AssessmentId
+  readonly attempt_id: string
+  readonly attempt_generation: number
+  readonly plan_id: string
+  readonly contribution_id: string
+  readonly original_invocation_id: string
+  readonly repair_invocation_id: string
+  readonly plan_digest: string
+  readonly plan_json: string
+  readonly declared_at: string
+}
+
+interface RoleOutputFormatRepairRecordRow {
+  readonly assessment_id: AssessmentId
+  readonly attempt_id: string
+  readonly attempt_generation: number
+  readonly assessment_revision: number
+  readonly plan_id: string
+  readonly contribution_id: string
+  readonly original_invocation_id: string
+  readonly repair_invocation_id: string
+  readonly plan_digest: string
+  readonly contribution_digest: string
+  readonly repair_record_digest: string
+  readonly record_json: string
   readonly committed_at: string
 }
 
@@ -447,6 +498,19 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
       'committed_at',
     ])
   }
+  if (schemaVersion >= 5) {
+    expected.set('role_output_format_repair_plans', [
+      'assessment_id', 'attempt_id', 'attempt_generation', 'plan_id',
+      'contribution_id', 'original_invocation_id', 'repair_invocation_id',
+      'plan_digest', 'plan_json', 'declared_at',
+    ])
+    expected.set('role_output_format_repair_records', [
+      'assessment_id', 'attempt_id', 'attempt_generation', 'assessment_revision',
+      'plan_id', 'contribution_id', 'original_invocation_id', 'repair_invocation_id',
+      'plan_digest', 'contribution_digest', 'repair_record_digest', 'record_json',
+      'committed_at',
+    ])
+  }
   const tables = db.prepare(`
     SELECT name FROM sqlite_master
     WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
@@ -492,6 +556,14 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
   }
   if (schemaVersion >= 4) {
     primaryKeys.set('role_contributions', ['assessment_id', 'contribution_id'])
+  }
+  if (schemaVersion >= 5) {
+    primaryKeys.set('role_output_format_repair_plans', [
+      'assessment_id', 'attempt_id', 'attempt_generation',
+    ])
+    primaryKeys.set('role_output_format_repair_records', [
+      'assessment_id', 'attempt_id', 'attempt_generation',
+    ])
   }
   for (const [table, columns] of primaryKeys) {
     const observed = db.prepare(`PRAGMA table_info('${table}')`).all() as unknown as readonly {
@@ -550,6 +622,24 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
       ['assessment_id', 'role_attempts', 'assessment_id'],
       ['attempt_id', 'role_attempts', 'attempt_id'],
       ['attempt_generation', 'role_attempts', 'generation'],
+    ])
+  }
+  if (schemaVersion >= 5) {
+    foreignKeys.set('role_output_format_repair_plans', [
+      ['assessment_id', 'role_attempts', 'assessment_id'],
+      ['attempt_id', 'role_attempts', 'attempt_id'],
+      ['attempt_generation', 'role_attempts', 'generation'],
+    ])
+    foreignKeys.set('role_output_format_repair_records', [
+      ['assessment_id', 'assessment_revisions', 'assessment_id'],
+      ['assessment_revision', 'assessment_revisions', 'assessment_revision'],
+      ['assessment_id', 'role_output_format_repair_plans', 'assessment_id'],
+      ['attempt_id', 'role_output_format_repair_plans', 'attempt_id'],
+      ['attempt_generation', 'role_output_format_repair_plans', 'attempt_generation'],
+      ['assessment_id', 'model_invocation_evidence_links', 'assessment_id'],
+      ['original_invocation_id', 'model_invocation_evidence_links', 'invocation_id'],
+      ['assessment_id', 'model_invocation_evidence_links', 'assessment_id'],
+      ['repair_invocation_id', 'model_invocation_evidence_links', 'invocation_id'],
     ])
   }
   for (const [table, expectedForeignKeys] of foreignKeys) {
@@ -679,6 +769,55 @@ function installSchemaV4Objects(db: DatabaseSync): void {
   `)
 }
 
+function installSchemaV5Objects(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE role_output_format_repair_plans (
+      assessment_id         TEXT NOT NULL,
+      attempt_id            TEXT NOT NULL,
+      attempt_generation    INTEGER NOT NULL CHECK (attempt_generation > 0),
+      plan_id               TEXT NOT NULL,
+      contribution_id       TEXT NOT NULL,
+      original_invocation_id TEXT NOT NULL,
+      repair_invocation_id  TEXT NOT NULL,
+      plan_digest           TEXT NOT NULL,
+      plan_json             TEXT NOT NULL,
+      declared_at           TEXT NOT NULL,
+      PRIMARY KEY (assessment_id, attempt_id, attempt_generation),
+      UNIQUE (assessment_id, plan_id),
+      UNIQUE (assessment_id, contribution_id),
+      FOREIGN KEY (assessment_id, attempt_id, attempt_generation)
+        REFERENCES role_attempts(assessment_id, attempt_id, generation)
+    ) STRICT;
+
+    CREATE TABLE role_output_format_repair_records (
+      assessment_id         TEXT NOT NULL,
+      attempt_id            TEXT NOT NULL,
+      attempt_generation    INTEGER NOT NULL CHECK (attempt_generation > 0),
+      assessment_revision   INTEGER NOT NULL,
+      plan_id               TEXT NOT NULL,
+      contribution_id       TEXT NOT NULL,
+      original_invocation_id TEXT NOT NULL,
+      repair_invocation_id  TEXT NOT NULL,
+      plan_digest           TEXT NOT NULL,
+      contribution_digest   TEXT NOT NULL,
+      repair_record_digest  TEXT NOT NULL,
+      record_json           TEXT NOT NULL,
+      committed_at          TEXT NOT NULL,
+      PRIMARY KEY (assessment_id, attempt_id, attempt_generation),
+      UNIQUE (assessment_id, plan_id),
+      UNIQUE (assessment_id, contribution_id),
+      FOREIGN KEY (assessment_id, assessment_revision)
+        REFERENCES assessment_revisions(assessment_id, assessment_revision),
+      FOREIGN KEY (assessment_id, attempt_id, attempt_generation)
+        REFERENCES role_output_format_repair_plans(assessment_id, attempt_id, attempt_generation),
+      FOREIGN KEY (assessment_id, original_invocation_id)
+        REFERENCES model_invocation_evidence_links(assessment_id, invocation_id),
+      FOREIGN KEY (assessment_id, repair_invocation_id)
+        REFERENCES model_invocation_evidence_links(assessment_id, invocation_id)
+    ) STRICT;
+  `)
+}
+
 function installSchema(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE repositories (
@@ -734,6 +873,7 @@ function installSchema(db: DatabaseSync): void {
   installSchemaV2Objects(db)
   installSchemaV3Objects(db)
   installSchemaV4Objects(db)
+  installSchemaV5Objects(db)
   db.exec(`PRAGMA application_id = ${APPLICATION_ID}`)
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
 }
@@ -770,6 +910,18 @@ function schemaStateDigest(db: DatabaseSync, schemaVersion: number): string {
     queries.push(['role_contributions', `
       SELECT * FROM role_contributions ORDER BY assessment_id, contribution_id
     `])
+  }
+  if (schemaVersion >= 5) {
+    queries.push(
+      ['role_output_format_repair_plans', `
+        SELECT * FROM role_output_format_repair_plans
+        ORDER BY assessment_id, attempt_id, attempt_generation
+      `],
+      ['role_output_format_repair_records', `
+        SELECT * FROM role_output_format_repair_records
+        ORDER BY assessment_id, attempt_id, attempt_generation
+      `],
+    )
   }
   let stateDigest = digest({ schemaVersion })
   for (const [table, query] of queries) {
@@ -850,8 +1002,8 @@ async function migrateSchemaStep(
   db: DatabaseSync,
   path: string,
   now: () => string,
-  sourceVersion: 1 | 2 | 3,
-  targetVersion: 2 | 3 | 4,
+  sourceVersion: 1 | 2 | 3 | 4,
+  targetVersion: 2 | 3 | 4 | 5,
   installTargetObjects: (db: DatabaseSync) => void,
 ): Promise<void> {
   verifySchema(db, sourceVersion)
@@ -966,6 +1118,10 @@ async function openDatabase(path: string, now: () => string): Promise<DatabaseSy
     if (admittedVersion === 3) {
       await migrateSchemaStep(db, path, now, 3, 4, installSchemaV4Objects)
       admittedVersion = 4
+    }
+    if (admittedVersion === 4) {
+      await migrateSchemaStep(db, path, now, 4, 5, installSchemaV5Objects)
+      admittedVersion = 5
     }
     if (admittedVersion !== SCHEMA_VERSION) {
       throw new SecurityPersistenceError('unsupported_schema', 'SQLite schema version is unsupported')
@@ -1478,6 +1634,9 @@ export class SecurityPersistence {
     this.requireOpen()
     this.db.exec('BEGIN IMMEDIATE')
     try {
+      const formatRepairPlan = input.formatRepairPlan === undefined
+        ? undefined
+        : parseRoleOutputFormatRepairPlanV1(input.formatRepairPlan)
       const replay = this.getRoleAttempt(
         input.contextGrant.assessmentId,
         input.contextGrant.roleAttemptId,
@@ -1493,6 +1652,21 @@ export class SecurityPersistence {
           throw new SecurityPersistenceError(
             'role_attempt_conflict',
             'Role Attempt identity is already bound to different execution inputs',
+          )
+        }
+        const replayPlan = this.getRoleOutputFormatRepairPlan(
+          replay.assessmentId,
+          replay.attemptId,
+          replay.generation,
+        )
+        if (
+          (formatRepairPlan === undefined) !== (replayPlan === undefined)
+          || (formatRepairPlan !== undefined
+            && canonicalJson(formatRepairPlan) !== canonicalJson(replayPlan))
+        ) {
+          throw new SecurityPersistenceError(
+            'role_output_format_repair_conflict',
+            'Role Attempt identity is already bound to a different Format Repair plan',
           )
         }
         this.db.exec('COMMIT')
@@ -1587,6 +1761,33 @@ export class SecurityPersistence {
         assessmentRevision: current.assessmentRevision + 1,
         startedAt: committedAt,
       })
+      if (formatRepairPlan !== undefined) {
+        const attemptRole = {
+          roleId: attempt.roleDefinition.roleId,
+          roleVersion: attempt.roleDefinition.roleVersion,
+          definitionDigest: attempt.roleDefinition.definitionDigest,
+        }
+        if (
+          formatRepairPlan.assessmentId !== attempt.assessmentId
+          || formatRepairPlan.parentAttempt.attemptId !== attempt.attemptId
+          || formatRepairPlan.parentAttempt.generation !== attempt.generation
+          || canonicalJson(formatRepairPlan.parentAttempt.fenceDigest)
+            !== canonicalJson(attempt.fenceDigest)
+          || canonicalJson(formatRepairPlan.contextGrantDigest)
+            !== canonicalJson(attempt.contextGrantDigest)
+          || canonicalJson(formatRepairPlan.subjectDigest)
+            !== canonicalJson(current.subject.digest)
+          || canonicalJson(formatRepairPlan.roleDefinition) !== canonicalJson(attemptRole)
+          || Date.parse(formatRepairPlan.declaredAt) > Date.parse(committedAt)
+          || attempt.budget.requestLimit < 2
+          || formatRepairPlan.repairInvocation.budget.tokenLimit > attempt.budget.tokenLimit
+        ) {
+          throw new SecurityPersistenceError(
+            'role_output_format_repair_conflict',
+            'Format Repair plan does not bind the exact new Role Attempt or its durable budget',
+          )
+        }
+      }
       const roleCard = projectRoleAttemptCardV1(attempt)
       const started = internalAssessmentRecordV1Schema.parse({
         ...current,
@@ -1614,6 +1815,26 @@ export class SecurityPersistence {
         committedAt,
         committedAt,
       )
+      if (formatRepairPlan !== undefined) {
+        this.db.prepare(`
+          INSERT INTO role_output_format_repair_plans (
+            assessment_id, attempt_id, attempt_generation, plan_id,
+            contribution_id, original_invocation_id, repair_invocation_id,
+            plan_digest, plan_json, declared_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          formatRepairPlan.assessmentId,
+          formatRepairPlan.parentAttempt.attemptId,
+          formatRepairPlan.parentAttempt.generation,
+          formatRepairPlan.planId,
+          formatRepairPlan.contributionId,
+          formatRepairPlan.originalInvocationId,
+          formatRepairPlan.repairInvocation.invocationId,
+          formatRepairPlan.planDigest.value,
+          canonicalJson(formatRepairPlan),
+          formatRepairPlan.declaredAt,
+        )
+      }
       this.db.exec('COMMIT')
       return attempt
     } catch (error) {
@@ -1633,6 +1854,190 @@ export class SecurityPersistence {
       WHERE assessment_id = ? AND attempt_id = ? AND generation = ?
     `).get(assessmentId, attemptId, generation) as RoleAttemptRow | undefined
     return row === undefined ? undefined : this.parseRoleAttemptRow(row)
+  }
+
+  getRoleOutputFormatRepairPlan(
+    assessmentId: AssessmentId,
+    attemptId: string,
+    generation: number,
+  ): RoleOutputFormatRepairPlanV1 | undefined {
+    this.requireOpen()
+    const row = this.db.prepare(`
+      SELECT * FROM role_output_format_repair_plans
+      WHERE assessment_id = ? AND attempt_id = ? AND attempt_generation = ?
+    `).get(assessmentId, attemptId, generation) as RoleOutputFormatRepairPlanRow | undefined
+    return row === undefined ? undefined : this.parseRoleOutputFormatRepairPlanRow(row)
+  }
+
+  /**
+   * Atomically admit the one predeclared syntax-only repair result. Protected
+   * response bytes remain caller-owned and are never written to the Store.
+   */
+  admitRoleOutputFormatRepair(
+    input: AdmitRoleOutputFormatRepairPersistenceInput,
+  ): AdmittedRoleOutputFormatRepairV1 {
+    this.requireOpen()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const plan = parseRoleOutputFormatRepairPlanV1(input.plan)
+      const durablePlan = this.getRoleOutputFormatRepairPlan(
+        plan.assessmentId,
+        plan.parentAttempt.attemptId,
+        plan.parentAttempt.generation,
+      )
+      if (durablePlan === undefined) {
+        throw new SecurityPersistenceError(
+          'role_output_format_repair_not_found',
+          'Format Repair requires an exact plan persisted before Role execution',
+        )
+      }
+      if (canonicalJson(durablePlan) !== canonicalJson(plan)) {
+        throw new SecurityPersistenceError(
+          'role_output_format_repair_conflict',
+          'Format Repair plan differs from the durable predeclared plan',
+        )
+      }
+      const admitted = admitRoleOutputFormatRepairV1(input)
+      const record = admitted.repairRecord
+
+      const replayRow = this.db.prepare(`
+        SELECT * FROM role_output_format_repair_records
+        WHERE assessment_id = ? AND attempt_id = ? AND attempt_generation = ?
+      `).get(
+        record.assessmentId,
+        record.parentAttempt.attemptId,
+        record.parentAttempt.generation,
+      ) as RoleOutputFormatRepairRecordRow | undefined
+      if (replayRow !== undefined) {
+        const replay = this.parseRoleOutputFormatRepairRecordRow(replayRow)
+        if (
+          replayRow.assessment_revision !== input.expectedAssessmentRevision + 1
+          || canonicalJson(replay) !== canonicalJson(record)
+        ) {
+          throw new SecurityPersistenceError(
+            'role_output_format_repair_conflict',
+            'Role Attempt generation already has a different Format Repair result',
+          )
+        }
+        this.db.exec('COMMIT')
+        return admitted
+      }
+
+      const currentAttempt = this.getRoleAttempt(
+        record.assessmentId,
+        record.parentAttempt.attemptId,
+        record.parentAttempt.generation,
+      )
+      if (currentAttempt === undefined) {
+        throw new SecurityPersistenceError(
+          'role_attempt_not_found',
+          'Format Repair requires its exact durable Role Attempt',
+        )
+      }
+      const currentAssessment = this.getAssessmentRecord(record.assessmentId)
+      if (currentAssessment === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
+      if (
+        currentAttempt.lifecycleState !== 'RUNNING'
+        || currentAssessment.state !== 'RUNNING'
+        || currentAssessment.assessmentRevision !== input.expectedAssessmentRevision
+        || currentAssessment.pendingCancellation !== null
+      ) {
+        throw new SecurityPersistenceError(
+          'revision_conflict',
+          'Format Repair cannot be admitted at this Assessment revision',
+        )
+      }
+      const originalLink = this.getModelInvocationEvidenceLink(
+        record.assessmentId,
+        record.originalInvocation.invocationId,
+      )
+      const repairLink = this.getModelInvocationEvidenceLink(
+        record.assessmentId,
+        record.repairInvocation.invocationId,
+      )
+      if (
+        originalLink === undefined
+        || repairLink === undefined
+        || canonicalJson(originalLink.publicationReceipt.recordDigest)
+          !== canonicalJson(record.originalInvocation.recordDigest)
+        || canonicalJson(repairLink.publicationReceipt.recordDigest)
+          !== canonicalJson(record.repairInvocation.recordDigest)
+      ) {
+        throw new SecurityPersistenceError(
+          'role_output_format_repair_conflict',
+          'Format Repair requires both exact Model Invocation Evidence links',
+        )
+      }
+      if (
+        admitted.contribution.resourceUse.requests > currentAttempt.budget.requestLimit
+        || admitted.contribution.resourceUse.tokens > currentAttempt.budget.tokenLimit
+      ) {
+        throw new SecurityPersistenceError(
+          'role_output_format_repair_conflict',
+          'Format Repair result exceeds its durable Role Attempt budget',
+        )
+      }
+
+      const committedAt = this.now()
+      if (Date.parse(committedAt) < Date.parse(record.completedAt)) {
+        throw new SecurityPersistenceError(
+          'role_output_format_repair_conflict',
+          'Format Repair result cannot be committed before its invocation completed',
+        )
+      }
+      const updated = internalAssessmentRecordV1Schema.parse({
+        ...currentAssessment,
+        assessmentRevision: currentAssessment.assessmentRevision + 1,
+        updatedAt: committedAt,
+      })
+      this.commitAssessmentRevision(
+        updated,
+        'role_output_format_repair_admitted',
+        committedAt,
+      )
+      this.db.prepare(`
+        INSERT INTO role_output_format_repair_records (
+          assessment_id, attempt_id, attempt_generation, assessment_revision,
+          plan_id, contribution_id, original_invocation_id, repair_invocation_id,
+          plan_digest, contribution_digest, repair_record_digest, record_json,
+          committed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        record.assessmentId,
+        record.parentAttempt.attemptId,
+        record.parentAttempt.generation,
+        updated.assessmentRevision,
+        plan.planId,
+        record.contributionId,
+        record.originalInvocation.invocationId,
+        record.repairInvocation.invocationId,
+        record.planDigest.value,
+        record.contributionDigest.value,
+        record.recordDigest.value,
+        canonicalJson(record),
+        committedAt,
+      )
+      this.db.exec('COMMIT')
+      return admitted
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  getRoleOutputFormatRepairRecord(
+    assessmentId: AssessmentId,
+    attemptId: string,
+    generation: number,
+  ): RoleOutputFormatRepairRecordV1 | undefined {
+    this.requireOpen()
+    const row = this.db.prepare(`
+      SELECT * FROM role_output_format_repair_records
+      WHERE assessment_id = ? AND attempt_id = ? AND attempt_generation = ?
+    `).get(assessmentId, attemptId, generation) as RoleOutputFormatRepairRecordRow | undefined
+    return row === undefined ? undefined : this.parseRoleOutputFormatRepairRecordRow(row)
   }
 
   /** Admit one immutable terminal Role proposal after all of its invocation Evidence is durable. */
@@ -2164,6 +2569,16 @@ export class SecurityPersistence {
           'Model Invocation Evidence requires its exact durable Role Attempt',
         )
       }
+      const formatRepairPlan = this.getRoleOutputFormatRepairPlan(
+        roleAttempt.assessmentId,
+        roleAttempt.attemptId,
+        roleAttempt.generation,
+      )
+      const invocationLineageKind = this.modelInvocationLineageKind(
+        invocation,
+        roleAttempt,
+        formatRepairPlan,
+      )
       if (
         roleAttempt.lifecycleState !== 'RUNNING'
         || canonicalJson(roleAttempt.fenceDigest)
@@ -2175,16 +2590,39 @@ export class SecurityPersistence {
           roleVersion: roleAttempt.roleDefinition.roleVersion,
           definitionDigest: roleAttempt.roleDefinition.definitionDigest,
         }) !== canonicalJson(invocation.roleDefinition)
-        || canonicalJson(roleAttempt.provider) !== canonicalJson({
-          providerId: invocation.provider.providerId,
-          modelId: invocation.provider.modelId,
-          movingProvider: invocation.provider.movingProvider,
-        })
-        || canonicalJson(roleAttempt.prompt) !== canonicalJson(invocation.prompt)
+        || invocationLineageKind === undefined
       ) {
         throw new SecurityPersistenceError(
           'role_attempt_conflict',
           'Model Invocation Evidence does not bind the current durable Role Attempt lineage',
+        )
+      }
+      if (invocationLineageKind === 'repair') {
+        if (
+          formatRepairPlan === undefined
+          || this.getModelInvocationEvidenceLink(
+            roleAttempt.assessmentId,
+            formatRepairPlan.originalInvocationId,
+          ) === undefined
+        ) {
+          throw new SecurityPersistenceError(
+            'role_output_format_repair_conflict',
+            'Format Repair invocation requires its original invocation Evidence first',
+          )
+        }
+      }
+      const admittedContribution = this.db.prepare(`
+        SELECT contribution_id FROM role_contributions
+        WHERE assessment_id = ? AND attempt_id = ? AND attempt_generation = ?
+      `).get(
+        roleAttempt.assessmentId,
+        roleAttempt.attemptId,
+        roleAttempt.generation,
+      ) as { readonly contribution_id: string } | undefined
+      if (admittedContribution !== undefined) {
+        throw new SecurityPersistenceError(
+          'model_invocation_conflict',
+          'Model Invocation Evidence cannot extend an admitted Role Contribution lineage',
         )
       }
       const committedAt = this.now()
@@ -3029,6 +3467,110 @@ export class SecurityPersistence {
     return attempt
   }
 
+  private parseRoleOutputFormatRepairPlanRow(
+    row: RoleOutputFormatRepairPlanRow,
+  ): RoleOutputFormatRepairPlanV1 {
+    const plan = parseRoleOutputFormatRepairPlanV1(JSON.parse(row.plan_json))
+    const attempt = this.getRoleAttempt(
+      row.assessment_id,
+      row.attempt_id,
+      row.attempt_generation,
+    )
+    const assessment = this.getAssessmentRecord(row.assessment_id)
+    const attemptRole = attempt === undefined ? undefined : {
+      roleId: attempt.roleDefinition.roleId,
+      roleVersion: attempt.roleDefinition.roleVersion,
+      definitionDigest: attempt.roleDefinition.definitionDigest,
+    }
+    if (
+      row.plan_json !== canonicalJson(plan)
+      || row.assessment_id !== plan.assessmentId
+      || row.attempt_id !== plan.parentAttempt.attemptId
+      || row.attempt_generation !== plan.parentAttempt.generation
+      || row.plan_id !== plan.planId
+      || row.contribution_id !== plan.contributionId
+      || row.original_invocation_id !== plan.originalInvocationId
+      || row.repair_invocation_id !== plan.repairInvocation.invocationId
+      || row.plan_digest !== plan.planDigest.value
+      || row.declared_at !== plan.declaredAt
+      || attempt === undefined
+      || assessment === undefined
+      || canonicalJson(plan.parentAttempt.fenceDigest) !== canonicalJson(attempt.fenceDigest)
+      || canonicalJson(plan.contextGrantDigest) !== canonicalJson(attempt.contextGrantDigest)
+      || canonicalJson(plan.subjectDigest) !== canonicalJson(assessment.subject.digest)
+      || canonicalJson(plan.roleDefinition) !== canonicalJson(attemptRole)
+      || Date.parse(plan.declaredAt) > Date.parse(attempt.startedAt)
+      || attempt.budget.requestLimit < 2
+      || plan.repairInvocation.budget.tokenLimit > attempt.budget.tokenLimit
+    ) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'Role Output Format Repair plan row does not match its canonical record',
+      )
+    }
+    return plan
+  }
+
+  private parseRoleOutputFormatRepairRecordRow(
+    row: RoleOutputFormatRepairRecordRow,
+  ): RoleOutputFormatRepairRecordV1 {
+    const record = parseRoleOutputFormatRepairRecordV1(JSON.parse(row.record_json))
+    const plan = this.getRoleOutputFormatRepairPlan(
+      row.assessment_id,
+      row.attempt_id,
+      row.attempt_generation,
+    )
+    const revision = this.db.prepare(`
+      SELECT event_kind, committed_at FROM assessment_revisions
+      WHERE assessment_id = ? AND assessment_revision = ?
+    `).get(
+      row.assessment_id,
+      row.assessment_revision,
+    ) as { readonly event_kind: string; readonly committed_at: string } | undefined
+    const originalLink = this.getModelInvocationEvidenceLink(
+      row.assessment_id,
+      row.original_invocation_id,
+    )
+    const repairLink = this.getModelInvocationEvidenceLink(
+      row.assessment_id,
+      row.repair_invocation_id,
+    )
+    if (
+      row.record_json !== canonicalJson(record)
+      || row.assessment_id !== record.assessmentId
+      || row.attempt_id !== record.parentAttempt.attemptId
+      || row.attempt_generation !== record.parentAttempt.generation
+      || plan === undefined
+      || row.plan_id !== plan.planId
+      || canonicalJson(record.planDigest) !== canonicalJson(plan.planDigest)
+      || row.contribution_id !== plan.contributionId
+      || row.original_invocation_id !== plan.originalInvocationId
+      || row.repair_invocation_id !== plan.repairInvocation.invocationId
+      || row.contribution_id !== record.contributionId
+      || row.original_invocation_id !== record.originalInvocation.invocationId
+      || row.repair_invocation_id !== record.repairInvocation.invocationId
+      || row.plan_digest !== record.planDigest.value
+      || row.contribution_digest !== record.contributionDigest.value
+      || row.repair_record_digest !== record.recordDigest.value
+      || originalLink === undefined
+      || repairLink === undefined
+      || canonicalJson(originalLink.publicationReceipt.recordDigest)
+        !== canonicalJson(record.originalInvocation.recordDigest)
+      || canonicalJson(repairLink.publicationReceipt.recordDigest)
+        !== canonicalJson(record.repairInvocation.recordDigest)
+      || Number.isNaN(Date.parse(row.committed_at))
+      || Date.parse(row.committed_at) < Date.parse(record.completedAt)
+      || revision?.event_kind !== 'role_output_format_repair_admitted'
+      || revision.committed_at !== row.committed_at
+    ) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'Role Output Format Repair row does not match its canonical record and plan',
+      )
+    }
+    return record
+  }
+
   private parseModelInvocationEvidenceLinkRow(
     row: ModelInvocationEvidenceLinkRow,
   ): ModelInvocationEvidenceLinkV1 {
@@ -3088,6 +3630,40 @@ export class SecurityPersistence {
       )
     }
     return Object.freeze({ contribution, link })
+  }
+
+  private modelInvocationLineageKind(
+    record: ModelInvocationRecordV1,
+    roleAttempt: RoleAttemptRecordV1,
+    formatRepairPlan: RoleOutputFormatRepairPlanV1 | undefined,
+  ): 'attempt' | 'repair' | undefined {
+    const provider = {
+      providerId: record.provider.providerId,
+      modelId: record.provider.modelId,
+      movingProvider: record.provider.movingProvider,
+    }
+    if (
+      formatRepairPlan !== undefined
+      && record.invocationId === formatRepairPlan.repairInvocation.invocationId
+    ) {
+      return (
+        canonicalJson(provider) === canonicalJson(formatRepairPlan.repairInvocation.provider)
+        && canonicalJson(record.prompt) === canonicalJson(formatRepairPlan.repairInvocation.prompt)
+        && canonicalJson(record.parameters)
+          === canonicalJson(formatRepairPlan.repairInvocation.parameters)
+        && record.egress.requestDigest.mediaType
+          === MODEL_INVOCATION_FORMAT_REPAIR_REQUEST_MEDIA_TYPE
+        && record.budgetSettlement.requestLimit
+          === formatRepairPlan.repairInvocation.budget.requestLimit
+        && record.budgetSettlement.tokenLimit
+          === formatRepairPlan.repairInvocation.budget.tokenLimit
+      ) ? 'repair' : undefined
+    }
+    return (
+      record.egress.requestDigest.mediaType !== MODEL_INVOCATION_FORMAT_REPAIR_REQUEST_MEDIA_TYPE
+      && canonicalJson(provider) === canonicalJson(roleAttempt.provider)
+      && canonicalJson(record.prompt) === canonicalJson(roleAttempt.prompt)
+    ) ? 'attempt' : undefined
   }
 
   private validateRoleContributionLineage(input: {
@@ -3157,6 +3733,31 @@ export class SecurityPersistence {
       )
     }
 
+    const formatRepairPlan = this.getRoleOutputFormatRepairPlan(
+      contribution.assessmentId,
+      roleAttempt.attemptId,
+      roleAttempt.generation,
+    )
+    const formatRepairRecord = this.getRoleOutputFormatRepairRecord(
+      contribution.assessmentId,
+      roleAttempt.attemptId,
+      roleAttempt.generation,
+    )
+    const includesRepairInvocation = contribution.modelInvocations.some(
+      invocation => invocation.invocationId === formatRepairPlan?.repairInvocation.invocationId,
+    )
+    if (
+      (includesRepairInvocation && formatRepairRecord === undefined)
+      || (formatRepairRecord !== undefined
+        && canonicalJson(formatRepairRecord.contributionDigest)
+          !== canonicalJson(contribution.contributionDigest))
+    ) {
+      throw new SecurityPersistenceError(
+        'role_contribution_conflict',
+        'Role Contribution does not bind its exact admitted Format Repair result',
+      )
+    }
+
     for (const invocation of contribution.modelInvocations) {
       const candidate = recordsById.get(invocation.invocationId)
       if (candidate === undefined) {
@@ -3193,12 +3794,7 @@ export class SecurityPersistence {
         || canonicalJson(evidenceLink.publicationReceipt.subjectDigest)
           !== canonicalJson(subjectDigest)
         || canonicalJson(record.roleDefinition) !== canonicalJson(contributionRole)
-        || canonicalJson({
-          providerId: record.provider.providerId,
-          modelId: record.provider.modelId,
-          movingProvider: record.provider.movingProvider,
-        }) !== canonicalJson(roleAttempt.provider)
-        || canonicalJson(record.prompt) !== canonicalJson(roleAttempt.prompt)
+        || this.modelInvocationLineageKind(record, roleAttempt, formatRepairPlan) === undefined
         || canonicalJson(invocation.recordDigest) !== canonicalJson(record.recordDigest)
         || canonicalJson(invocation.responseDigest) !== canonicalJson(record.responseDigest)
         || invocation.inputTokens !== record.usage.inputTokens
