@@ -17,6 +17,8 @@ import { SOURCE_SLICE_EGRESS_ATTEMPT_FENCE_MEDIA_TYPE } from './source-slice-egr
 
 export const ROLE_CONTRIBUTION_MEDIA_TYPE =
   'application/vnd.dsh.security.role-contribution+json'
+export const ROLE_CONTRIBUTION_PAYLOAD_MEDIA_TYPE =
+  'application/vnd.dsh.security.role-contribution-payload+json'
 export const ROLE_CONTRIBUTION_ADMISSION_LINK_MEDIA_TYPE =
   'application/vnd.dsh.security.role-contribution-admission-link+json'
 
@@ -229,6 +231,21 @@ export interface RoleContributionCoreV1 {
   readonly completionDisposition: 'COMPLETE' | 'PARTIAL'
 }
 
+export type RoleContributionPayloadV1 = Pick<
+  RoleContributionCoreV1,
+  | 'schemaVersion'
+  | 'hypotheses'
+  | 'candidateFindings'
+  | 'coverageObservations'
+  | 'evidenceArtifactIds'
+  | 'evidenceRequests'
+  | 'challenges'
+  | 'uncertainty'
+  | 'limitations'
+  | 'followUpRequests'
+  | 'completionDisposition'
+>
+
 const roleContributionCoreShape = {
   schemaVersion: z.literal(1),
   contributionId: contributionIdSchema,
@@ -297,16 +314,29 @@ const roleContributionCoreShape = {
   completionDisposition: z.enum(['COMPLETE', 'PARTIAL']),
 } as const
 
+const roleContributionPayloadShape = {
+  schemaVersion: roleContributionCoreShape.schemaVersion,
+  hypotheses: roleContributionCoreShape.hypotheses,
+  candidateFindings: roleContributionCoreShape.candidateFindings,
+  coverageObservations: roleContributionCoreShape.coverageObservations,
+  evidenceArtifactIds: roleContributionCoreShape.evidenceArtifactIds,
+  evidenceRequests: roleContributionCoreShape.evidenceRequests,
+  challenges: roleContributionCoreShape.challenges,
+  uncertainty: roleContributionCoreShape.uncertainty,
+  limitations: roleContributionCoreShape.limitations,
+  followUpRequests: roleContributionCoreShape.followUpRequests,
+  completionDisposition: roleContributionCoreShape.completionDisposition,
+} as const
+
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length
 }
 
-function validateReferences(
-  values: RoleContributionCoreV1,
+function validateSemanticReferences(
+  values: RoleContributionPayloadV1,
   context: z.RefinementCtx,
 ): void {
   const uniqueCollections: readonly [readonly string[], (string | number)[]][] = [
-    [values.modelInvocations.map(value => value.invocationId), ['modelInvocations']],
     [values.hypotheses.map(value => value.hypothesisId), ['hypotheses']],
     [values.candidateFindings.map(value => value.candidateId), ['candidateFindings']],
     [values.coverageObservations.map(value => value.obligationId), ['coverageObservations']],
@@ -368,6 +398,21 @@ function validateReferences(
       message: 'Role Contribution requests and challenges must reference declared Candidates',
     })
   }
+}
+
+function validateReferences(
+  values: RoleContributionCoreV1,
+  context: z.RefinementCtx,
+): void {
+  validateSemanticReferences(values, context)
+
+  if (!unique(values.modelInvocations.map(value => value.invocationId))) {
+    context.addIssue({
+      code: 'custom',
+      path: ['modelInvocations'],
+      message: 'Role Contribution identities and references must be unique',
+    })
+  }
 
   const invocationTokens = values.modelInvocations.reduce(
     (usage, invocation) => ({
@@ -399,6 +444,22 @@ function validateReferences(
   }
 }
 
+export const roleContributionPayloadV1Schema: z.ZodType<RoleContributionPayloadV1> =
+  z.strictObject(roleContributionPayloadShape).superRefine((payload, context) => {
+    validateSemanticReferences(payload, context)
+    if (Buffer.byteLength(canonicalJson(payload), 'utf8') > MAX_CONTRIBUTION_BYTES) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Role Contribution payload exceeds the v1 aggregate byte budget',
+      })
+    }
+  })
+
+/** Strictly parse an authority-free semantic payload returned by one Role model call. */
+export function parseRoleContributionPayloadV1(candidate: unknown): RoleContributionPayloadV1 {
+  return deepFreeze(roleContributionPayloadV1Schema.parse(candidate))
+}
+
 export const roleContributionCoreV1Schema: z.ZodType<RoleContributionCoreV1> =
   z.strictObject(roleContributionCoreShape).superRefine(validateReferences)
 
@@ -417,6 +478,47 @@ export function createRoleContributionV1(candidate: unknown): RoleContributionV1
   return deepFreeze({
     ...core,
     contributionDigest: structuredDigest(ROLE_CONTRIBUTION_MEDIA_TYPE, core),
+  })
+}
+
+export interface CreateRoleContributionFromPayloadOptionsV1 {
+  readonly contributionId: string
+  readonly assessmentId: AssessmentId
+  readonly subjectDigest: DigestEnvelopeV1
+  readonly parentAttempt: RoleContributionCoreV1['parentAttempt']
+  readonly contextGrantDigest: DigestEnvelopeV1
+  readonly roleDefinition: RoleContributionCoreV1['roleDefinition']
+  readonly modelInvocations: RoleContributionCoreV1['modelInvocations']
+  readonly payload: RoleContributionPayloadV1
+}
+
+/** Compose model semantics with Service-owned identity, lineage, and exact resource use. */
+export function createRoleContributionFromPayloadV1(
+  options: CreateRoleContributionFromPayloadOptionsV1,
+): RoleContributionV1 {
+  const payload = parseRoleContributionPayloadV1(options.payload)
+  const invocationUsage = options.modelInvocations.reduce(
+    (usage, invocation) => ({
+      inputTokens: usage.inputTokens + invocation.inputTokens,
+      outputTokens: usage.outputTokens + invocation.outputTokens,
+    }),
+    { inputTokens: 0, outputTokens: 0 },
+  )
+  return createRoleContributionV1({
+    contributionId: options.contributionId,
+    assessmentId: options.assessmentId,
+    subjectDigest: options.subjectDigest,
+    parentAttempt: options.parentAttempt,
+    contextGrantDigest: options.contextGrantDigest,
+    roleDefinition: options.roleDefinition,
+    modelInvocations: options.modelInvocations,
+    ...payload,
+    resourceUse: {
+      requests: options.modelInvocations.length,
+      inputTokens: invocationUsage.inputTokens,
+      outputTokens: invocationUsage.outputTokens,
+      tokens: invocationUsage.inputTokens + invocationUsage.outputTokens,
+    },
   })
 }
 

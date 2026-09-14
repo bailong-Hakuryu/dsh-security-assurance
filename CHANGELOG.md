@@ -156,6 +156,23 @@
   and Candidate count from that immutable record instead of caller-supplied
   summaries. No Finding, Coverage Resolution, Verdict, Risk Acceptance,
   Provider call, public API, or automatic session scheduling is added.
+- Add package-private governed Role output format repair. A digest-bound plan
+  predeclares exactly one distinct, deterministic, one-request repair
+  invocation within the remaining Context Grant token budget. The protected
+  request contains only the original invalid response, the package-owned
+  authority-free Role Contribution payload schema, and fixed syntax-only
+  instructions; its exact digest must match the repair Model Invocation Record.
+  Admission requires both invocation records to bind the same Assessment,
+  Context Grant, Role Definition, Attempt generation and fence, requires the
+  repair to follow the original with the declared Provider/model, prompt,
+  parameters and budget, and accepts only a strict payload whose ordered JSON
+  scalar sequence is identical to the original. The Service then supplies the
+  trusted Contribution identity, lineage and exact two-call resource use and
+  emits a text-free repair record. Valid original output, non-JSON extraction,
+  semantic scalar drift, a second invocation identity, malformed repaired
+  output, authority fields, raw-byte mismatch, or lineage/budget drift fails
+  closed. This slice adds no Provider Adapter, Store write, automatic retry,
+  public API, Finding, Coverage Resolution, Verdict, or Risk Acceptance.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

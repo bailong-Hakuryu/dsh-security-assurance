@@ -38,6 +38,8 @@ export const MODEL_INVOCATION_BUDGET_RESERVATION_MEDIA_TYPE =
   'application/vnd.dsh.security.model-invocation-budget-reservation+json'
 export const MODEL_INVOCATION_RECORD_MEDIA_TYPE =
   'application/vnd.dsh.security.model-invocation-record+json'
+export const MODEL_INVOCATION_FORMAT_REPAIR_REQUEST_MEDIA_TYPE =
+  'application/vnd.dsh.security.model-invocation-format-repair-request+json'
 export const MODEL_INVOCATION_PROMPT_MEDIA_TYPE =
   'application/vnd.dsh.security.role-prompt+json'
 export const MODEL_INVOCATION_TOOL_SCHEMA_MEDIA_TYPE = 'application/schema+json'
@@ -65,7 +67,10 @@ const egressAuthorizationDigestSchema = digestEnvelopeV1Schema.refine(
   'Model Invocation reservations must bind an egress authorization digest',
 )
 const brokerRequestDigestSchema = digestEnvelopeV1Schema.refine(
-  digest => digest.mediaType === SOURCE_SLICE_EGRESS_BROKER_REQUEST_MEDIA_TYPE,
+  digest => [
+    SOURCE_SLICE_EGRESS_BROKER_REQUEST_MEDIA_TYPE,
+    MODEL_INVOCATION_FORMAT_REPAIR_REQUEST_MEDIA_TYPE,
+  ].includes(digest.mediaType),
   'Model Invocation reservations must bind a Broker request digest',
 )
 const reservationDigestSchema = digestEnvelopeV1Schema.refine(
@@ -345,7 +350,10 @@ const modelInvocationRecordCoreV1Shape = {
       digest => digest.mediaType === SOURCE_SLICE_EGRESS_AUTHORIZATION_MEDIA_TYPE,
     ),
     requestDigest: digestEnvelopeV1Schema.refine(
-      digest => digest.mediaType === SOURCE_SLICE_EGRESS_BROKER_REQUEST_MEDIA_TYPE,
+      digest => [
+        SOURCE_SLICE_EGRESS_BROKER_REQUEST_MEDIA_TYPE,
+        MODEL_INVOCATION_FORMAT_REPAIR_REQUEST_MEDIA_TYPE,
+      ].includes(digest.mediaType),
     ),
   }),
   timing: z.strictObject({
