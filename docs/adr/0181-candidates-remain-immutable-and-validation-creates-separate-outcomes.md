@@ -12,5 +12,9 @@ digest-bound admission record per Candidate and binds the complete Candidate
 content independently from its producer lineage. The record contains no
 Validation Outcome or Finding identity, and the operation grants no authority
 to validate, cluster, merge Evidence, resolve Coverage, or report a Finding.
-Durable admission storage and the later Validation Outcome integration remain
-separate follow-on work.
+Schema v6 now stores that admission as one immutable batch plus independently
+readable Candidate rows. The batch commit advances the Assessment Revision
+Journal exactly once and revalidates its complete Contribution and admission
+lineage on readback. This persistence does not change a Candidate into a
+Finding. The later Validation Outcome integration remains separate follow-on
+work.

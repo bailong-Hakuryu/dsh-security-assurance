@@ -16,5 +16,18 @@ byte length. Every Candidate Evidence reference must name a caller-confirmed
 durable Evidence object. Duplicate anchors, ambiguous weakness identities,
 duplicate durable Evidence identities, drifted source material, stale lineage,
 and schema or aggregate-bound violations fail closed with fixed-code protected
-diagnostics. Rejections are not yet persisted; the caller must retain those
-diagnostics until the durable admission slice lands.
+diagnostics.
+
+Schema v6 persists each caller-identified admission attempt inside the Role
+Attempt aggregate boundary. A successful attempt commits the entire batch and
+all Candidate rows with one Assessment revision; a failed semantic admission
+commits only a digest-bound diagnostic containing the fixed code and, when it
+was safely parsed, the Candidate ID. The request digest binds the exact source
+material without storing its bytes, and the diagnostic stores neither source
+nor claim text. Exact replay returns the existing success or rejection without
+advancing revision. Reusing an attempt identity for different input, admitting
+after cancellation or Attempt settlement, or observing a stale revision fails
+closed. A new attempt may retry a previously rejected Contribution after its
+missing durable inputs become available. Persistence still creates no
+Validation Outcome, Finding, Coverage authority, cluster, Evidence merge, or
+ADR 0197 Evidence Link.

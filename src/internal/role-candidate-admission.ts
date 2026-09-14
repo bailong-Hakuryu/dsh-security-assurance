@@ -30,6 +30,12 @@ export const ROLE_CANDIDATE_FINDING_MEDIA_TYPE =
   'application/vnd.dsh.security.role-candidate-finding+json'
 export const ROLE_CANDIDATE_ADMISSION_MEDIA_TYPE =
   'application/vnd.dsh.security.role-candidate-admission+json'
+export const ROLE_CANDIDATE_ADMISSION_REQUEST_MEDIA_TYPE =
+  'application/vnd.dsh.security.role-candidate-admission-request+json'
+export const ROLE_CANDIDATE_ADMISSION_BATCH_MEDIA_TYPE =
+  'application/vnd.dsh.security.role-candidate-admission-batch+json'
+export const ROLE_CANDIDATE_ADMISSION_DIAGNOSTIC_MEDIA_TYPE =
+  'application/vnd.dsh.security.role-candidate-admission-diagnostic+json'
 
 const MAX_SOURCE_SLICE_COUNT = 256
 const MAX_SOURCE_SLICE_BYTES = 64 * 1024 * 1024
@@ -42,6 +48,9 @@ const contributionIdSchema = z.string().regex(
 )
 const roleAttemptIdSchema = z.string().regex(
   /^role-attempt-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u,
+)
+const admissionAttemptIdSchema = z.string().regex(
+  /^role-candidate-admission-attempt-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u,
 )
 const semanticVersionSchema = z.string()
   .max(128)
@@ -101,6 +110,27 @@ const roleCandidateAdmissionDigestSchema = digestEnvelopeV1Schema.refine(
     && digest.canonicalization === 'dsh-canonical-json-v1'
   ),
   'Candidate Admission must use the Role Candidate Admission media type',
+)
+const roleCandidateAdmissionRequestDigestSchema = digestEnvelopeV1Schema.refine(
+  digest => (
+    digest.mediaType === ROLE_CANDIDATE_ADMISSION_REQUEST_MEDIA_TYPE
+    && digest.canonicalization === 'dsh-canonical-json-v1'
+  ),
+  'Candidate Admission request must use the Role Candidate Admission request media type',
+)
+const roleCandidateAdmissionBatchDigestSchema = digestEnvelopeV1Schema.refine(
+  digest => (
+    digest.mediaType === ROLE_CANDIDATE_ADMISSION_BATCH_MEDIA_TYPE
+    && digest.canonicalization === 'dsh-canonical-json-v1'
+  ),
+  'Candidate Admission batch must use the Role Candidate Admission batch media type',
+)
+const roleCandidateAdmissionDiagnosticDigestSchema = digestEnvelopeV1Schema.refine(
+  digest => (
+    digest.mediaType === ROLE_CANDIDATE_ADMISSION_DIAGNOSTIC_MEDIA_TYPE
+    && digest.canonicalization === 'dsh-canonical-json-v1'
+  ),
+  'Candidate Admission diagnostic must use the protected diagnostic media type',
 )
 
 export interface RoleCandidateSourceSliceV1 {
@@ -269,6 +299,20 @@ export interface CreateRoleCandidateAdmissionsOptionsV1 {
 
 function same(left: unknown, right: unknown): boolean {
   return canonicalJson(left) === canonicalJson(right)
+}
+
+function candidateFromAdmission(
+  admission: RoleCandidateAdmissionV1,
+): RoleContributionCandidateFindingV1 {
+  return roleContributionCandidateFindingV1Schema.parse({
+    schemaVersion: 1,
+    candidateId: admission.candidateId,
+    weaknessClassification: admission.weaknessClassification,
+    affectedControlId: admission.affectedControlId,
+    securityClaim: admission.securityClaim,
+    sourceAnchors: admission.sourceAnchors,
+    evidenceArtifactIds: admission.evidenceArtifactIds,
+  })
 }
 
 function parseInputs(options: CreateRoleCandidateAdmissionsOptionsV1): {
@@ -482,4 +526,295 @@ export function parseRoleCandidateAdmissionV1(candidate: unknown): RoleCandidate
     throw new TypeError('Role Candidate Admission digest is invalid')
   }
   return deepFreeze({ ...core, admissionDigest })
+}
+
+export interface CreateRoleCandidateAdmissionRequestDigestOptionsV1
+  extends CreateRoleCandidateAdmissionsOptionsV1 {
+  readonly admissionAttemptId: string
+  readonly expectedAssessmentRevision: number
+}
+
+/**
+ * Bind one persistence attempt without retaining its source material. Callers
+ * may persist this digest, but never the source slices used to create it.
+ */
+export function createRoleCandidateAdmissionRequestDigestV1(
+  options: CreateRoleCandidateAdmissionRequestDigestOptionsV1,
+): DigestEnvelopeV1 {
+  const admissionAttemptId = admissionAttemptIdSchema.parse(options.admissionAttemptId)
+  const expectedAssessmentRevision = z.number().int().positive()
+    .max(Number.MAX_SAFE_INTEGER)
+    .parse(options.expectedAssessmentRevision)
+  return structuredDigest(ROLE_CANDIDATE_ADMISSION_REQUEST_MEDIA_TYPE, {
+    schemaVersion: 1,
+    admissionAttemptId,
+    expectedAssessmentRevision,
+    contextGrant: options.contextGrant,
+    contribution: options.contribution,
+    contributionAdmissionLink: options.contributionAdmissionLink,
+    sourceSlices: options.sourceSlices,
+    durableEvidenceArtifactIds: options.durableEvidenceArtifactIds,
+  })
+}
+
+export interface RoleCandidateAdmissionBatchCoreV1 {
+  readonly schemaVersion: 1
+  readonly state: 'ADMITTED'
+  readonly admissionAttemptId: string
+  readonly requestDigest: DigestEnvelopeV1
+  readonly assessmentId: RoleContributionV1['assessmentId']
+  readonly assessmentRevision: number
+  readonly contributionId: string
+  readonly contributionDigest: DigestEnvelopeV1
+  readonly contributionAdmissionLinkDigest: DigestEnvelopeV1
+  readonly candidateCount: number
+  readonly admissions: readonly RoleCandidateAdmissionV1[]
+  readonly committedAt: string
+}
+
+export interface RoleCandidateAdmissionBatchV1 extends RoleCandidateAdmissionBatchCoreV1 {
+  readonly batchDigest: DigestEnvelopeV1
+}
+
+const roleCandidateAdmissionBatchCoreV1Shape = {
+  schemaVersion: z.literal(1),
+  state: z.literal('ADMITTED'),
+  admissionAttemptId: admissionAttemptIdSchema,
+  requestDigest: roleCandidateAdmissionRequestDigestSchema,
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  contributionId: contributionIdSchema,
+  contributionDigest: roleContributionDigestSchema,
+  contributionAdmissionLinkDigest: contributionAdmissionLinkDigestSchema,
+  candidateCount: z.number().int().nonnegative().max(128),
+  admissions: z.array(roleCandidateAdmissionV1Schema).max(128),
+  committedAt: z.iso.datetime({ offset: true }),
+} as const
+
+function validateRoleCandidateAdmissionBatchCore(
+  batch: RoleCandidateAdmissionBatchCoreV1,
+  context: z.RefinementCtx,
+): void {
+    const candidateIds = batch.admissions.map(admission => admission.candidateId)
+    if (
+      batch.candidateCount !== batch.admissions.length
+      || new Set(candidateIds).size !== candidateIds.length
+      || candidateIds.some((candidateId, index) => (
+        index > 0 && (candidateIds[index - 1] ?? '') >= candidateId
+      ))
+      || batch.admissions.some(admission => (
+        admission.assessmentId !== batch.assessmentId
+        || admission.provenance.contributionId !== batch.contributionId
+        || !same(admission.provenance.contributionDigest, batch.contributionDigest)
+        || !same(
+          admission.provenance.contributionAdmissionLinkDigest,
+          batch.contributionAdmissionLinkDigest,
+        )
+      ))
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Candidate Admission batch does not match its immutable admissions',
+      })
+    }
+}
+
+const roleCandidateAdmissionBatchCoreV1Schema: z.ZodType<RoleCandidateAdmissionBatchCoreV1> =
+  z.strictObject(roleCandidateAdmissionBatchCoreV1Shape).superRefine(
+    validateRoleCandidateAdmissionBatchCore,
+  )
+
+const roleCandidateAdmissionBatchV1Schema: z.ZodType<RoleCandidateAdmissionBatchV1> =
+  z.strictObject({
+    ...roleCandidateAdmissionBatchCoreV1Shape,
+    batchDigest: roleCandidateAdmissionBatchDigestSchema,
+  }).superRefine((batch, context) => {
+    validateRoleCandidateAdmissionBatchCore(batch, context)
+  })
+
+export interface CreateRoleCandidateAdmissionBatchOptionsV1 {
+  readonly admissionAttemptId: string
+  readonly requestDigest: DigestEnvelopeV1
+  readonly assessmentRevision: number
+  readonly contribution: RoleContributionV1
+  readonly contributionAdmissionLink: RoleContributionAdmissionLinkV1
+  readonly admissions: readonly RoleCandidateAdmissionV1[]
+  readonly committedAt: string
+}
+
+export function createRoleCandidateAdmissionBatchV1(
+  options: CreateRoleCandidateAdmissionBatchOptionsV1,
+): RoleCandidateAdmissionBatchV1 {
+  const contribution = parseRoleContributionV1(options.contribution)
+  const link = parseRoleContributionAdmissionLinkV1(options.contributionAdmissionLink)
+  const admissions = options.admissions.map(parseRoleCandidateAdmissionV1)
+  const contributionCandidates = [...contribution.candidateFindings]
+    .sort((left, right) => (
+      left.candidateId < right.candidateId ? -1 : left.candidateId > right.candidateId ? 1 : 0
+    ))
+  const admittedCandidates = admissions.map(candidateFromAdmission)
+  if (
+    contribution.assessmentId !== link.assessmentId
+    || contribution.contributionId !== link.contributionId
+    || !same(contribution.contributionDigest, link.contributionDigest)
+    || options.assessmentRevision <= link.assessmentRevision
+    || Date.parse(options.committedAt) < Date.parse(link.admittedAt)
+    || !same(contributionCandidates, admittedCandidates)
+  ) {
+    throw new TypeError('Candidate Admission batch lineage is invalid')
+  }
+  const core = roleCandidateAdmissionBatchCoreV1Schema.parse({
+    schemaVersion: 1,
+    state: 'ADMITTED',
+    admissionAttemptId: options.admissionAttemptId,
+    requestDigest: options.requestDigest,
+    assessmentId: contribution.assessmentId,
+    assessmentRevision: options.assessmentRevision,
+    contributionId: contribution.contributionId,
+    contributionDigest: contribution.contributionDigest,
+    contributionAdmissionLinkDigest: link.linkDigest,
+    candidateCount: admissions.length,
+    admissions,
+    committedAt: options.committedAt,
+  })
+  return deepFreeze({
+    ...core,
+    batchDigest: structuredDigest(ROLE_CANDIDATE_ADMISSION_BATCH_MEDIA_TYPE, core),
+  })
+}
+
+export function parseRoleCandidateAdmissionBatchV1(
+  candidate: unknown,
+): RoleCandidateAdmissionBatchV1 {
+  const batch = roleCandidateAdmissionBatchV1Schema.parse(candidate)
+  const admissions = batch.admissions.map(parseRoleCandidateAdmissionV1)
+  const { batchDigest, ...candidateCore } = batch
+  const core = roleCandidateAdmissionBatchCoreV1Schema.parse({
+    ...candidateCore,
+    admissions,
+  })
+  if (!same(
+    batchDigest,
+    structuredDigest(ROLE_CANDIDATE_ADMISSION_BATCH_MEDIA_TYPE, core),
+  )) {
+    throw new TypeError('Role Candidate Admission batch digest is invalid')
+  }
+  return deepFreeze({ ...core, batchDigest })
+}
+
+export interface RoleCandidateAdmissionDiagnosticCoreV1 {
+  readonly schemaVersion: 1
+  readonly state: 'REJECTED'
+  readonly admissionAttemptId: string
+  readonly requestDigest: DigestEnvelopeV1
+  readonly assessmentId: RoleContributionV1['assessmentId']
+  readonly assessmentRevision: number
+  readonly contributionId: string
+  readonly contributionDigest: DigestEnvelopeV1
+  readonly contributionAdmissionLinkDigest: DigestEnvelopeV1
+  readonly errorCode: RoleCandidateAdmissionErrorCode
+  readonly candidateId: string | null
+  readonly recordedAt: string
+}
+
+export interface RoleCandidateAdmissionDiagnosticV1
+  extends RoleCandidateAdmissionDiagnosticCoreV1 {
+  readonly diagnosticDigest: DigestEnvelopeV1
+}
+
+const roleCandidateAdmissionErrorCodeSchema = z.enum([
+  'INVALID_INPUT',
+  'LINEAGE_MISMATCH',
+  'SOURCE_MATERIAL_INVALID',
+  'SOURCE_ANCHOR_UNBOUND',
+  'EVIDENCE_UNAVAILABLE',
+  'CANDIDATE_AMBIGUOUS',
+])
+
+const roleCandidateAdmissionDiagnosticCoreV1Shape = {
+  schemaVersion: z.literal(1),
+  state: z.literal('REJECTED'),
+  admissionAttemptId: admissionAttemptIdSchema,
+  requestDigest: roleCandidateAdmissionRequestDigestSchema,
+  assessmentId: assessmentIdSchema,
+  assessmentRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  contributionId: contributionIdSchema,
+  contributionDigest: roleContributionDigestSchema,
+  contributionAdmissionLinkDigest: contributionAdmissionLinkDigestSchema,
+  errorCode: roleCandidateAdmissionErrorCodeSchema,
+  candidateId: candidateIdSchema.nullable(),
+  recordedAt: z.iso.datetime({ offset: true }),
+} as const
+
+const roleCandidateAdmissionDiagnosticCoreV1Schema:
+z.ZodType<RoleCandidateAdmissionDiagnosticCoreV1> = z.strictObject(
+  roleCandidateAdmissionDiagnosticCoreV1Shape,
+)
+
+const roleCandidateAdmissionDiagnosticV1Schema:
+z.ZodType<RoleCandidateAdmissionDiagnosticV1> = z.strictObject({
+  ...roleCandidateAdmissionDiagnosticCoreV1Shape,
+  diagnosticDigest: roleCandidateAdmissionDiagnosticDigestSchema,
+})
+
+export interface CreateRoleCandidateAdmissionDiagnosticOptionsV1 {
+  readonly admissionAttemptId: string
+  readonly requestDigest: DigestEnvelopeV1
+  readonly assessmentRevision: number
+  readonly contribution: RoleContributionV1
+  readonly contributionAdmissionLink: RoleContributionAdmissionLinkV1
+  readonly error: RoleCandidateAdmissionError
+  readonly recordedAt: string
+}
+
+export function createRoleCandidateAdmissionDiagnosticV1(
+  options: CreateRoleCandidateAdmissionDiagnosticOptionsV1,
+): RoleCandidateAdmissionDiagnosticV1 {
+  const contribution = parseRoleContributionV1(options.contribution)
+  const link = parseRoleContributionAdmissionLinkV1(options.contributionAdmissionLink)
+  if (
+    contribution.assessmentId !== link.assessmentId
+    || contribution.contributionId !== link.contributionId
+    || !same(contribution.contributionDigest, link.contributionDigest)
+    || options.assessmentRevision <= link.assessmentRevision
+    || Date.parse(options.recordedAt) < Date.parse(link.admittedAt)
+  ) {
+    throw new TypeError('Candidate Admission diagnostic lineage is invalid')
+  }
+  const core = roleCandidateAdmissionDiagnosticCoreV1Schema.parse({
+    schemaVersion: 1,
+    state: 'REJECTED',
+    admissionAttemptId: options.admissionAttemptId,
+    requestDigest: options.requestDigest,
+    assessmentId: contribution.assessmentId,
+    assessmentRevision: options.assessmentRevision,
+    contributionId: contribution.contributionId,
+    contributionDigest: contribution.contributionDigest,
+    contributionAdmissionLinkDigest: link.linkDigest,
+    errorCode: options.error.code,
+    candidateId: options.error.candidateId,
+    recordedAt: options.recordedAt,
+  })
+  return deepFreeze({
+    ...core,
+    diagnosticDigest: structuredDigest(
+      ROLE_CANDIDATE_ADMISSION_DIAGNOSTIC_MEDIA_TYPE,
+      core,
+    ),
+  })
+}
+
+export function parseRoleCandidateAdmissionDiagnosticV1(
+  candidate: unknown,
+): RoleCandidateAdmissionDiagnosticV1 {
+  const diagnostic = roleCandidateAdmissionDiagnosticV1Schema.parse(candidate)
+  const { diagnosticDigest, ...candidateCore } = diagnostic
+  const core = roleCandidateAdmissionDiagnosticCoreV1Schema.parse(candidateCore)
+  if (!same(
+    diagnosticDigest,
+    structuredDigest(ROLE_CANDIDATE_ADMISSION_DIAGNOSTIC_MEDIA_TYPE, core),
+  )) {
+    throw new TypeError('Role Candidate Admission diagnostic digest is invalid')
+  }
+  return deepFreeze({ ...core, diagnosticDigest })
 }

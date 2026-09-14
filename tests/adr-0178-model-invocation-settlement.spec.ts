@@ -52,6 +52,12 @@ afterEach(async () => {
 
 const attemptId = 'role-attempt-00000000-0000-0000-0000-000000000178'
 const invocationId = 'egress-invocation-00000000-0000-0000-0000-000000000178'
+const candidateId = `candidate-${'1'.repeat(64)}`
+const candidateSourceText = '{"scripts":{"preinstall":"node install.js"}}'
+const candidateSourceDigest = binaryDigest(
+  'application/octet-stream',
+  Buffer.from(candidateSourceText, 'utf8'),
+)
 const attemptFenceDigest = structuredDigest(
   SOURCE_SLICE_EGRESS_ATTEMPT_FENCE_MEDIA_TYPE,
   {
@@ -100,16 +106,24 @@ function contextGrant() {
         ),
         disclosureCategoryId: 'security/subject-inventory',
       }],
-      sourceSlices: [],
+      sourceSlices: [{
+        artifactId: 'source-slice-package-json',
+        schemaId: 'dsh/security-source-slice',
+        digest: structuredDigest(
+          'application/vnd.dsh.security.source-slice+json',
+          { path: 'package.json', digest: candidateSourceDigest },
+        ),
+        disclosureCategoryId: 'security/source-slice',
+      }],
     },
     evidenceProjections: [],
     disclosure: {
       dataEgressPolicyId: 'egress/host-qualified-v1',
       destinationId: 'provider/reference',
-      categoryIds: ['security/subject-inventory'],
+      categoryIds: ['security/source-slice', 'security/subject-inventory'],
     },
     budget: {
-      contextBytes: { limit: 65_536, granted: 0 },
+      contextBytes: { limit: 65_536, granted: 8_192 },
       tokens: { limit: 8_192, granted: 0 },
     },
   })
@@ -241,7 +255,28 @@ function roleContributionFixture(
   grant: ReturnType<typeof contextGrant>,
   record: ReturnType<typeof settleSourceSliceModelInvocationV1>,
   evidenceArtifactId: string,
+  options: { readonly withCandidate?: boolean } = {},
 ) {
+  const candidateFindings = options.withCandidate === true
+    ? [{
+        schemaVersion: 1 as const,
+        candidateId,
+        weaknessClassification: {
+          schemaVersion: 1 as const,
+          primary: 'cwe/94',
+          secondary: ['security/install-lifecycle'],
+        },
+        affectedControlId: 'security/node-package-lifecycle',
+        securityClaim: 'A repository-controlled install script executes during installation.',
+        sourceAnchors: [{
+          path: 'package.json',
+          fileDigest: candidateSourceDigest,
+          byteSpan: { start: 0, length: candidateSourceDigest.byteLength },
+          symbolId: '/scripts/preinstall',
+        }],
+        evidenceArtifactIds: [evidenceArtifactId],
+      }]
+    : []
   return createRoleContributionV1({
     schemaVersion: 1,
     contributionId: 'role-contribution-00000000-0000-0000-0000-000000000178',
@@ -262,7 +297,7 @@ function roleContributionFixture(
       outputTokens: record.usage.outputTokens,
     }],
     hypotheses: [],
-    candidateFindings: [],
+    candidateFindings,
     coverageObservations: [],
     evidenceArtifactIds: [evidenceArtifactId],
     evidenceRequests: [],
@@ -969,6 +1004,184 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
     }
   })
 
+  it('persists protected Candidate rejection, exact replay, and one later atomic admission batch', async () => {
+    const { grant, record, expected } = settledInvocationFixture()
+    const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-role-candidate-admission-'))
+    temporaryRoots.push(securityRoot)
+    const databasePath = join(securityRoot, 'security-assurance.sqlite')
+    const publication = await publishModelInvocationEvidenceV1({
+      securityRoot,
+      contextGrant: grant,
+      record,
+      expected,
+    })
+    const contribution = roleContributionFixture(
+      grant,
+      record,
+      publication.artifactId,
+      { withCandidate: true },
+    )
+    const { persistence, running } = await runningAssessmentPersistence(securityRoot, grant)
+    const sourceSlices = [{
+      contextArtifactId: 'source-slice-package-json',
+      subjectDigest: grant.subject.digest,
+      path: 'package.json',
+      digest: candidateSourceDigest,
+      text: candidateSourceText,
+    }]
+    let admittedRevision = 0
+    let finalRevision = 0
+    try {
+      const invocationLink = persistence.linkModelInvocationEvidence({
+        contextGrant: grant,
+        expectedAssessmentRevision: running.assessmentRevision,
+        receipt: publication,
+        record,
+        expected,
+      })
+      const durableContribution = persistence.admitRoleContribution({
+        contextGrant: grant,
+        expectedAssessmentRevision: invocationLink.assessmentRevision,
+        contribution,
+        modelInvocationRecords: [record],
+      })
+      expect(durableContribution.link.candidateCount).toBe(1)
+
+      const rejectedInput = {
+        admissionAttemptId:
+          'role-candidate-admission-attempt-00000000-0000-4000-8000-000000000181',
+        assessmentId: grant.assessmentId,
+        contributionId: contribution.contributionId,
+        expectedAssessmentRevision: durableContribution.link.assessmentRevision,
+        contextGrant: grant,
+        sourceSlices,
+        durableEvidenceArtifactIds: [],
+      }
+      const rejected = persistence.admitRoleCandidates(rejectedInput)
+      const rejectedReplay = persistence.admitRoleCandidates(rejectedInput)
+      expect(rejectedReplay).toEqual(rejected)
+      expect(rejected).toMatchObject({
+        state: 'REJECTED',
+        diagnostic: {
+          errorCode: 'EVIDENCE_UNAVAILABLE',
+          candidateId,
+          assessmentRevision: durableContribution.link.assessmentRevision + 1,
+          contributionId: contribution.contributionId,
+        },
+      })
+      if (rejected.state !== 'REJECTED') throw new Error('expected protected rejection')
+      expect(JSON.stringify(rejected.diagnostic)).not.toContain(candidateSourceText)
+      expect(JSON.stringify(rejected.diagnostic)).not.toContain('repository-controlled')
+      expect(persistence.getRoleCandidateAdmissionDiagnostic(
+        grant.assessmentId,
+        rejectedInput.admissionAttemptId,
+      )).toEqual(rejected.diagnostic)
+      expect(() => persistence.completeRoleAttempt({
+        assessmentId: grant.assessmentId,
+        attemptId,
+        generation: 1,
+        fenceDigest: attemptFenceDigest,
+        expectedAssessmentRevision: rejected.diagnostic.assessmentRevision,
+        contributionId: contribution.contributionId,
+        contributionDigest: contribution.contributionDigest,
+        milestones: [],
+      })).toThrow(/Candidate-bearing|Candidate Admission/iu)
+      expect(persistence.getAssessmentRecord(grant.assessmentId)?.assessmentRevision)
+        .toBe(rejected.diagnostic.assessmentRevision)
+
+      const admittedInput = {
+        ...rejectedInput,
+        admissionAttemptId:
+          'role-candidate-admission-attempt-00000000-0000-4000-8000-000000000182',
+        expectedAssessmentRevision: rejected.diagnostic.assessmentRevision,
+        durableEvidenceArtifactIds: [publication.artifactId],
+      }
+      const admitted = persistence.admitRoleCandidates(admittedInput)
+      const admittedReplay = persistence.admitRoleCandidates(admittedInput)
+      expect(admittedReplay).toEqual(admitted)
+      expect(admitted).toMatchObject({
+        state: 'ADMITTED',
+        batch: {
+          candidateCount: 1,
+          assessmentRevision: rejected.diagnostic.assessmentRevision + 1,
+          contributionId: contribution.contributionId,
+          admissions: [{
+            candidateId,
+            evidenceArtifactIds: [publication.artifactId],
+          }],
+        },
+      })
+      if (admitted.state !== 'ADMITTED') throw new Error('expected Candidate admission')
+      admittedRevision = admitted.batch.assessmentRevision
+      expect(persistence.getRoleCandidateAdmissionBatch(
+        grant.assessmentId,
+        contribution.contributionId,
+      )).toEqual(admitted.batch)
+      expect(persistence.getRoleCandidateAdmission(
+        grant.assessmentId,
+        contribution.contributionId,
+        candidateId,
+      )).toEqual(admitted.batch.admissions[0])
+      expect(persistence.getAssessmentRecord(grant.assessmentId)?.assessmentRevision)
+        .toBe(admittedRevision)
+      const completed = persistence.completeRoleAttempt({
+        assessmentId: grant.assessmentId,
+        attemptId,
+        generation: 1,
+        fenceDigest: attemptFenceDigest,
+        expectedAssessmentRevision: admittedRevision,
+        contributionId: contribution.contributionId,
+        contributionDigest: contribution.contributionDigest,
+        milestones: [],
+      })
+      expect(completed).toMatchObject({
+        lifecycleState: 'COMPLETED',
+        candidateCount: 1,
+        assessmentRevision: admittedRevision + 1,
+      })
+      finalRevision = completed.assessmentRevision
+      expect(() => persistence.admitRoleCandidates({
+        ...admittedInput,
+        durableEvidenceArtifactIds: [],
+      })).toThrow(/conflicts|different durable attempt/iu)
+      expect(persistence.getAssessmentRecord(grant.assessmentId)?.assessmentRevision)
+        .toBe(finalRevision)
+    } finally {
+      persistence.close()
+    }
+
+    const reopened = await openSecurityPersistence({ databasePath })
+    try {
+      expect(reopened.getRoleCandidateAdmission(
+        grant.assessmentId,
+        contribution.contributionId,
+        candidateId,
+      )?.candidateId).toBe(candidateId)
+      expect(reopened.getAssessmentRecord(grant.assessmentId)?.assessmentRevision)
+        .toBe(finalRevision)
+    } finally {
+      reopened.close()
+    }
+
+    const forensic = new DatabaseSync(databasePath, { readOnly: true })
+    try {
+      const rows = forensic.prepare(`
+        SELECT diagnostic_json FROM role_candidate_admission_diagnostics
+      `).all() as unknown as readonly { readonly diagnostic_json: string }[]
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.diagnostic_json).not.toContain(candidateSourceText)
+      expect(rows[0]?.diagnostic_json).not.toContain('repository-controlled')
+      expect(forensic.prepare(`
+        SELECT count(*) AS count FROM role_candidate_admission_batches
+      `).get()).toEqual({ count: 1 })
+      expect(forensic.prepare(`
+        SELECT count(*) AS count FROM role_candidate_admissions
+      `).get()).toEqual({ count: 1 })
+    } finally {
+      forensic.close()
+    }
+  })
+
   it('fails closed until Contribution invocation lineage is complete and exact', async () => {
     const { grant, record, expected } = settledInvocationFixture()
     const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-role-contribution-lineage-'))
@@ -1177,7 +1390,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
     }
   })
 
-  it('opens a released schema-v1 Store only after verified v2 through v5 migrations', async () => {
+  it('opens a released schema-v1 Store only after verified v2 through v6 migrations', async () => {
     const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-model-invocation-migration-'))
     temporaryRoots.push(securityRoot)
     const databasePath = join(securityRoot, 'security-assurance.sqlite')
@@ -1191,7 +1404,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
 
     const migrated = new DatabaseSync(databasePath, { readOnly: true })
     try {
-      expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 5 })
+      expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 6 })
       expect(migrated.prepare(`
         SELECT source_version, target_version, committed_at
         FROM schema_migrations ORDER BY target_version
@@ -1214,6 +1427,11 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
         {
           source_version: 4,
           target_version: 5,
+          committed_at: '2026-09-13T00:00:04.000Z',
+        },
+        {
+          source_version: 5,
+          target_version: 6,
           committed_at: '2026-09-13T00:00:04.000Z',
         },
       ])
@@ -1249,6 +1467,13 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
           source_state_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
           result_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
         }),
+        expect.objectContaining({
+          backup_name: expect.stringMatching(
+            /^security-assurance\.sqlite\.pre-migration-v5-[0-9a-f-]{36}\.sqlite$/u,
+          ),
+          source_state_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+          result_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+        }),
       ])
       expect(migrated.prepare(`
         SELECT name FROM sqlite_master
@@ -1268,15 +1493,27 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
         SELECT name FROM sqlite_master
         WHERE type = 'table' AND name = 'role_output_format_repair_records'
       `).get()).toEqual({ name: 'role_output_format_repair_records' })
+      expect(migrated.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'role_candidate_admission_batches'
+      `).get()).toEqual({ name: 'role_candidate_admission_batches' })
+      expect(migrated.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'role_candidate_admissions'
+      `).get()).toEqual({ name: 'role_candidate_admissions' })
+      expect(migrated.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'role_candidate_admission_diagnostics'
+      `).get()).toEqual({ name: 'role_candidate_admission_diagnostics' })
     } finally {
       migrated.close()
     }
 
     const backupNames = (await readdir(securityRoot)).filter(name => (
-      /^security-assurance\.sqlite\.pre-migration-v[1-4]-[0-9a-f-]{36}\.sqlite$/u.test(name)
+      /^security-assurance\.sqlite\.pre-migration-v[1-5]-[0-9a-f-]{36}\.sqlite$/u.test(name)
     ))
-    expect(backupNames).toHaveLength(4)
-    for (const version of [1, 2, 3, 4]) {
+    expect(backupNames).toHaveLength(5)
+    for (const version of [1, 2, 3, 4, 5]) {
       const backupName = backupNames.find(name => name.includes(`migration-v${version}-`))
       expect(backupName).toBeDefined()
       const backup = new DatabaseSync(join(securityRoot, backupName!), { readOnly: true })
@@ -1293,7 +1530,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
     const tampered = new DatabaseSync(databasePath)
     try {
       tampered.prepare(`
-        UPDATE schema_migrations SET result_digest = ? WHERE target_version = 5
+        UPDATE schema_migrations SET result_digest = ? WHERE target_version = 6
       `).run(`sha256:${'0'.repeat(64)}`)
     } finally {
       tampered.close()

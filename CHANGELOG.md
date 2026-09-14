@@ -195,6 +195,17 @@
   and schema or aggregate-bound violations fail closed with fixed diagnostic
   codes. No Candidate persistence, Validation Outcome, Finding, clustering,
   Evidence merging, Provider call, public API, or Control Plane change is added.
+- Persist Role Candidate Admission as schema v6 without widening its authority.
+  One caller-identified attempt either commits the complete digest-bound batch
+  and every Candidate row with one Assessment revision, or commits one
+  fixed-code protected rejection diagnostic with no source or claim text.
+  Exact success and rejection replay remain idempotent across Store reopen;
+  conflicting attempt reuse, stale revision, canceled or non-running state,
+  drifted lineage, and partial batch writes fail closed. Released Stores advance
+  through a separately backed-up, fully verified and digest-journaled v6
+  migration. This adds no public API, Provider call, Validation Outcome,
+  Finding, clustering, Evidence Link, Coverage Resolution, or Control Plane
+  change.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

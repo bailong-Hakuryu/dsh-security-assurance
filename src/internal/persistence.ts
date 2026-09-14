@@ -74,6 +74,22 @@ import {
   parseRoleContributionV1,
 } from './role-contribution.ts'
 import type {
+  RoleCandidateAdmissionBatchV1,
+  RoleCandidateAdmissionDiagnosticV1,
+  RoleCandidateAdmissionV1,
+  RoleCandidateSourceSliceV1,
+} from './role-candidate-admission.ts'
+import {
+  RoleCandidateAdmissionError,
+  createRoleCandidateAdmissionBatchV1,
+  createRoleCandidateAdmissionDiagnosticV1,
+  createRoleCandidateAdmissionRequestDigestV1,
+  createRoleCandidateAdmissionsV1,
+  parseRoleCandidateAdmissionBatchV1,
+  parseRoleCandidateAdmissionDiagnosticV1,
+  parseRoleCandidateAdmissionV1,
+} from './role-candidate-admission.ts'
+import type {
   AdmitRoleOutputFormatRepairOptionsV1,
   AdmittedRoleOutputFormatRepairV1,
   RoleOutputFormatRepairPlanV1,
@@ -94,7 +110,7 @@ import {
 } from './role-attempt.ts'
 
 const APPLICATION_ID = 0x4453_4853
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 
 export type SecurityPersistenceErrorCode =
   | 'foreign_database'
@@ -109,6 +125,8 @@ export type SecurityPersistenceErrorCode =
   | 'role_output_format_repair_not_found'
   | 'role_contribution_conflict'
   | 'role_contribution_not_found'
+  | 'role_candidate_admission_conflict'
+  | 'role_candidate_admission_not_found'
   | 'role_attempt_conflict'
   | 'role_attempt_not_found'
   | 'revision_conflict'
@@ -252,6 +270,26 @@ export interface AdmitRoleContributionPersistenceInput {
   readonly modelInvocationRecords: readonly ModelInvocationRecordV1[]
 }
 
+export interface AdmitRoleCandidateAdmissionsPersistenceInput {
+  readonly admissionAttemptId: string
+  readonly assessmentId: AssessmentId
+  readonly contributionId: string
+  readonly expectedAssessmentRevision: number
+  readonly contextGrant: RoleContextGrantV1
+  readonly sourceSlices: readonly RoleCandidateSourceSliceV1[]
+  readonly durableEvidenceArtifactIds: readonly string[]
+}
+
+export type RoleCandidateAdmissionPersistenceResultV1 =
+  | {
+      readonly state: 'ADMITTED'
+      readonly batch: RoleCandidateAdmissionBatchV1
+    }
+  | {
+      readonly state: 'REJECTED'
+      readonly diagnostic: RoleCandidateAdmissionDiagnosticV1
+    }
+
 export interface CompleteRoleAttemptPersistenceInput {
   readonly assessmentId: AssessmentId
   readonly attemptId: string
@@ -374,6 +412,43 @@ interface RoleOutputFormatRepairRecordRow {
   readonly contribution_digest: string
   readonly repair_record_digest: string
   readonly record_json: string
+  readonly committed_at: string
+}
+
+interface RoleCandidateAdmissionBatchRow {
+  readonly assessment_id: AssessmentId
+  readonly contribution_id: string
+  readonly assessment_revision: number
+  readonly admission_attempt_id: string
+  readonly request_digest: string
+  readonly contribution_digest: string
+  readonly contribution_link_digest: string
+  readonly candidate_count: number
+  readonly batch_digest: string
+  readonly batch_json: string
+  readonly committed_at: string
+}
+
+interface RoleCandidateAdmissionRow {
+  readonly assessment_id: AssessmentId
+  readonly contribution_id: string
+  readonly candidate_id: string
+  readonly assessment_revision: number
+  readonly candidate_digest: string
+  readonly admission_digest: string
+  readonly admission_json: string
+  readonly committed_at: string
+}
+
+interface RoleCandidateAdmissionDiagnosticRow {
+  readonly assessment_id: AssessmentId
+  readonly admission_attempt_id: string
+  readonly contribution_id: string
+  readonly assessment_revision: number
+  readonly request_digest: string
+  readonly error_code: string
+  readonly diagnostic_digest: string
+  readonly diagnostic_json: string
   readonly committed_at: string
 }
 
@@ -511,6 +586,23 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
       'committed_at',
     ])
   }
+  if (schemaVersion >= 6) {
+    expected.set('role_candidate_admission_batches', [
+      'assessment_id', 'contribution_id', 'assessment_revision',
+      'admission_attempt_id', 'request_digest', 'contribution_digest',
+      'contribution_link_digest', 'candidate_count', 'batch_digest', 'batch_json',
+      'committed_at',
+    ])
+    expected.set('role_candidate_admissions', [
+      'assessment_id', 'contribution_id', 'candidate_id', 'assessment_revision',
+      'candidate_digest', 'admission_digest', 'admission_json', 'committed_at',
+    ])
+    expected.set('role_candidate_admission_diagnostics', [
+      'assessment_id', 'admission_attempt_id', 'contribution_id',
+      'assessment_revision', 'request_digest', 'error_code', 'diagnostic_digest',
+      'diagnostic_json', 'committed_at',
+    ])
+  }
   const tables = db.prepare(`
     SELECT name FROM sqlite_master
     WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
@@ -563,6 +655,17 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
     ])
     primaryKeys.set('role_output_format_repair_records', [
       'assessment_id', 'attempt_id', 'attempt_generation',
+    ])
+  }
+  if (schemaVersion >= 6) {
+    primaryKeys.set('role_candidate_admission_batches', [
+      'assessment_id', 'contribution_id',
+    ])
+    primaryKeys.set('role_candidate_admissions', [
+      'assessment_id', 'contribution_id', 'candidate_id',
+    ])
+    primaryKeys.set('role_candidate_admission_diagnostics', [
+      'assessment_id', 'admission_attempt_id',
     ])
   }
   for (const [table, columns] of primaryKeys) {
@@ -640,6 +743,26 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
       ['original_invocation_id', 'model_invocation_evidence_links', 'invocation_id'],
       ['assessment_id', 'model_invocation_evidence_links', 'assessment_id'],
       ['repair_invocation_id', 'model_invocation_evidence_links', 'invocation_id'],
+    ])
+  }
+  if (schemaVersion >= 6) {
+    foreignKeys.set('role_candidate_admission_batches', [
+      ['assessment_id', 'assessment_revisions', 'assessment_id'],
+      ['assessment_revision', 'assessment_revisions', 'assessment_revision'],
+      ['assessment_id', 'role_contributions', 'assessment_id'],
+      ['contribution_id', 'role_contributions', 'contribution_id'],
+    ])
+    foreignKeys.set('role_candidate_admissions', [
+      ['assessment_id', 'assessment_revisions', 'assessment_id'],
+      ['assessment_revision', 'assessment_revisions', 'assessment_revision'],
+      ['assessment_id', 'role_candidate_admission_batches', 'assessment_id'],
+      ['contribution_id', 'role_candidate_admission_batches', 'contribution_id'],
+    ])
+    foreignKeys.set('role_candidate_admission_diagnostics', [
+      ['assessment_id', 'assessment_revisions', 'assessment_id'],
+      ['assessment_revision', 'assessment_revisions', 'assessment_revision'],
+      ['assessment_id', 'role_contributions', 'assessment_id'],
+      ['contribution_id', 'role_contributions', 'contribution_id'],
     ])
   }
   for (const [table, expectedForeignKeys] of foreignKeys) {
@@ -818,6 +941,63 @@ function installSchemaV5Objects(db: DatabaseSync): void {
   `)
 }
 
+function installSchemaV6Objects(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE role_candidate_admission_batches (
+      assessment_id           TEXT NOT NULL,
+      contribution_id         TEXT NOT NULL,
+      assessment_revision     INTEGER NOT NULL,
+      admission_attempt_id    TEXT NOT NULL,
+      request_digest          TEXT NOT NULL,
+      contribution_digest     TEXT NOT NULL,
+      contribution_link_digest TEXT NOT NULL,
+      candidate_count         INTEGER NOT NULL CHECK (candidate_count >= 0),
+      batch_digest            TEXT NOT NULL,
+      batch_json              TEXT NOT NULL,
+      committed_at            TEXT NOT NULL,
+      PRIMARY KEY (assessment_id, contribution_id),
+      UNIQUE (assessment_id, admission_attempt_id),
+      FOREIGN KEY (assessment_id, assessment_revision)
+        REFERENCES assessment_revisions(assessment_id, assessment_revision),
+      FOREIGN KEY (assessment_id, contribution_id)
+        REFERENCES role_contributions(assessment_id, contribution_id)
+    ) STRICT;
+
+    CREATE TABLE role_candidate_admissions (
+      assessment_id       TEXT NOT NULL,
+      contribution_id     TEXT NOT NULL,
+      candidate_id        TEXT NOT NULL,
+      assessment_revision INTEGER NOT NULL,
+      candidate_digest    TEXT NOT NULL,
+      admission_digest    TEXT NOT NULL,
+      admission_json      TEXT NOT NULL,
+      committed_at        TEXT NOT NULL,
+      PRIMARY KEY (assessment_id, contribution_id, candidate_id),
+      FOREIGN KEY (assessment_id, assessment_revision)
+        REFERENCES assessment_revisions(assessment_id, assessment_revision),
+      FOREIGN KEY (assessment_id, contribution_id)
+        REFERENCES role_candidate_admission_batches(assessment_id, contribution_id)
+    ) STRICT;
+
+    CREATE TABLE role_candidate_admission_diagnostics (
+      assessment_id        TEXT NOT NULL,
+      admission_attempt_id TEXT NOT NULL,
+      contribution_id      TEXT NOT NULL,
+      assessment_revision  INTEGER NOT NULL,
+      request_digest       TEXT NOT NULL,
+      error_code           TEXT NOT NULL,
+      diagnostic_digest    TEXT NOT NULL,
+      diagnostic_json      TEXT NOT NULL,
+      committed_at         TEXT NOT NULL,
+      PRIMARY KEY (assessment_id, admission_attempt_id),
+      FOREIGN KEY (assessment_id, assessment_revision)
+        REFERENCES assessment_revisions(assessment_id, assessment_revision),
+      FOREIGN KEY (assessment_id, contribution_id)
+        REFERENCES role_contributions(assessment_id, contribution_id)
+    ) STRICT;
+  `)
+}
+
 function installSchema(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE repositories (
@@ -874,6 +1054,7 @@ function installSchema(db: DatabaseSync): void {
   installSchemaV3Objects(db)
   installSchemaV4Objects(db)
   installSchemaV5Objects(db)
+  installSchemaV6Objects(db)
   db.exec(`PRAGMA application_id = ${APPLICATION_ID}`)
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
 }
@@ -920,6 +1101,22 @@ function schemaStateDigest(db: DatabaseSync, schemaVersion: number): string {
       ['role_output_format_repair_records', `
         SELECT * FROM role_output_format_repair_records
         ORDER BY assessment_id, attempt_id, attempt_generation
+      `],
+    )
+  }
+  if (schemaVersion >= 6) {
+    queries.push(
+      ['role_candidate_admission_batches', `
+        SELECT * FROM role_candidate_admission_batches
+        ORDER BY assessment_id, contribution_id
+      `],
+      ['role_candidate_admissions', `
+        SELECT * FROM role_candidate_admissions
+        ORDER BY assessment_id, contribution_id, candidate_id
+      `],
+      ['role_candidate_admission_diagnostics', `
+        SELECT * FROM role_candidate_admission_diagnostics
+        ORDER BY assessment_id, admission_attempt_id
       `],
     )
   }
@@ -1002,8 +1199,8 @@ async function migrateSchemaStep(
   db: DatabaseSync,
   path: string,
   now: () => string,
-  sourceVersion: 1 | 2 | 3 | 4,
-  targetVersion: 2 | 3 | 4 | 5,
+  sourceVersion: 1 | 2 | 3 | 4 | 5,
+  targetVersion: 2 | 3 | 4 | 5 | 6,
   installTargetObjects: (db: DatabaseSync) => void,
 ): Promise<void> {
   verifySchema(db, sourceVersion)
@@ -1122,6 +1319,10 @@ async function openDatabase(path: string, now: () => string): Promise<DatabaseSy
     if (admittedVersion === 4) {
       await migrateSchemaStep(db, path, now, 4, 5, installSchemaV5Objects)
       admittedVersion = 5
+    }
+    if (admittedVersion === 5) {
+      await migrateSchemaStep(db, path, now, 5, 6, installSchemaV6Objects)
+      admittedVersion = 6
     }
     if (admittedVersion !== SCHEMA_VERSION) {
       throw new SecurityPersistenceError('unsupported_schema', 'SQLite schema version is unsupported')
@@ -2190,6 +2391,291 @@ export class SecurityPersistence {
     return row === undefined ? undefined : this.parseRoleContributionRow(row)
   }
 
+  /**
+   * Atomically admit every Candidate in one durable Contribution or persist one
+   * fixed-code protected rejection diagnostic. Source slices are never stored.
+   */
+  admitRoleCandidates(
+    input: AdmitRoleCandidateAdmissionsPersistenceInput,
+  ): RoleCandidateAdmissionPersistenceResultV1 {
+    this.requireOpen()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const durableContribution = this.getRoleContribution(
+        input.assessmentId,
+        input.contributionId,
+      )
+      if (durableContribution === undefined) {
+        throw new SecurityPersistenceError(
+          'role_contribution_not_found',
+          'Candidate Admission requires one exact durable Role Contribution',
+        )
+      }
+      const { contribution, link } = durableContribution
+      const requestDigest = createRoleCandidateAdmissionRequestDigestV1({
+        admissionAttemptId: input.admissionAttemptId,
+        expectedAssessmentRevision: input.expectedAssessmentRevision,
+        contextGrant: input.contextGrant,
+        contribution,
+        contributionAdmissionLink: link,
+        sourceSlices: input.sourceSlices,
+        durableEvidenceArtifactIds: input.durableEvidenceArtifactIds,
+      })
+
+      const replayDiagnostic = this.getRoleCandidateAdmissionDiagnostic(
+        input.assessmentId,
+        input.admissionAttemptId,
+      )
+      if (replayDiagnostic !== undefined) {
+        if (
+          replayDiagnostic.contributionId !== input.contributionId
+          || replayDiagnostic.assessmentRevision !== input.expectedAssessmentRevision + 1
+          || canonicalJson(replayDiagnostic.requestDigest) !== canonicalJson(requestDigest)
+        ) {
+          throw new SecurityPersistenceError(
+            'role_candidate_admission_conflict',
+            'Candidate Admission attempt identity conflicts with a protected diagnostic',
+          )
+        }
+        this.db.exec('COMMIT')
+        return Object.freeze({ state: 'REJECTED', diagnostic: replayDiagnostic })
+      }
+
+      const replayByContribution = this.getRoleCandidateAdmissionBatch(
+        input.assessmentId,
+        input.contributionId,
+      )
+      const replayByAttemptRow = this.db.prepare(`
+        SELECT * FROM role_candidate_admission_batches
+        WHERE assessment_id = ? AND admission_attempt_id = ?
+      `).get(
+        input.assessmentId,
+        input.admissionAttemptId,
+      ) as RoleCandidateAdmissionBatchRow | undefined
+      const replayByAttempt = replayByAttemptRow === undefined
+        ? undefined
+        : this.parseRoleCandidateAdmissionBatchRow(replayByAttemptRow)
+      if (replayByContribution !== undefined || replayByAttempt !== undefined) {
+        if (
+          replayByContribution === undefined
+          || replayByAttempt === undefined
+          || canonicalJson(replayByContribution) !== canonicalJson(replayByAttempt)
+          || replayByContribution.admissionAttemptId !== input.admissionAttemptId
+          || replayByContribution.assessmentRevision !== input.expectedAssessmentRevision + 1
+          || canonicalJson(replayByContribution.requestDigest) !== canonicalJson(requestDigest)
+        ) {
+          throw new SecurityPersistenceError(
+            'role_candidate_admission_conflict',
+            'Candidate Admission identity is already bound to a different durable attempt',
+          )
+        }
+        this.db.exec('COMMIT')
+        return Object.freeze({ state: 'ADMITTED', batch: replayByContribution })
+      }
+
+      const currentAssessment = this.getAssessmentRecord(input.assessmentId)
+      if (currentAssessment === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
+      const currentAttempt = this.getRoleAttempt(
+        contribution.assessmentId,
+        contribution.parentAttempt.attemptId,
+        contribution.parentAttempt.generation,
+      )
+      if (currentAttempt === undefined) {
+        throw new SecurityPersistenceError(
+          'role_attempt_not_found',
+          'Candidate Admission requires its exact durable Role Attempt',
+        )
+      }
+      if (
+        currentAssessment.state !== 'RUNNING'
+        || currentAssessment.assessmentRevision !== input.expectedAssessmentRevision
+        || currentAssessment.pendingCancellation !== null
+        || currentAttempt.lifecycleState !== 'RUNNING'
+        || canonicalJson(currentAttempt.fenceDigest)
+          !== canonicalJson(contribution.parentAttempt.fenceDigest)
+      ) {
+        throw new SecurityPersistenceError(
+          'revision_conflict',
+          'Candidate Admission cannot commit at this Assessment revision or Attempt fence',
+        )
+      }
+
+      let admissions: readonly RoleCandidateAdmissionV1[]
+      try {
+        admissions = createRoleCandidateAdmissionsV1({
+          contextGrant: input.contextGrant,
+          contribution,
+          contributionAdmissionLink: link,
+          sourceSlices: input.sourceSlices,
+          durableEvidenceArtifactIds: input.durableEvidenceArtifactIds,
+        })
+      } catch (error) {
+        if (!(error instanceof RoleCandidateAdmissionError)) throw error
+        const recordedAt = this.now()
+        const diagnostic = createRoleCandidateAdmissionDiagnosticV1({
+          admissionAttemptId: input.admissionAttemptId,
+          requestDigest,
+          assessmentRevision: currentAssessment.assessmentRevision + 1,
+          contribution,
+          contributionAdmissionLink: link,
+          error,
+          recordedAt,
+        })
+        const rejected = internalAssessmentRecordV1Schema.parse({
+          ...currentAssessment,
+          assessmentRevision: diagnostic.assessmentRevision,
+          updatedAt: recordedAt,
+        })
+        this.commitAssessmentRevision(
+          rejected,
+          'role_candidate_admission_rejected',
+          recordedAt,
+        )
+        this.db.prepare(`
+          INSERT INTO role_candidate_admission_diagnostics (
+            assessment_id, admission_attempt_id, contribution_id,
+            assessment_revision, request_digest, error_code, diagnostic_digest,
+            diagnostic_json, committed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          diagnostic.assessmentId,
+          diagnostic.admissionAttemptId,
+          diagnostic.contributionId,
+          diagnostic.assessmentRevision,
+          diagnostic.requestDigest.value,
+          diagnostic.errorCode,
+          diagnostic.diagnosticDigest.value,
+          canonicalJson(diagnostic),
+          diagnostic.recordedAt,
+        )
+        this.db.exec('COMMIT')
+        return Object.freeze({ state: 'REJECTED', diagnostic })
+      }
+
+      const committedAt = this.now()
+      const batch = createRoleCandidateAdmissionBatchV1({
+        admissionAttemptId: input.admissionAttemptId,
+        requestDigest,
+        assessmentRevision: currentAssessment.assessmentRevision + 1,
+        contribution,
+        contributionAdmissionLink: link,
+        admissions,
+        committedAt,
+      })
+      const admitted = internalAssessmentRecordV1Schema.parse({
+        ...currentAssessment,
+        assessmentRevision: batch.assessmentRevision,
+        updatedAt: committedAt,
+      })
+      this.commitAssessmentRevision(admitted, 'role_candidates_admitted', committedAt)
+      this.db.prepare(`
+        INSERT INTO role_candidate_admission_batches (
+          assessment_id, contribution_id, assessment_revision,
+          admission_attempt_id, request_digest, contribution_digest,
+          contribution_link_digest, candidate_count, batch_digest, batch_json,
+          committed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        batch.assessmentId,
+        batch.contributionId,
+        batch.assessmentRevision,
+        batch.admissionAttemptId,
+        batch.requestDigest.value,
+        batch.contributionDigest.value,
+        batch.contributionAdmissionLinkDigest.value,
+        batch.candidateCount,
+        batch.batchDigest.value,
+        canonicalJson(batch),
+        batch.committedAt,
+      )
+      const insertAdmission = this.db.prepare(`
+        INSERT INTO role_candidate_admissions (
+          assessment_id, contribution_id, candidate_id, assessment_revision,
+          candidate_digest, admission_digest, admission_json, committed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      for (const admission of batch.admissions) {
+        insertAdmission.run(
+          batch.assessmentId,
+          batch.contributionId,
+          admission.candidateId,
+          batch.assessmentRevision,
+          admission.candidateDigest.value,
+          admission.admissionDigest.value,
+          canonicalJson(admission),
+          batch.committedAt,
+        )
+      }
+      this.db.exec('COMMIT')
+      return Object.freeze({ state: 'ADMITTED', batch })
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  getRoleCandidateAdmissionBatch(
+    assessmentId: AssessmentId,
+    contributionId: string,
+  ): RoleCandidateAdmissionBatchV1 | undefined {
+    this.requireOpen()
+    const row = this.db.prepare(`
+      SELECT * FROM role_candidate_admission_batches
+      WHERE assessment_id = ? AND contribution_id = ?
+    `).get(assessmentId, contributionId) as RoleCandidateAdmissionBatchRow | undefined
+    return row === undefined ? undefined : this.parseRoleCandidateAdmissionBatchRow(row)
+  }
+
+  getRoleCandidateAdmission(
+    assessmentId: AssessmentId,
+    contributionId: string,
+    candidateId: string,
+  ): RoleCandidateAdmissionV1 | undefined {
+    this.requireOpen()
+    const row = this.db.prepare(`
+      SELECT * FROM role_candidate_admissions
+      WHERE assessment_id = ? AND contribution_id = ? AND candidate_id = ?
+    `).get(
+      assessmentId,
+      contributionId,
+      candidateId,
+    ) as RoleCandidateAdmissionRow | undefined
+    if (row === undefined) return undefined
+    const admission = this.parseRoleCandidateAdmissionRow(row)
+    const batch = this.getRoleCandidateAdmissionBatch(assessmentId, contributionId)
+    if (
+      batch === undefined
+      || !batch.admissions.some(candidate => (
+        canonicalJson(candidate) === canonicalJson(admission)
+      ))
+    ) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'Candidate Admission row does not belong to its durable batch',
+      )
+    }
+    return admission
+  }
+
+  getRoleCandidateAdmissionDiagnostic(
+    assessmentId: AssessmentId,
+    admissionAttemptId: string,
+  ): RoleCandidateAdmissionDiagnosticV1 | undefined {
+    this.requireOpen()
+    const row = this.db.prepare(`
+      SELECT * FROM role_candidate_admission_diagnostics
+      WHERE assessment_id = ? AND admission_attempt_id = ?
+    `).get(
+      assessmentId,
+      admissionAttemptId,
+    ) as RoleCandidateAdmissionDiagnosticRow | undefined
+    return row === undefined
+      ? undefined
+      : this.parseRoleCandidateAdmissionDiagnosticRow(row)
+  }
+
   /** Admit one terminal Role result only from the current durable generation and fence. */
   completeRoleAttempt(input: CompleteRoleAttemptPersistenceInput): RoleAttemptRecordV1 {
     this.requireOpen()
@@ -2255,6 +2741,30 @@ export class SecurityPersistence {
           'role_contribution_conflict',
           'Role Attempt completion does not bind its admitted Role Contribution',
         )
+      }
+      if (contribution.candidateFindings.length > 0) {
+        const candidateBatch = this.getRoleCandidateAdmissionBatch(
+          contribution.assessmentId,
+          contribution.contributionId,
+        )
+        if (candidateBatch === undefined) {
+          throw new SecurityPersistenceError(
+            'role_candidate_admission_not_found',
+            'Candidate-bearing Role Contribution must be admitted before Attempt completion',
+          )
+        }
+        if (
+          candidateBatch.candidateCount !== contribution.candidateFindings.length
+          || canonicalJson(candidateBatch.contributionDigest)
+            !== canonicalJson(contribution.contributionDigest)
+          || canonicalJson(candidateBatch.contributionAdmissionLinkDigest)
+            !== canonicalJson(admitted.link.linkDigest)
+        ) {
+          throw new SecurityPersistenceError(
+            'corrupt_database',
+            'Candidate Admission batch does not close the Role Contribution Candidate set',
+          )
+        }
       }
       const derivedCompletion: CompleteRoleAttemptValuesV1 = {
         completionDisposition: contribution.completionDisposition,
@@ -3630,6 +4140,128 @@ export class SecurityPersistence {
       )
     }
     return Object.freeze({ contribution, link })
+  }
+
+  private parseRoleCandidateAdmissionRow(
+    row: RoleCandidateAdmissionRow,
+  ): RoleCandidateAdmissionV1 {
+    const admission = parseRoleCandidateAdmissionV1(JSON.parse(row.admission_json))
+    if (
+      row.admission_json !== canonicalJson(admission)
+      || row.assessment_id !== admission.assessmentId
+      || row.contribution_id !== admission.provenance.contributionId
+      || row.candidate_id !== admission.candidateId
+      || row.candidate_digest !== admission.candidateDigest.value
+      || row.admission_digest !== admission.admissionDigest.value
+      || Number.isNaN(Date.parse(row.committed_at))
+    ) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'Candidate Admission row does not match its canonical record',
+      )
+    }
+    return admission
+  }
+
+  private parseRoleCandidateAdmissionBatchRow(
+    row: RoleCandidateAdmissionBatchRow,
+  ): RoleCandidateAdmissionBatchV1 {
+    const batch = parseRoleCandidateAdmissionBatchV1(JSON.parse(row.batch_json))
+    const contribution = this.getRoleContribution(row.assessment_id, row.contribution_id)
+    const revision = this.db.prepare(`
+      SELECT event_kind, committed_at FROM assessment_revisions
+      WHERE assessment_id = ? AND assessment_revision = ?
+    `).get(
+      row.assessment_id,
+      row.assessment_revision,
+    ) as { readonly event_kind: string; readonly committed_at: string } | undefined
+    const admissionRows = this.db.prepare(`
+      SELECT * FROM role_candidate_admissions
+      WHERE assessment_id = ? AND contribution_id = ?
+      ORDER BY candidate_id
+    `).all(
+      row.assessment_id,
+      row.contribution_id,
+    ) as unknown as readonly RoleCandidateAdmissionRow[]
+    const admissions = admissionRows.map(candidate => {
+      if (
+        candidate.assessment_revision !== row.assessment_revision
+        || candidate.committed_at !== row.committed_at
+      ) {
+        throw new SecurityPersistenceError(
+          'corrupt_database',
+          'Candidate Admission child row does not match its atomic batch commit',
+        )
+      }
+      return this.parseRoleCandidateAdmissionRow(candidate)
+    })
+    if (
+      row.batch_json !== canonicalJson(batch)
+      || row.assessment_id !== batch.assessmentId
+      || row.contribution_id !== batch.contributionId
+      || row.assessment_revision !== batch.assessmentRevision
+      || row.admission_attempt_id !== batch.admissionAttemptId
+      || row.request_digest !== batch.requestDigest.value
+      || row.contribution_digest !== batch.contributionDigest.value
+      || row.contribution_link_digest !== batch.contributionAdmissionLinkDigest.value
+      || row.candidate_count !== batch.candidateCount
+      || row.batch_digest !== batch.batchDigest.value
+      || row.committed_at !== batch.committedAt
+      || contribution === undefined
+      || canonicalJson(contribution.contribution.contributionDigest)
+        !== canonicalJson(batch.contributionDigest)
+      || canonicalJson(contribution.link.linkDigest)
+        !== canonicalJson(batch.contributionAdmissionLinkDigest)
+      || canonicalJson(admissions) !== canonicalJson(batch.admissions)
+      || revision?.event_kind !== 'role_candidates_admitted'
+      || revision.committed_at !== batch.committedAt
+    ) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'Candidate Admission batch row does not match its canonical records and lineage',
+      )
+    }
+    return batch
+  }
+
+  private parseRoleCandidateAdmissionDiagnosticRow(
+    row: RoleCandidateAdmissionDiagnosticRow,
+  ): RoleCandidateAdmissionDiagnosticV1 {
+    const diagnostic = parseRoleCandidateAdmissionDiagnosticV1(
+      JSON.parse(row.diagnostic_json),
+    )
+    const contribution = this.getRoleContribution(row.assessment_id, row.contribution_id)
+    const revision = this.db.prepare(`
+      SELECT event_kind, committed_at FROM assessment_revisions
+      WHERE assessment_id = ? AND assessment_revision = ?
+    `).get(
+      row.assessment_id,
+      row.assessment_revision,
+    ) as { readonly event_kind: string; readonly committed_at: string } | undefined
+    if (
+      row.diagnostic_json !== canonicalJson(diagnostic)
+      || row.assessment_id !== diagnostic.assessmentId
+      || row.admission_attempt_id !== diagnostic.admissionAttemptId
+      || row.contribution_id !== diagnostic.contributionId
+      || row.assessment_revision !== diagnostic.assessmentRevision
+      || row.request_digest !== diagnostic.requestDigest.value
+      || row.error_code !== diagnostic.errorCode
+      || row.diagnostic_digest !== diagnostic.diagnosticDigest.value
+      || row.committed_at !== diagnostic.recordedAt
+      || contribution === undefined
+      || canonicalJson(contribution.contribution.contributionDigest)
+        !== canonicalJson(diagnostic.contributionDigest)
+      || canonicalJson(contribution.link.linkDigest)
+        !== canonicalJson(diagnostic.contributionAdmissionLinkDigest)
+      || revision?.event_kind !== 'role_candidate_admission_rejected'
+      || revision.committed_at !== diagnostic.recordedAt
+    ) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'Candidate Admission diagnostic row does not match its protected lineage',
+      )
+    }
+    return diagnostic
   }
 
   private modelInvocationLineageKind(
