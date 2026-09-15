@@ -42,6 +42,14 @@ import {
   createRoleContributionV1,
   ROLE_CONTRIBUTION_ADMISSION_LINK_MEDIA_TYPE,
 } from '../src/internal/role-contribution.ts'
+import {
+  candidateProducerLineageDigestV1,
+  createQualifiedRoleCandidateValidationContractV1,
+  createRoleCandidateValidationContractV1,
+  createRoleCandidateValidationEligibilityDecisionV1,
+  createRoleCandidateValidationIndependenceDecisionV1,
+  createRoleCandidateValidationProofV1,
+} from '../src/internal/role-candidate-validation.ts'
 import { removeTemporaryRoots } from './support/remove-temporary-root.ts'
 
 const temporaryRoots: string[] = []
@@ -1124,12 +1132,207 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
       )).toEqual(admitted.batch.admissions[0])
       expect(persistence.getAssessmentRecord(grant.assessmentId)?.assessmentRevision)
         .toBe(admittedRevision)
+      const candidateAdmission = admitted.batch.admissions[0]!
+      const assessmentBeforeValidation = persistence.getAssessmentRecord(grant.assessmentId)
+      if (assessmentBeforeValidation === undefined) throw new Error('expected durable Assessment')
+      const validationContract = createRoleCandidateValidationContractV1({
+        schemaVersion: 1,
+        contractId: 'security/install-script-validation',
+        contractVersion: '1.0.0',
+        selectors: {
+          policyId: assessmentBeforeValidation.contract.policy.policyId,
+          policyDigest: assessmentBeforeValidation.contract.policy.digest,
+          assessmentMode: assessmentBeforeValidation.contract.assessmentMode,
+          ecosystemId: 'ecosystem/node',
+          executionBoundaryId: 'execution/offline-sandbox',
+          primaryWeaknessId: 'cwe/94',
+          affectedControlId: 'security/node-package-lifecycle',
+        },
+        claimConditionId: 'condition/install-script-executes',
+        claimEvidenceSchemaIds: [publication.schemaId],
+        counterEvidence: [{
+          rejectionConditionId: 'condition/install-script-unreachable',
+          evidenceSchemaIds: [publication.schemaId],
+        }],
+        requiredNegativeControls: [{
+          negativeControlId: 'control/fixture-without-install-script',
+          evidenceSchemaIds: [publication.schemaId],
+        }],
+        independencePolicy: {
+          policyId: 'independence/provenance-graph-v1',
+          minimumDistinctValidationLineages: 1,
+        },
+      })
+      const qualifiedContract = createQualifiedRoleCandidateValidationContractV1({
+        schemaVersion: 1,
+        qualificationId: 'qualification/install-script-validator-v1',
+        contract: validationContract,
+        validatorCapabilityId: 'validator/install-script',
+        validatorVersion: '1.0.0',
+        validatorDefinitionDigest: structuredDigest(
+          'application/vnd.dsh.security.validator-definition+json',
+          { validatorId: 'validator/install-script', version: '1.0.0' },
+        ),
+        executionBoundaryId: 'execution/offline-sandbox',
+        qualifiedAt: '2026-09-12T00:00:00.000Z',
+        validUntil: '2026-09-14T00:00:00.000Z',
+      })
+      const validationEvidence = {
+        artifactId: publication.artifactId,
+        schemaId: publication.schemaId,
+        digest: publication.evidenceDigest,
+      }
+      const producerLineageDigest = candidateProducerLineageDigestV1(candidateAdmission)
+      const validationLineageDigest = structuredDigest(
+        'application/vnd.dsh.security.validation-lineage+json',
+        { artifactId: publication.artifactId, validatorId: 'validator/install-script' },
+      )
+      const validationProof = (
+        purpose: 'CLAIM_VALIDATION' | 'NEGATIVE_CONTROL',
+        conditionId: string,
+        suffix: string,
+      ) => {
+        const eligibilityDecision = createRoleCandidateValidationEligibilityDecisionV1({
+          schemaVersion: 1,
+          state: 'ELIGIBLE',
+          candidateId,
+          candidateAdmissionDigest: candidateAdmission.admissionDigest,
+          contractDefinitionDigest: validationContract.definitionDigest,
+          policyDigest: assessmentBeforeValidation.contract.policy.digest,
+          purpose,
+          conditionId,
+          evidence: validationEvidence,
+          reasonCode: 'eligibility/contract-satisfied',
+          decidedAt: '2026-09-13T00:00:03.000Z',
+        })
+        const independenceDecision = createRoleCandidateValidationIndependenceDecisionV1({
+          schemaVersion: 1,
+          state: 'INDEPENDENT',
+          independencePolicyId: validationContract.independencePolicy.policyId,
+          candidateProducerLineageDigest: producerLineageDigest,
+          validationLineageDigest,
+          provenanceGraphDigest: structuredDigest(
+            'application/vnd.dsh.security.provenance-graph+json',
+            { candidateId, validationLineageDigest },
+          ),
+          reasonCode: 'independence/provenance-graph-separated',
+          decidedAt: '2026-09-13T00:00:03.000Z',
+        })
+        return createRoleCandidateValidationProofV1({
+          schemaVersion: 1,
+          proofId: `role-candidate-validation-proof-00000000-0000-4000-8000-${suffix}`,
+          purpose,
+          conditionId,
+          evidence: validationEvidence,
+          result: 'PROVED',
+          validator: {
+            validatorId: 'validator/install-script',
+            validatorVersion: '1.0.0',
+            definitionDigest: structuredDigest(
+              'application/vnd.dsh.security.validator-definition+json',
+              { validatorId: 'validator/install-script', version: '1.0.0' },
+            ),
+          },
+          eligibilityDecision,
+          independenceDecision,
+          observedAt: '2026-09-13T00:00:03.000Z',
+        })
+      }
+      expect(() => persistence.recordRoleCandidateValidationOutcome({
+        validationAttemptId:
+          'role-candidate-validation-attempt-00000000-0000-4000-8000-000000000188',
+        assessmentId: grant.assessmentId,
+        contributionId: contribution.contributionId,
+        candidateId,
+        expectedAssessmentRevision: admittedRevision,
+        proofs: [],
+        durableEvidence: [],
+      })).toThrow(/prior durable Contract Resolution/iu)
+      expect(persistence.getAssessmentRecord(grant.assessmentId)?.assessmentRevision)
+        .toBe(admittedRevision)
+      const resolutionInput = {
+        validationAttemptId:
+          'role-candidate-validation-attempt-00000000-0000-4000-8000-000000000189',
+        assessmentId: grant.assessmentId,
+        contributionId: contribution.contributionId,
+        candidateId,
+        expectedAssessmentRevision: admittedRevision,
+        ecosystemId: 'ecosystem/node',
+        executionBoundaryId: 'execution/offline-sandbox',
+        qualifiedContracts: [qualifiedContract],
+      }
+      const durableResolution = persistence.resolveRoleCandidateValidationContract(
+        resolutionInput,
+      )
+      const resolutionReplay = persistence.resolveRoleCandidateValidationContract(
+        resolutionInput,
+      )
+      expect(resolutionReplay).toEqual(durableResolution)
+      expect(durableResolution).toMatchObject({
+        assessmentRevision: admittedRevision + 1,
+        resolution: {
+          state: 'RESOLVED',
+          contract: { contractVersion: '1.0.0' },
+        },
+      })
+      expect(persistence.getCurrentRoleCandidateValidation(
+        grant.assessmentId,
+        candidateId,
+      )).toBeUndefined()
+      const validationInput = {
+        validationAttemptId: resolutionInput.validationAttemptId,
+        assessmentId: grant.assessmentId,
+        contributionId: contribution.contributionId,
+        candidateId,
+        expectedAssessmentRevision: durableResolution.assessmentRevision,
+        proofs: [
+          validationProof(
+            'CLAIM_VALIDATION',
+            'condition/install-script-executes',
+            '000000000189',
+          ),
+          validationProof(
+            'NEGATIVE_CONTROL',
+            'control/fixture-without-install-script',
+            '000000000190',
+          ),
+        ],
+        durableEvidence: [validationEvidence],
+      }
+      const validation = persistence.recordRoleCandidateValidationOutcome(validationInput)
+      const validationReplay = persistence.recordRoleCandidateValidationOutcome(validationInput)
+      expect(validationReplay).toEqual(validation)
+      expect(() => persistence.recordRoleCandidateValidationOutcome({
+        ...validationInput,
+        durableEvidence: [],
+      })).toThrow(/conflicts/iu)
+      expect(validation).toMatchObject({
+        resolution: {
+          state: 'RESOLVED',
+          contract: { contractVersion: '1.0.0' },
+        },
+        outcome: {
+          state: 'VALIDATED',
+          assessmentRevision: durableResolution.assessmentRevision + 1,
+          proofGaps: [],
+        },
+      })
+      expect(persistence.getCurrentRoleCandidateValidation(
+        grant.assessmentId,
+        candidateId,
+      )).toEqual(validation)
+      expect(() => persistence.resolveRoleCandidateValidationContract({
+        ...resolutionInput,
+        ecosystemId: 'ecosystem/browser',
+      })).toThrow(/conflicts/iu)
+      expect(persistence.getAssessmentRecord(grant.assessmentId)?.assessmentRevision)
+        .toBe(validation.outcome.assessmentRevision)
       const completed = persistence.completeRoleAttempt({
         assessmentId: grant.assessmentId,
         attemptId,
         generation: 1,
         fenceDigest: attemptFenceDigest,
-        expectedAssessmentRevision: admittedRevision,
+        expectedAssessmentRevision: validation.outcome.assessmentRevision,
         contributionId: contribution.contributionId,
         contributionDigest: contribution.contributionDigest,
         milestones: [],
@@ -1137,7 +1340,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
       expect(completed).toMatchObject({
         lifecycleState: 'COMPLETED',
         candidateCount: 1,
-        assessmentRevision: admittedRevision + 1,
+        assessmentRevision: validation.outcome.assessmentRevision + 1,
       })
       finalRevision = completed.assessmentRevision
       expect(() => persistence.admitRoleCandidates({
@@ -1157,6 +1360,10 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
         contribution.contributionId,
         candidateId,
       )?.candidateId).toBe(candidateId)
+      expect(reopened.getCurrentRoleCandidateValidation(
+        grant.assessmentId,
+        candidateId,
+      )?.outcome.state).toBe('VALIDATED')
       expect(reopened.getAssessmentRecord(grant.assessmentId)?.assessmentRevision)
         .toBe(finalRevision)
     } finally {
@@ -1177,8 +1384,32 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
       expect(forensic.prepare(`
         SELECT count(*) AS count FROM role_candidate_admissions
       `).get()).toEqual({ count: 1 })
+      expect(forensic.prepare(`
+        SELECT count(*) AS count FROM role_candidate_validation_resolutions
+      `).get()).toEqual({ count: 1 })
+      expect(forensic.prepare(`
+        SELECT count(*) AS count FROM role_candidate_validation_outcomes
+      `).get()).toEqual({ count: 1 })
     } finally {
       forensic.close()
+    }
+
+    const tampered = new DatabaseSync(databasePath)
+    try {
+      tampered.prepare(`
+        UPDATE role_candidate_validation_outcomes SET outcome_state = 'REJECTED'
+      `).run()
+    } finally {
+      tampered.close()
+    }
+    const tamperedPersistence = await openSecurityPersistence({ databasePath })
+    try {
+      expect(() => tamperedPersistence.getCurrentRoleCandidateValidation(
+        grant.assessmentId,
+        candidateId,
+      )).toThrow(/canonical records and lineage/iu)
+    } finally {
+      tamperedPersistence.close()
     }
   })
 
@@ -1390,7 +1621,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
     }
   })
 
-  it('opens a released schema-v1 Store only after verified v2 through v6 migrations', async () => {
+  it('opens a released schema-v1 Store only after verified v2 through v7 migrations', async () => {
     const securityRoot = await mkdtemp(join(tmpdir(), 'dsh-model-invocation-migration-'))
     temporaryRoots.push(securityRoot)
     const databasePath = join(securityRoot, 'security-assurance.sqlite')
@@ -1404,7 +1635,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
 
     const migrated = new DatabaseSync(databasePath, { readOnly: true })
     try {
-      expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 6 })
+      expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 7 })
       expect(migrated.prepare(`
         SELECT source_version, target_version, committed_at
         FROM schema_migrations ORDER BY target_version
@@ -1432,6 +1663,11 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
         {
           source_version: 5,
           target_version: 6,
+          committed_at: '2026-09-13T00:00:04.000Z',
+        },
+        {
+          source_version: 6,
+          target_version: 7,
           committed_at: '2026-09-13T00:00:04.000Z',
         },
       ])
@@ -1474,6 +1710,13 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
           source_state_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
           result_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
         }),
+        expect.objectContaining({
+          backup_name: expect.stringMatching(
+            /^security-assurance\.sqlite\.pre-migration-v6-[0-9a-f-]{36}\.sqlite$/u,
+          ),
+          source_state_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+          result_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+        }),
       ])
       expect(migrated.prepare(`
         SELECT name FROM sqlite_master
@@ -1505,15 +1748,23 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
         SELECT name FROM sqlite_master
         WHERE type = 'table' AND name = 'role_candidate_admission_diagnostics'
       `).get()).toEqual({ name: 'role_candidate_admission_diagnostics' })
+      expect(migrated.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'role_candidate_validation_resolutions'
+      `).get()).toEqual({ name: 'role_candidate_validation_resolutions' })
+      expect(migrated.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'role_candidate_validation_outcomes'
+      `).get()).toEqual({ name: 'role_candidate_validation_outcomes' })
     } finally {
       migrated.close()
     }
 
     const backupNames = (await readdir(securityRoot)).filter(name => (
-      /^security-assurance\.sqlite\.pre-migration-v[1-5]-[0-9a-f-]{36}\.sqlite$/u.test(name)
+      /^security-assurance\.sqlite\.pre-migration-v[1-6]-[0-9a-f-]{36}\.sqlite$/u.test(name)
     ))
-    expect(backupNames).toHaveLength(5)
-    for (const version of [1, 2, 3, 4, 5]) {
+    expect(backupNames).toHaveLength(6)
+    for (const version of [1, 2, 3, 4, 5, 6]) {
       const backupName = backupNames.find(name => name.includes(`migration-v${version}-`))
       expect(backupName).toBeDefined()
       const backup = new DatabaseSync(join(securityRoot, backupName!), { readOnly: true })
@@ -1530,7 +1781,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
     const tampered = new DatabaseSync(databasePath)
     try {
       tampered.prepare(`
-        UPDATE schema_migrations SET result_digest = ? WHERE target_version = 6
+        UPDATE schema_migrations SET result_digest = ? WHERE target_version = 7
       `).run(`sha256:${'0'.repeat(64)}`)
     } finally {
       tampered.close()

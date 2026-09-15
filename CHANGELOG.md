@@ -206,6 +206,24 @@
   migration. This adds no public API, Provider call, Validation Outcome,
   Finding, clustering, Evidence Link, Coverage Resolution, or Control Plane
   change.
+- Add package-private Role Candidate validation and persist it as schema v7.
+  The Kernel-facing pure seam freezes one exact versioned Validation Contract
+  from the Candidate weakness/control, Assessment Policy digest and Mode,
+  ecosystem, execution boundary, and qualification validity before considering
+  any proof. It then derives only `VALIDATED`, `REJECTED`, or `UNRESOLVED` from
+  exact caller-confirmed durable Evidence identities, purpose-specific eligibility decisions,
+  contract conditions, required negative controls, and provenance-graph
+  independence decisions. No or ambiguous Contract, insufficient or dependent
+  proof, missing controls, and conflicting claim/Counter-Evidence remain
+  unresolved; failure to prove never becomes rejection. Each validation attempt
+  first appends its immutable Contract Resolution in one Assessment revision;
+  only a later transaction may append the Outcome in the next revision. Exact
+  replays are revision-neutral and the current query selects the latest Outcome.
+  Reopen re-derives selection and Outcome and rejects row,
+  digest, Admission, Journal, or projection tampering. The v6-to-v7 migration has
+  its own verified backup and digest-bound history. This adds no public API,
+  Provider call, Finding, Coverage Resolution, Evidence merge, ADR 0197 Evidence
+  Link, or Control Plane change.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

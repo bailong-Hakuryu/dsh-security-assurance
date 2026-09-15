@@ -90,6 +90,21 @@ import {
   parseRoleCandidateAdmissionV1,
 } from './role-candidate-admission.ts'
 import type {
+  QualifiedRoleCandidateValidationContractV1,
+  RoleCandidateValidationContractResolutionV1,
+  RoleCandidateValidationEvidenceIdentityV1,
+  RoleCandidateValidationOutcomeV1,
+  RoleCandidateValidationProofV1,
+} from './role-candidate-validation.ts'
+import {
+  createRoleCandidateValidationOutcomeV1,
+  createRoleCandidateValidationOutcomeRequestDigestV1,
+  createRoleCandidateValidationResolutionRequestDigestV1,
+  parseRoleCandidateValidationContractResolutionV1,
+  parseRoleCandidateValidationOutcomeV1,
+  resolveRoleCandidateValidationContractV1,
+} from './role-candidate-validation.ts'
+import type {
   AdmitRoleOutputFormatRepairOptionsV1,
   AdmittedRoleOutputFormatRepairV1,
   RoleOutputFormatRepairPlanV1,
@@ -110,7 +125,7 @@ import {
 } from './role-attempt.ts'
 
 const APPLICATION_ID = 0x4453_4853
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 
 export type SecurityPersistenceErrorCode =
   | 'foreign_database'
@@ -127,6 +142,7 @@ export type SecurityPersistenceErrorCode =
   | 'role_contribution_not_found'
   | 'role_candidate_admission_conflict'
   | 'role_candidate_admission_not_found'
+  | 'role_candidate_validation_conflict'
   | 'role_attempt_conflict'
   | 'role_attempt_not_found'
   | 'revision_conflict'
@@ -290,6 +306,40 @@ export type RoleCandidateAdmissionPersistenceResultV1 =
       readonly diagnostic: RoleCandidateAdmissionDiagnosticV1
     }
 
+export interface ResolveRoleCandidateValidationContractPersistenceInput {
+  readonly validationAttemptId: string
+  readonly assessmentId: AssessmentId
+  readonly contributionId: string
+  readonly candidateId: string
+  readonly expectedAssessmentRevision: number
+  readonly ecosystemId: string
+  readonly executionBoundaryId: string
+  readonly qualifiedContracts: readonly QualifiedRoleCandidateValidationContractV1[]
+}
+
+export interface RecordRoleCandidateValidationOutcomePersistenceInput {
+  readonly validationAttemptId: string
+  readonly assessmentId: AssessmentId
+  readonly contributionId: string
+  readonly candidateId: string
+  readonly expectedAssessmentRevision: number
+  readonly proofs: readonly RoleCandidateValidationProofV1[]
+  readonly durableEvidence: readonly RoleCandidateValidationEvidenceIdentityV1[]
+}
+
+export interface DurableRoleCandidateValidationContractResolutionV1 {
+  readonly requestDigest: string
+  readonly assessmentRevision: number
+  readonly resolution: RoleCandidateValidationContractResolutionV1
+}
+
+export interface DurableRoleCandidateValidationV1 {
+  readonly resolutionRequestDigest: string
+  readonly outcomeRequestDigest: string
+  readonly resolution: RoleCandidateValidationContractResolutionV1
+  readonly outcome: RoleCandidateValidationOutcomeV1
+}
+
 export interface CompleteRoleAttemptPersistenceInput {
   readonly assessmentId: AssessmentId
   readonly attemptId: string
@@ -452,6 +502,32 @@ interface RoleCandidateAdmissionDiagnosticRow {
   readonly committed_at: string
 }
 
+interface RoleCandidateValidationResolutionRow {
+  readonly assessment_id: AssessmentId
+  readonly contribution_id: string
+  readonly candidate_id: string
+  readonly validation_attempt_id: string
+  readonly assessment_revision: number
+  readonly request_digest: string
+  readonly resolution_state: RoleCandidateValidationContractResolutionV1['state']
+  readonly resolution_digest: string
+  readonly resolution_json: string
+  readonly committed_at: string
+}
+
+interface RoleCandidateValidationOutcomeRow {
+  readonly assessment_id: AssessmentId
+  readonly candidate_id: string
+  readonly validation_attempt_id: string
+  readonly assessment_revision: number
+  readonly request_digest: string
+  readonly resolution_digest: string
+  readonly outcome_state: RoleCandidateValidationOutcomeV1['state']
+  readonly outcome_digest: string
+  readonly outcome_json: string
+  readonly committed_at: string
+}
+
 export interface AdmittedRoleContributionV1 {
   readonly contribution: RoleContributionV1
   readonly link: RoleContributionAdmissionLinkV1
@@ -603,6 +679,18 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
       'diagnostic_json', 'committed_at',
     ])
   }
+  if (schemaVersion >= 7) {
+    expected.set('role_candidate_validation_resolutions', [
+      'assessment_id', 'contribution_id', 'candidate_id', 'validation_attempt_id',
+      'assessment_revision', 'request_digest', 'resolution_state', 'resolution_digest',
+      'resolution_json', 'committed_at',
+    ])
+    expected.set('role_candidate_validation_outcomes', [
+      'assessment_id', 'candidate_id', 'validation_attempt_id', 'assessment_revision',
+      'request_digest', 'resolution_digest', 'outcome_state', 'outcome_digest', 'outcome_json',
+      'committed_at',
+    ])
+  }
   const tables = db.prepare(`
     SELECT name FROM sqlite_master
     WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
@@ -668,6 +756,14 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
       'assessment_id', 'admission_attempt_id',
     ])
   }
+  if (schemaVersion >= 7) {
+    primaryKeys.set('role_candidate_validation_resolutions', [
+      'assessment_id', 'validation_attempt_id',
+    ])
+    primaryKeys.set('role_candidate_validation_outcomes', [
+      'assessment_id', 'validation_attempt_id',
+    ])
+  }
   for (const [table, columns] of primaryKeys) {
     const observed = db.prepare(`PRAGMA table_info('${table}')`).all() as unknown as readonly {
       readonly name: string
@@ -693,6 +789,25 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
     })
   if (!hasCanonicalRootUnique) {
     throw new SecurityPersistenceError('corrupt_database', 'Repository canonical_root uniqueness constraint is missing')
+  }
+  if (schemaVersion >= 7) {
+    const currentOutcomeIndexes = db.prepare(
+      "PRAGMA index_list('role_candidate_validation_outcomes')",
+    ).all() as unknown as readonly { readonly name: string }[]
+    const hasCurrentOutcomeIndex = currentOutcomeIndexes.some(index => {
+      if (index.name !== 'role_candidate_validation_outcomes_current') return false
+      const columns = db.prepare(`PRAGMA index_info('${index.name}')`)
+        .all() as unknown as readonly { readonly name: string }[]
+      return canonicalJson(columns.map(column => column.name)) === canonicalJson([
+        'assessment_id', 'candidate_id', 'assessment_revision',
+      ])
+    })
+    if (!hasCurrentOutcomeIndex) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'Role Candidate Validation current Outcome index is missing',
+      )
+    }
   }
   const foreignKeys = new Map<string, readonly [string, string, string][]>([
     ['repository_revisions', [['repository_id', 'repositories', 'repository_id']]],
@@ -763,6 +878,21 @@ function verifySchema(db: DatabaseSync, schemaVersion = SCHEMA_VERSION): void {
       ['assessment_revision', 'assessment_revisions', 'assessment_revision'],
       ['assessment_id', 'role_contributions', 'assessment_id'],
       ['contribution_id', 'role_contributions', 'contribution_id'],
+    ])
+  }
+  if (schemaVersion >= 7) {
+    foreignKeys.set('role_candidate_validation_resolutions', [
+      ['assessment_id', 'assessment_revisions', 'assessment_id'],
+      ['assessment_revision', 'assessment_revisions', 'assessment_revision'],
+      ['assessment_id', 'role_candidate_admissions', 'assessment_id'],
+      ['contribution_id', 'role_candidate_admissions', 'contribution_id'],
+      ['candidate_id', 'role_candidate_admissions', 'candidate_id'],
+    ])
+    foreignKeys.set('role_candidate_validation_outcomes', [
+      ['assessment_id', 'assessment_revisions', 'assessment_id'],
+      ['assessment_revision', 'assessment_revisions', 'assessment_revision'],
+      ['assessment_id', 'role_candidate_validation_resolutions', 'assessment_id'],
+      ['validation_attempt_id', 'role_candidate_validation_resolutions', 'validation_attempt_id'],
     ])
   }
   for (const [table, expectedForeignKeys] of foreignKeys) {
@@ -998,6 +1128,51 @@ function installSchemaV6Objects(db: DatabaseSync): void {
   `)
 }
 
+function installSchemaV7Objects(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE role_candidate_validation_resolutions (
+      assessment_id         TEXT NOT NULL,
+      contribution_id       TEXT NOT NULL,
+      candidate_id          TEXT NOT NULL,
+      validation_attempt_id TEXT NOT NULL,
+      assessment_revision   INTEGER NOT NULL,
+      request_digest        TEXT NOT NULL,
+      resolution_state      TEXT NOT NULL,
+      resolution_digest     TEXT NOT NULL,
+      resolution_json       TEXT NOT NULL,
+      committed_at          TEXT NOT NULL,
+      PRIMARY KEY (assessment_id, validation_attempt_id),
+      FOREIGN KEY (assessment_id, assessment_revision)
+        REFERENCES assessment_revisions(assessment_id, assessment_revision),
+      FOREIGN KEY (assessment_id, contribution_id, candidate_id)
+        REFERENCES role_candidate_admissions(assessment_id, contribution_id, candidate_id)
+    ) STRICT;
+
+    CREATE TABLE role_candidate_validation_outcomes (
+      assessment_id         TEXT NOT NULL,
+      candidate_id          TEXT NOT NULL,
+      validation_attempt_id TEXT NOT NULL,
+      assessment_revision   INTEGER NOT NULL,
+      request_digest        TEXT NOT NULL,
+      resolution_digest     TEXT NOT NULL,
+      outcome_state         TEXT NOT NULL,
+      outcome_digest        TEXT NOT NULL,
+      outcome_json          TEXT NOT NULL,
+      committed_at          TEXT NOT NULL,
+      PRIMARY KEY (assessment_id, validation_attempt_id),
+      FOREIGN KEY (assessment_id, assessment_revision)
+        REFERENCES assessment_revisions(assessment_id, assessment_revision),
+      FOREIGN KEY (assessment_id, validation_attempt_id)
+        REFERENCES role_candidate_validation_resolutions(assessment_id, validation_attempt_id)
+    ) STRICT;
+
+    CREATE INDEX role_candidate_validation_outcomes_current
+      ON role_candidate_validation_outcomes (
+        assessment_id, candidate_id, assessment_revision DESC
+      );
+  `)
+}
+
 function installSchema(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE repositories (
@@ -1055,6 +1230,7 @@ function installSchema(db: DatabaseSync): void {
   installSchemaV4Objects(db)
   installSchemaV5Objects(db)
   installSchemaV6Objects(db)
+  installSchemaV7Objects(db)
   db.exec(`PRAGMA application_id = ${APPLICATION_ID}`)
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
 }
@@ -1117,6 +1293,18 @@ function schemaStateDigest(db: DatabaseSync, schemaVersion: number): string {
       ['role_candidate_admission_diagnostics', `
         SELECT * FROM role_candidate_admission_diagnostics
         ORDER BY assessment_id, admission_attempt_id
+      `],
+    )
+  }
+  if (schemaVersion >= 7) {
+    queries.push(
+      ['role_candidate_validation_resolutions', `
+        SELECT * FROM role_candidate_validation_resolutions
+        ORDER BY assessment_id, validation_attempt_id
+      `],
+      ['role_candidate_validation_outcomes', `
+        SELECT * FROM role_candidate_validation_outcomes
+        ORDER BY assessment_id, validation_attempt_id
       `],
     )
   }
@@ -1199,8 +1387,8 @@ async function migrateSchemaStep(
   db: DatabaseSync,
   path: string,
   now: () => string,
-  sourceVersion: 1 | 2 | 3 | 4 | 5,
-  targetVersion: 2 | 3 | 4 | 5 | 6,
+  sourceVersion: 1 | 2 | 3 | 4 | 5 | 6,
+  targetVersion: 2 | 3 | 4 | 5 | 6 | 7,
   installTargetObjects: (db: DatabaseSync) => void,
 ): Promise<void> {
   verifySchema(db, sourceVersion)
@@ -1323,6 +1511,10 @@ async function openDatabase(path: string, now: () => string): Promise<DatabaseSy
     if (admittedVersion === 5) {
       await migrateSchemaStep(db, path, now, 5, 6, installSchemaV6Objects)
       admittedVersion = 6
+    }
+    if (admittedVersion === 6) {
+      await migrateSchemaStep(db, path, now, 6, 7, installSchemaV7Objects)
+      admittedVersion = 7
     }
     if (admittedVersion !== SCHEMA_VERSION) {
       throw new SecurityPersistenceError('unsupported_schema', 'SQLite schema version is unsupported')
@@ -2674,6 +2866,294 @@ export class SecurityPersistence {
     return row === undefined
       ? undefined
       : this.parseRoleCandidateAdmissionDiagnosticRow(row)
+  }
+
+  /** Freeze the exact Contract before any validation proof is admitted. */
+  resolveRoleCandidateValidationContract(
+    input: ResolveRoleCandidateValidationContractPersistenceInput,
+  ): DurableRoleCandidateValidationContractResolutionV1 {
+    this.requireOpen()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const assessment = this.getAssessmentRecord(input.assessmentId)
+      if (assessment === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
+      const admission = this.getRoleCandidateAdmission(
+        input.assessmentId,
+        input.contributionId,
+        input.candidateId,
+      )
+      if (admission === undefined) {
+        throw new SecurityPersistenceError(
+          'role_candidate_admission_not_found',
+          'Role Candidate Validation requires one exact durable Candidate Admission',
+        )
+      }
+      const validationContext = {
+        policyId: assessment.contract.policy.policyId,
+        policyDigest: assessment.contract.policy.digest,
+        assessmentMode: assessment.contract.assessmentMode,
+        ecosystemId: input.ecosystemId,
+        executionBoundaryId: input.executionBoundaryId,
+      }
+      const requestDigest = createRoleCandidateValidationResolutionRequestDigestV1({
+        validationAttemptId: input.validationAttemptId,
+        expectedAssessmentRevision: input.expectedAssessmentRevision,
+        admission,
+        validationContext,
+        qualifiedContracts: input.qualifiedContracts,
+      })
+      const replay = this.getRoleCandidateValidationContractResolutionByAttempt(
+        input.assessmentId,
+        input.validationAttemptId,
+      )
+      if (replay !== undefined) {
+        if (
+          replay.resolution.candidateId !== input.candidateId
+          || replay.assessmentRevision !== input.expectedAssessmentRevision + 1
+          || replay.requestDigest !== requestDigest.value
+        ) {
+          throw new SecurityPersistenceError(
+            'role_candidate_validation_conflict',
+            'Role Candidate Validation Contract Resolution attempt conflicts with another request',
+          )
+        }
+        this.db.exec('COMMIT')
+        return replay
+      }
+      if (
+        assessment.state !== 'RUNNING'
+        || assessment.assessmentRevision !== input.expectedAssessmentRevision
+        || assessment.pendingCancellation !== null
+        || canonicalJson(assessment.subject.digest) !== canonicalJson(admission.subjectDigest)
+      ) {
+        throw new SecurityPersistenceError(
+          'revision_conflict',
+          'Role Candidate Validation Contract cannot resolve at this Assessment revision or Subject',
+        )
+      }
+
+      const committedAt = this.now()
+      const resolution = resolveRoleCandidateValidationContractV1({
+        admission,
+        validationContext,
+        qualifiedContracts: input.qualifiedContracts,
+        resolvedAt: committedAt,
+      })
+      const updated = internalAssessmentRecordV1Schema.parse({
+        ...assessment,
+        assessmentRevision: assessment.assessmentRevision + 1,
+        updatedAt: committedAt,
+      })
+      this.commitAssessmentRevision(
+        updated,
+        'role_candidate_validation_contract_resolved',
+        committedAt,
+      )
+      this.db.prepare(`
+        INSERT INTO role_candidate_validation_resolutions (
+          assessment_id, contribution_id, candidate_id, validation_attempt_id,
+          assessment_revision, request_digest, resolution_state, resolution_digest,
+          resolution_json, committed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.assessmentId,
+        input.contributionId,
+        input.candidateId,
+        input.validationAttemptId,
+        updated.assessmentRevision,
+        requestDigest.value,
+        resolution.state,
+        resolution.resolutionDigest.value,
+        canonicalJson(resolution),
+        committedAt,
+      )
+      this.db.exec('COMMIT')
+      return Object.freeze({
+        requestDigest: requestDigest.value,
+        assessmentRevision: updated.assessmentRevision,
+        resolution,
+      })
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Derive an Outcome only from one already-durable Contract Resolution. */
+  recordRoleCandidateValidationOutcome(
+    input: RecordRoleCandidateValidationOutcomePersistenceInput,
+  ): DurableRoleCandidateValidationV1 {
+    this.requireOpen()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const assessment = this.getAssessmentRecord(input.assessmentId)
+      if (assessment === undefined) {
+        throw new SecurityPersistenceError('assessment_not_found', 'Assessment does not exist')
+      }
+      const admission = this.getRoleCandidateAdmission(
+        input.assessmentId,
+        input.contributionId,
+        input.candidateId,
+      )
+      if (admission === undefined) {
+        throw new SecurityPersistenceError(
+          'role_candidate_admission_not_found',
+          'Role Candidate Validation requires one exact durable Candidate Admission',
+        )
+      }
+      const durableResolution = this.getRoleCandidateValidationContractResolutionByAttempt(
+        input.assessmentId,
+        input.validationAttemptId,
+      )
+      if (durableResolution === undefined) {
+        throw new SecurityPersistenceError(
+          'role_candidate_validation_conflict',
+          'Role Candidate Validation Outcome requires a prior durable Contract Resolution',
+        )
+      }
+      const requestDigest = createRoleCandidateValidationOutcomeRequestDigestV1({
+        validationAttemptId: input.validationAttemptId,
+        expectedAssessmentRevision: input.expectedAssessmentRevision,
+        admission,
+        resolution: durableResolution.resolution,
+        proofs: input.proofs,
+        durableEvidence: input.durableEvidence,
+      })
+      const replay = this.getRoleCandidateValidationByAttempt(
+        input.assessmentId,
+        input.validationAttemptId,
+      )
+      if (replay !== undefined) {
+        if (
+          replay.resolution.candidateId !== input.candidateId
+          || replay.outcome.assessmentRevision !== input.expectedAssessmentRevision + 1
+          || replay.outcomeRequestDigest !== requestDigest.value
+        ) {
+          throw new SecurityPersistenceError(
+            'role_candidate_validation_conflict',
+            'Role Candidate Validation Outcome attempt conflicts with another request',
+          )
+        }
+        this.db.exec('COMMIT')
+        return replay
+      }
+      if (
+        durableResolution.resolution.candidateId !== input.candidateId
+        || assessment.state !== 'RUNNING'
+        || assessment.assessmentRevision !== input.expectedAssessmentRevision
+        || assessment.pendingCancellation !== null
+        || canonicalJson(assessment.subject.digest) !== canonicalJson(admission.subjectDigest)
+      ) {
+        throw new SecurityPersistenceError(
+          'revision_conflict',
+          'Role Candidate Validation Outcome cannot commit at this Assessment revision or Subject',
+        )
+      }
+
+      const committedAt = this.now()
+      const outcome = createRoleCandidateValidationOutcomeV1({
+        validationAttemptId: input.validationAttemptId,
+        assessmentRevision: assessment.assessmentRevision + 1,
+        admission,
+        resolution: durableResolution.resolution,
+        proofs: input.proofs,
+        durableEvidence: input.durableEvidence,
+        decidedAt: committedAt,
+      })
+      const updated = internalAssessmentRecordV1Schema.parse({
+        ...assessment,
+        assessmentRevision: outcome.assessmentRevision,
+        updatedAt: committedAt,
+      })
+      this.commitAssessmentRevision(
+        updated,
+        'role_candidate_validation_outcome_recorded',
+        committedAt,
+      )
+      this.db.prepare(`
+        INSERT INTO role_candidate_validation_outcomes (
+          assessment_id, candidate_id, validation_attempt_id, assessment_revision,
+          request_digest, resolution_digest, outcome_state, outcome_digest,
+          outcome_json, committed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.assessmentId,
+        input.candidateId,
+        input.validationAttemptId,
+        outcome.assessmentRevision,
+        requestDigest.value,
+        durableResolution.resolution.resolutionDigest.value,
+        outcome.state,
+        outcome.outcomeDigest.value,
+        canonicalJson(outcome),
+        committedAt,
+      )
+      this.db.exec('COMMIT')
+      return Object.freeze({
+        resolutionRequestDigest: durableResolution.requestDigest,
+        outcomeRequestDigest: requestDigest.value,
+        resolution: durableResolution.resolution,
+        outcome,
+      })
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  getRoleCandidateValidationContractResolutionByAttempt(
+    assessmentId: AssessmentId,
+    validationAttemptId: string,
+  ): DurableRoleCandidateValidationContractResolutionV1 | undefined {
+    this.requireOpen()
+    const row = this.db.prepare(`
+      SELECT * FROM role_candidate_validation_resolutions
+      WHERE assessment_id = ? AND validation_attempt_id = ?
+    `).get(assessmentId, validationAttemptId) as RoleCandidateValidationResolutionRow | undefined
+    return row === undefined ? undefined : this.parseRoleCandidateValidationResolutionRow(row)
+  }
+
+  getRoleCandidateValidationByAttempt(
+    assessmentId: AssessmentId,
+    validationAttemptId: string,
+  ): DurableRoleCandidateValidationV1 | undefined {
+    this.requireOpen()
+    const resolutionRow = this.db.prepare(`
+      SELECT * FROM role_candidate_validation_resolutions
+      WHERE assessment_id = ? AND validation_attempt_id = ?
+    `).get(assessmentId, validationAttemptId) as RoleCandidateValidationResolutionRow | undefined
+    const outcomeRow = this.db.prepare(`
+      SELECT * FROM role_candidate_validation_outcomes
+      WHERE assessment_id = ? AND validation_attempt_id = ?
+    `).get(assessmentId, validationAttemptId) as RoleCandidateValidationOutcomeRow | undefined
+    if (resolutionRow === undefined && outcomeRow === undefined) return undefined
+    if (resolutionRow === undefined) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'Role Candidate Validation Outcome has no durable Contract Resolution',
+      )
+    }
+    if (outcomeRow === undefined) return undefined
+    return this.parseRoleCandidateValidationRows(resolutionRow, outcomeRow)
+  }
+
+  getCurrentRoleCandidateValidation(
+    assessmentId: AssessmentId,
+    candidateId: string,
+  ): DurableRoleCandidateValidationV1 | undefined {
+    this.requireOpen()
+    const outcomeRow = this.db.prepare(`
+      SELECT * FROM role_candidate_validation_outcomes
+      WHERE assessment_id = ? AND candidate_id = ?
+      ORDER BY assessment_revision DESC LIMIT 1
+    `).get(assessmentId, candidateId) as RoleCandidateValidationOutcomeRow | undefined
+    if (outcomeRow === undefined) return undefined
+    return this.getRoleCandidateValidationByAttempt(
+      assessmentId,
+      outcomeRow.validation_attempt_id,
+    )
   }
 
   /** Admit one terminal Role result only from the current durable generation and fence. */
@@ -4262,6 +4742,121 @@ export class SecurityPersistence {
       )
     }
     return diagnostic
+  }
+
+  private parseRoleCandidateValidationResolutionRow(
+    row: RoleCandidateValidationResolutionRow,
+  ): DurableRoleCandidateValidationContractResolutionV1 {
+    const resolution = parseRoleCandidateValidationContractResolutionV1(
+      JSON.parse(row.resolution_json),
+    )
+    const admission = this.getRoleCandidateAdmission(
+      row.assessment_id,
+      row.contribution_id,
+      row.candidate_id,
+    )
+    const revision = this.db.prepare(`
+      SELECT event_kind, committed_at FROM assessment_revisions
+      WHERE assessment_id = ? AND assessment_revision = ?
+    `).get(
+      row.assessment_id,
+      row.assessment_revision,
+    ) as { readonly event_kind: string; readonly committed_at: string } | undefined
+    if (
+      row.resolution_json !== canonicalJson(resolution)
+      || row.assessment_id !== resolution.assessmentId
+      || row.candidate_id !== resolution.candidateId
+      || !/^[0-9a-f]{64}$/u.test(row.request_digest)
+      || row.resolution_state !== resolution.state
+      || row.resolution_digest !== resolution.resolutionDigest.value
+      || row.committed_at !== resolution.resolvedAt
+      || admission === undefined
+      || canonicalJson(admission.admissionDigest)
+        !== canonicalJson(resolution.candidateAdmissionDigest)
+      || revision?.event_kind !== 'role_candidate_validation_contract_resolved'
+      || revision.committed_at !== row.committed_at
+    ) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'Role Candidate Validation Contract Resolution row does not match its lineage',
+      )
+    }
+    return Object.freeze({
+      requestDigest: row.request_digest,
+      assessmentRevision: row.assessment_revision,
+      resolution,
+    })
+  }
+
+  private parseRoleCandidateValidationRows(
+    resolutionRow: RoleCandidateValidationResolutionRow,
+    outcomeRow: RoleCandidateValidationOutcomeRow,
+  ): DurableRoleCandidateValidationV1 {
+    const durableResolution = this.parseRoleCandidateValidationResolutionRow(resolutionRow)
+    const { resolution } = durableResolution
+    const outcome = parseRoleCandidateValidationOutcomeV1(
+      JSON.parse(outcomeRow.outcome_json),
+    )
+    const admission = this.getRoleCandidateAdmission(
+      resolutionRow.assessment_id,
+      resolutionRow.contribution_id,
+      resolutionRow.candidate_id,
+    )
+    const revision = this.db.prepare(`
+      SELECT event_kind, committed_at FROM assessment_revisions
+      WHERE assessment_id = ? AND assessment_revision = ?
+    `).get(
+      outcomeRow.assessment_id,
+      outcomeRow.assessment_revision,
+    ) as { readonly event_kind: string; readonly committed_at: string } | undefined
+    const durableEvidence = [...new Map(outcome.proofs.map(proof => [
+      canonicalJson(proof.evidence),
+      proof.evidence,
+    ])).values()]
+    const rederived = admission === undefined
+      ? undefined
+      : createRoleCandidateValidationOutcomeV1({
+          validationAttemptId: outcome.validationAttemptId,
+          assessmentRevision: outcome.assessmentRevision,
+          admission,
+          resolution,
+          proofs: outcome.proofs,
+          durableEvidence,
+          decidedAt: outcome.decidedAt,
+        })
+    if (
+      outcomeRow.outcome_json !== canonicalJson(outcome)
+      || resolutionRow.assessment_id !== outcome.assessmentId
+      || resolutionRow.assessment_id !== outcomeRow.assessment_id
+      || resolutionRow.candidate_id !== outcome.candidateId
+      || resolutionRow.candidate_id !== outcomeRow.candidate_id
+      || resolutionRow.validation_attempt_id !== outcome.validationAttemptId
+      || resolutionRow.validation_attempt_id !== outcomeRow.validation_attempt_id
+      || outcome.assessmentRevision !== outcomeRow.assessment_revision
+      || outcomeRow.assessment_revision <= resolutionRow.assessment_revision
+      || !/^[0-9a-f]{64}$/u.test(outcomeRow.request_digest)
+      || resolutionRow.resolution_digest !== outcome.contractResolutionDigest.value
+      || resolutionRow.resolution_digest !== outcomeRow.resolution_digest
+      || outcomeRow.outcome_state !== outcome.state
+      || outcomeRow.outcome_digest !== outcome.outcomeDigest.value
+      || outcomeRow.committed_at !== outcome.decidedAt
+      || admission === undefined
+      || rederived === undefined
+      || canonicalJson(rederived) !== canonicalJson(outcome)
+      || revision?.event_kind !== 'role_candidate_validation_outcome_recorded'
+      || revision.committed_at !== outcomeRow.committed_at
+    ) {
+      throw new SecurityPersistenceError(
+        'corrupt_database',
+        'Role Candidate Validation rows do not match their canonical records and lineage',
+      )
+    }
+    return Object.freeze({
+      resolutionRequestDigest: durableResolution.requestDigest,
+      outcomeRequestDigest: outcomeRow.request_digest,
+      resolution,
+      outcome,
+    })
   }
 
   private modelInvocationLineageKind(
