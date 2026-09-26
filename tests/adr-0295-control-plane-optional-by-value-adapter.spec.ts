@@ -17,7 +17,7 @@ describe('ADR 0295 optional by-value Control Plane Adapter', () => {
     }
     const rootSource = await readFile(join(import.meta.dirname, '..', 'src', 'index.ts'), 'utf8')
 
-    expect(packageJson.peerDependencies?.['dsh-engineering-control-plane']).toBe('^0.1.0')
+    expect(packageJson.peerDependencies?.['dsh-engineering-control-plane']).toBe('0.2.0')
     expect(packageJson.peerDependenciesMeta?.['dsh-engineering-control-plane']).toEqual({ optional: true })
     expect(packageJson.exports).toHaveProperty('./control-plane-provider')
     expect(rootSource).not.toMatch(/from ['"]dsh-engineering-control-plane/u)

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.15] - 2026-09-27
+
+- Qualify the optional Control Plane integration against exactly `0.2.0`;
+  the projection cache now uses its `./projection` export. Publish this RC
+  only to `next`, retaining `latest` at `0.1.0-rc.12`.
+
 - Make the release `WORKBENCH` proof pass for a candidate that ships the local
   Workbench (ADR 0324). The packed browser E2E now installs a fresh Harness
   (default the npm `latest`, `0.1.5-rc.3`) and operates the candidate's own
