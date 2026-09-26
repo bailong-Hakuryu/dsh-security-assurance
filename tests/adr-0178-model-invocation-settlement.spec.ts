@@ -1277,6 +1277,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
       })
       expect(persistence.getCurrentRoleCandidateValidation(
         grant.assessmentId,
+        contribution.contributionId,
         candidateId,
       )).toBeUndefined()
       const validationInput = {
@@ -1319,6 +1320,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
       })
       expect(persistence.getCurrentRoleCandidateValidation(
         grant.assessmentId,
+        contribution.contributionId,
         candidateId,
       )).toEqual(validation)
       expect(() => persistence.resolveRoleCandidateValidationContract({
@@ -1362,6 +1364,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
       )?.candidateId).toBe(candidateId)
       expect(reopened.getCurrentRoleCandidateValidation(
         grant.assessmentId,
+        contribution.contributionId,
         candidateId,
       )?.outcome.state).toBe('VALIDATED')
       expect(reopened.getAssessmentRecord(grant.assessmentId)?.assessmentRevision)
@@ -1406,6 +1409,7 @@ describe('ADR 0178 Model Invocation Evidence publication', () => {
     try {
       expect(() => tamperedPersistence.getCurrentRoleCandidateValidation(
         grant.assessmentId,
+        contribution.contributionId,
         candidateId,
       )).toThrow(/canonical records and lineage/iu)
     } finally {

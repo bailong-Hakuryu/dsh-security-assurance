@@ -189,6 +189,7 @@ function admissionFixture() {
 
 function qualifiedContract(
   contractVersion = '1.0.0',
+  minimumDistinctValidationLineages = 1,
 ): QualifiedRoleCandidateValidationContractV1 {
   const contract = createRoleCandidateValidationContractV1({
     schemaVersion: 1,
@@ -211,7 +212,7 @@ function qualifiedContract(
     }],
     independencePolicy: {
       policyId: 'independence/provenance-graph-v1',
-      minimumDistinctValidationLineages: 1,
+      minimumDistinctValidationLineages,
     },
   })
   return createQualifiedRoleCandidateValidationContractV1({
@@ -272,11 +273,13 @@ function proofFixture(
   overrides: {
     readonly independenceState?: 'INDEPENDENT' | 'NOT_INDEPENDENT' | 'UNRESOLVED'
     readonly eligibilityState?: 'ELIGIBLE' | 'INELIGIBLE'
+    readonly result?: RoleCandidateValidationProofV1['result']
+    readonly evidence?: RoleCandidateValidationEvidenceIdentityV1
     readonly suffix?: string
   } = {},
 ): RoleCandidateValidationProofV1 {
   const contract = values.resolution.contract!
-  const evidence = EVIDENCE_BY_PURPOSE[purpose]
+  const evidence = overrides.evidence ?? EVIDENCE_BY_PURPOSE[purpose]
   const conditionId = CONDITION_BY_PURPOSE[purpose]
   const suffix = overrides.suffix ?? (
     purpose === 'CLAIM_VALIDATION' ? '018900000001'
@@ -321,7 +324,7 @@ function proofFixture(
     purpose,
     conditionId,
     evidence,
-    result: 'PROVED',
+    result: overrides.result ?? 'PROVED',
     validator: {
       validatorId: 'validator/install-script',
       validatorVersion: '1.0.0',
@@ -471,5 +474,158 @@ describe('ADR 0189-0192 Role Candidate Validation', () => {
       ...structuredClone(values.resolution),
       resolutionDigest: { ...values.resolution.resolutionDigest, value: '0'.repeat(64) },
     })).toThrow(/digest/iu)
+  })
+})
+
+function distinctProof(
+  purpose: RoleCandidateValidationProofPurpose,
+  values: ReturnType<typeof resolutionFixture>,
+  suffix: string,
+  overrides: Omit<NonNullable<Parameters<typeof proofFixture>[2]>, 'suffix' | 'evidence'> = {},
+): RoleCandidateValidationProofV1 {
+  const base = EVIDENCE_BY_PURPOSE[purpose]
+  return proofFixture(purpose, values, {
+    ...overrides,
+    suffix,
+    evidence: {
+      ...base,
+      artifactId: `${base.artifactId}-${suffix}`,
+      digest: structuredDigest(
+        'application/vnd.dsh.security.validation-evidence+json',
+        { purpose, suffix },
+      ),
+    },
+  })
+}
+
+describe('ADR 0175 and 0190 conflicting eligible proof', () => {
+  const twoLineages = () => resolutionFixture([qualifiedContract('1.0.0', 2)])
+
+  it('keeps two qualifying claim proofs against one qualifying Counter-Evidence UNRESOLVED', () => {
+    const values = twoLineages()
+    const proofs = [
+      distinctProof('CLAIM_VALIDATION', values, '018900000011'),
+      distinctProof('CLAIM_VALIDATION', values, '018900000012'),
+      distinctProof('CLAIM_REJECTION', values, '018900000021'),
+      distinctProof('NEGATIVE_CONTROL', values, '018900000031'),
+    ]
+    const outcome = outcomeFixture(values, proofs)
+
+    expect(outcome).toMatchObject({
+      state: 'UNRESOLVED',
+      proofGaps: ['CONFLICTING_ELIGIBLE_PROOF', 'ELIGIBLE_COUNTER_EVIDENCE_MISSING'],
+    })
+    expect(outcome.qualifyingProofIds).toEqual(proofs.map(proof => proof.proofId).sort())
+  })
+
+  it('keeps one qualifying claim proof against two qualifying Counter-Evidence UNRESOLVED', () => {
+    const values = twoLineages()
+    const outcome = outcomeFixture(values, [
+      distinctProof('CLAIM_VALIDATION', values, '018900000011'),
+      distinctProof('CLAIM_REJECTION', values, '018900000021'),
+      distinctProof('CLAIM_REJECTION', values, '018900000022'),
+      distinctProof('NEGATIVE_CONTROL', values, '018900000031'),
+    ])
+
+    expect(outcome).toMatchObject({
+      state: 'UNRESOLVED',
+      proofGaps: ['CONFLICTING_ELIGIBLE_PROOF', 'ELIGIBLE_CLAIM_PROOF_MISSING'],
+    })
+  })
+
+  it('keeps proof and Counter-Evidence that both meet the lineage minimum UNRESOLVED', () => {
+    const values = twoLineages()
+    expect(outcomeFixture(values, [
+      distinctProof('CLAIM_VALIDATION', values, '018900000011'),
+      distinctProof('CLAIM_VALIDATION', values, '018900000012'),
+      distinctProof('CLAIM_REJECTION', values, '018900000021'),
+      distinctProof('CLAIM_REJECTION', values, '018900000022'),
+      distinctProof('NEGATIVE_CONTROL', values, '018900000031'),
+    ])).toMatchObject({
+      state: 'UNRESOLVED',
+      proofGaps: ['CONFLICTING_ELIGIBLE_PROOF'],
+    })
+  })
+
+  it('reports a qualifying conflict even while a required negative control is missing', () => {
+    const values = resolutionFixture()
+    expect(outcomeFixture(values, [
+      distinctProof('CLAIM_VALIDATION', values, '018900000011'),
+      distinctProof('CLAIM_REJECTION', values, '018900000021'),
+    ])).toMatchObject({
+      state: 'UNRESOLVED',
+      proofGaps: ['CONFLICTING_ELIGIBLE_PROOF', 'REQUIRED_NEGATIVE_CONTROL_MISSING'],
+    })
+  })
+
+  it('decides one direction when only that direction meets the Contract', () => {
+    const values = twoLineages()
+    const control = distinctProof('NEGATIVE_CONTROL', values, '018900000031')
+    expect(outcomeFixture(values, [
+      distinctProof('CLAIM_VALIDATION', values, '018900000011'),
+      distinctProof('CLAIM_VALIDATION', values, '018900000012'),
+      control,
+    ])).toMatchObject({ state: 'VALIDATED', proofGaps: [] })
+    expect(outcomeFixture(values, [
+      distinctProof('CLAIM_REJECTION', values, '018900000021'),
+      distinctProof('CLAIM_REJECTION', values, '018900000022'),
+      control,
+    ])).toMatchObject({ state: 'REJECTED', proofGaps: [] })
+  })
+
+  const nonQualifying = [
+    ['ineligible', { eligibilityState: 'INELIGIBLE' }],
+    ['not independent', { independenceState: 'NOT_INDEPENDENT' }],
+    ['independence unresolved', { independenceState: 'UNRESOLVED' }],
+    ['not proved', { result: 'NOT_PROVED' }],
+    ['inconclusive', { result: 'INCONCLUSIVE' }],
+  ] as const
+
+  it.each(nonQualifying)(
+    'does not treat %s opposing proof as a qualifying conflict',
+    (_label, overrides) => {
+      const values = twoLineages()
+      const control = distinctProof('NEGATIVE_CONTROL', values, '018900000031')
+      const opposingRejection = distinctProof(
+        'CLAIM_REJECTION',
+        values,
+        '018900000021',
+        overrides,
+      )
+      const validated = outcomeFixture(values, [
+        distinctProof('CLAIM_VALIDATION', values, '018900000011'),
+        distinctProof('CLAIM_VALIDATION', values, '018900000012'),
+        opposingRejection,
+        control,
+      ])
+      expect(validated).toMatchObject({ state: 'VALIDATED', proofGaps: [] })
+      expect(validated.proofs.map(proof => proof.proofId)).toContain(opposingRejection.proofId)
+      expect(validated.qualifyingProofIds).not.toContain(opposingRejection.proofId)
+
+      const opposingClaim = distinctProof('CLAIM_VALIDATION', values, '018900000011', overrides)
+      expect(outcomeFixture(values, [
+        opposingClaim,
+        distinctProof('CLAIM_REJECTION', values, '018900000021'),
+        distinctProof('CLAIM_REJECTION', values, '018900000022'),
+        control,
+      ])).toMatchObject({ state: 'REJECTED', proofGaps: [] })
+    },
+  )
+
+  it('refuses a re-digested Outcome that hides a qualifying conflict', () => {
+    const values = twoLineages()
+    const conflicting = outcomeFixture(values, [
+      distinctProof('CLAIM_VALIDATION', values, '018900000011'),
+      distinctProof('CLAIM_VALIDATION', values, '018900000012'),
+      distinctProof('CLAIM_REJECTION', values, '018900000021'),
+      distinctProof('NEGATIVE_CONTROL', values, '018900000031'),
+    ])
+    const { outcomeDigest: _digest, ...core } = structuredClone(conflicting)
+    const forgedCore = { ...core, state: 'VALIDATED' as const, proofGaps: [] }
+
+    expect(() => parseRoleCandidateValidationOutcomeV1({
+      ...forgedCore,
+      outcomeDigest: structuredDigest(ROLE_CANDIDATE_VALIDATION_OUTCOME_MEDIA_TYPE, forgedCore),
+    })).toThrow(/conflict/iu)
   })
 })

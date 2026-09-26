@@ -224,6 +224,15 @@
   its own verified backup and digest-bound history. This adds no public API,
   Provider call, Finding, Coverage Resolution, Evidence merge, ADR 0197 Evidence
   Link, or Control Plane change.
+- Fix two unreleased Role Candidate validation defects before any public flow
+  uses them. Any eligible, proved, independent claim proof facing any such
+  Counter-Evidence now stays `UNRESOLVED` with `CONFLICTING_ELIGIBLE_PROOF`,
+  instead of letting the side that met the lineage minimum outvote the other;
+  parsing refuses a re-digested Outcome that hides that conflict. The current
+  Outcome query now takes the exact Contribution and Candidate identity, so a
+  same-ID Candidate from another Contribution can no longer shadow it, and an
+  Outcome request that reuses another Candidate Admission's validation attempt
+  fails as a typed validation conflict. Schema v7 is unchanged.
 
 ## [0.1.0-rc.14] - 2026-09-11
 

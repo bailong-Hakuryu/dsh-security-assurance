@@ -3040,8 +3040,16 @@ export class SecurityPersistence {
         return replay
       }
       if (
-        durableResolution.resolution.candidateId !== input.candidateId
-        || assessment.state !== 'RUNNING'
+        canonicalJson(durableResolution.resolution.candidateAdmissionDigest)
+          !== canonicalJson(admission.admissionDigest)
+      ) {
+        throw new SecurityPersistenceError(
+          'role_candidate_validation_conflict',
+          'Role Candidate Validation attempt is bound to a different Candidate Admission',
+        )
+      }
+      if (
+        assessment.state !== 'RUNNING'
         || assessment.assessmentRevision !== input.expectedAssessmentRevision
         || assessment.pendingCancellation !== null
         || canonicalJson(assessment.subject.digest) !== canonicalJson(admission.subjectDigest)
@@ -3139,16 +3147,31 @@ export class SecurityPersistence {
     return this.parseRoleCandidateValidationRows(resolutionRow, outcomeRow)
   }
 
+  /**
+   * Candidate IDs are unique only within one Contribution, so the current
+   * Outcome is selected through the Resolution row that binds the exact
+   * (Assessment, Contribution, Candidate) admission identity.
+   */
   getCurrentRoleCandidateValidation(
     assessmentId: AssessmentId,
+    contributionId: string,
     candidateId: string,
   ): DurableRoleCandidateValidationV1 | undefined {
     this.requireOpen()
     const outcomeRow = this.db.prepare(`
-      SELECT * FROM role_candidate_validation_outcomes
-      WHERE assessment_id = ? AND candidate_id = ?
-      ORDER BY assessment_revision DESC LIMIT 1
-    `).get(assessmentId, candidateId) as RoleCandidateValidationOutcomeRow | undefined
+      SELECT outcome.* FROM role_candidate_validation_outcomes AS outcome
+      JOIN role_candidate_validation_resolutions AS resolution
+        ON resolution.assessment_id = outcome.assessment_id
+        AND resolution.validation_attempt_id = outcome.validation_attempt_id
+      WHERE outcome.assessment_id = ?
+        AND resolution.contribution_id = ?
+        AND resolution.candidate_id = ?
+      ORDER BY outcome.assessment_revision DESC LIMIT 1
+    `).get(
+      assessmentId,
+      contributionId,
+      candidateId,
+    ) as RoleCandidateValidationOutcomeRow | undefined
     if (outcomeRow === undefined) return undefined
     return this.getRoleCandidateValidationByAttempt(
       assessmentId,

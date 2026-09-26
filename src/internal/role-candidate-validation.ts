@@ -874,6 +874,17 @@ function validateOutcomeCore(
   ) {
     context.addIssue({ code: 'custom', message: 'Validation Outcome state lacks qualifying proof' })
   }
+  const conflicting = qualifyingProofs.some(proof => proof.purpose === 'CLAIM_VALIDATION')
+    && qualifyingProofs.some(proof => proof.purpose === 'CLAIM_REJECTION')
+  if (
+    conflicting !== outcome.proofGaps.includes('CONFLICTING_ELIGIBLE_PROOF')
+    || (conflicting && outcome.state !== 'UNRESOLVED')
+  ) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Validation Outcome conflict reasoning does not match its qualifying proof',
+    })
+  }
 }
 
 const outcomeCoreV1Schema: z.ZodType<RoleCandidateValidationOutcomeCoreV1> =
@@ -1026,26 +1037,21 @@ export function createRoleCandidateValidationOutcomeV1(
         .filter(proof => proof.purpose === purpose)
         .map(proof => proof.independenceDecision.validationLineageDigest.value),
     ).size
-    const claimReady = requiredControlsSatisfied
-      && distinctLineageCount('CLAIM_VALIDATION')
-        >= contract.independencePolicy.minimumDistinctValidationLineages
-    const rejectionReady = requiredControlsSatisfied
-      && distinctLineageCount('CLAIM_REJECTION')
-        >= contract.independencePolicy.minimumDistinctValidationLineages
-    if (claimReady && rejectionReady) {
-      proofGaps = ['CONFLICTING_ELIGIBLE_PROOF']
-    } else if (claimReady) {
+    const minimumLineages = contract.independencePolicy.minimumDistinctValidationLineages
+    const claimLineages = distinctLineageCount('CLAIM_VALIDATION')
+    const rejectionLineages = distinctLineageCount('CLAIM_REJECTION')
+    // ADR 0175: any qualifying proof on each side is an unresolved disagreement;
+    // outnumbering the other side never settles it.
+    const conflicting = claimLineages > 0 && rejectionLineages > 0
+    if (!conflicting && requiredControlsSatisfied && claimLineages >= minimumLineages) {
       state = 'VALIDATED'
-    } else if (rejectionReady) {
+    } else if (!conflicting && requiredControlsSatisfied && rejectionLineages >= minimumLineages) {
       state = 'REJECTED'
     } else {
+      if (conflicting) proofGaps.push('CONFLICTING_ELIGIBLE_PROOF')
       if (!requiredControlsSatisfied) proofGaps.push('REQUIRED_NEGATIVE_CONTROL_MISSING')
-      if (distinctLineageCount('CLAIM_VALIDATION')
-        < contract.independencePolicy.minimumDistinctValidationLineages) {
-        proofGaps.push('ELIGIBLE_CLAIM_PROOF_MISSING')
-      }
-      if (distinctLineageCount('CLAIM_REJECTION')
-        < contract.independencePolicy.minimumDistinctValidationLineages) {
+      if (claimLineages < minimumLineages) proofGaps.push('ELIGIBLE_CLAIM_PROOF_MISSING')
+      if (rejectionLineages < minimumLineages) {
         proofGaps.push('ELIGIBLE_COUNTER_EVIDENCE_MISSING')
       }
       const proofBlockedByIndependence = proofs.some(proof => (
