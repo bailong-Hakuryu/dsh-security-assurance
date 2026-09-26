@@ -527,6 +527,20 @@ function reject(message: string, code: string): never {
   throw new SecurityToolError(message, code)
 }
 
+const CONTROL_PLANE_ASSURANCE_ID = /^mission-[^\s:]{1,80}:assurance:\d+:\d+/u
+
+/**
+ * A Control Plane Mission lists its own assurance identities beside the
+ * Security Assessment it evaluated; point a model that confused them to the
+ * right one instead of only rejecting the request.
+ */
+function assessmentIdRejection(assessmentId: unknown, message: string): string {
+  return typeof assessmentId === 'string' && CONTROL_PLANE_ASSURANCE_ID.test(assessmentId)
+    ? 'assessment_id is a Control Plane assurance identity, not a Security Assessment; use the asm- '
+      + 'identity that the Mission status lists in externalAssessmentIds'
+    : message
+}
+
 /** A model tool may act only for the exact live Agent inside its open driver turn. */
 function requireHarnessSession(ctx: Context, exec: ToolRunContext): string {
   const agent = exec.agent
@@ -1067,7 +1081,10 @@ const SecurityAssuranceTools = {
         })
         if (!parsed.success) {
           return reject(
-            'assessment_id does not match the Security Assessment identifier contract',
+            assessmentIdRejection(
+              args.assessment_id,
+              'assessment_id does not match the Security Assessment identifier contract',
+            ),
             'SECURITY_INVALID_REQUEST',
           )
         }
@@ -1128,7 +1145,10 @@ const SecurityAssuranceTools = {
         })
         if (!parsed.success) {
           return reject(
-            'security_assessment_findings arguments do not match the Finding list contract',
+            assessmentIdRejection(
+              args.assessment_id,
+              'security_assessment_findings arguments do not match the Finding list contract',
+            ),
             'SECURITY_INVALID_REQUEST',
           )
         }
@@ -1196,7 +1216,10 @@ const SecurityAssuranceTools = {
         })
         if (!parsed.success) {
           return reject(
-            'security_assessment_resume arguments do not match the Assessment resume contract',
+            assessmentIdRejection(
+              args.assessment_id,
+              'security_assessment_resume arguments do not match the Assessment resume contract',
+            ),
             'SECURITY_INVALID_REQUEST',
           )
         }
@@ -1264,7 +1287,10 @@ const SecurityAssuranceTools = {
         })
         if (!parsed.success) {
           return reject(
-            'security_assessment_cancel arguments do not match the Assessment cancellation contract',
+            assessmentIdRejection(
+              args.assessment_id,
+              'security_assessment_cancel arguments do not match the Assessment cancellation contract',
+            ),
             'SECURITY_INVALID_REQUEST',
           )
         }
@@ -1327,7 +1353,10 @@ const SecurityAssuranceTools = {
         })
         if (!parsed.success) {
           return reject(
-            'security_assessment_export arguments do not match the official Export request contract',
+            assessmentIdRejection(
+              args.assessment_id,
+              'security_assessment_export arguments do not match the official Export request contract',
+            ),
             'SECURITY_INVALID_REQUEST',
           )
         }

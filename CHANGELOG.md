@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Point a model that passes a Control Plane assurance identity
+  (`mission-…:assurance:…`) to a Security tool at the right identity: the
+  rejection now says to use the `asm-` identity the Mission status lists in
+  `externalAssessmentIds` (Control Plane ADR 0095). A real Mission run showed
+  the model trying the Control Plane identity and giving up.
+
 ## [0.1.0-rc.15] - 2026-09-27
 
 - Qualify the optional Control Plane integration against exactly `0.2.0`;

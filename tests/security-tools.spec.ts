@@ -1863,6 +1863,27 @@ describe('security_assessment_start integration', () => {
 })
 
 describe('security_assessment_status disclosure', () => {
+  it('points a Control Plane assurance identity at the Security assessment it names', async () => {
+    const fixture = await harness()
+    const root = stubAgent(`security-tool-foreign-id-${Math.random()}`)
+    const disposeAgent = fixture.ctx.agents.register(root.agent)
+    try {
+      openTurn(root)
+      const controlPlaneId = 'mission-c8ff88b1-da5f-4583-868c-62c701d20579:assurance:1:1:assessment:1'
+      for (const tool of ['security_assessment_status', 'security_assessment_findings'] as const) {
+        const result = await executeTool(fixture.ctx, tool, { assessment_id: controlPlaneId }, root.agent)
+        expect(result.error?.info?.code).toBe('SECURITY_INVALID_REQUEST')
+        expect(result.error?.message).toContain('externalAssessmentIds')
+      }
+      const unrelated = await execute(fixture.ctx, { assessment_id: 'not-an-assessment' }, root.agent)
+      expect(unrelated.error?.info?.code).toBe('SECURITY_INVALID_REQUEST')
+      expect(unrelated.error?.message).not.toContain('externalAssessmentIds')
+    } finally {
+      disposeAgent()
+      await fixture.dispose()
+    }
+  })
+
   it('delegates through the real Service and returns only revision, state, coverage, and sealed Verdict', async () => {
     const repository = await repositoryFixture()
     const fixture = await harness()
