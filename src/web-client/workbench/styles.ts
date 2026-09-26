@@ -12,6 +12,7 @@ const WORKBENCH_CSS = `
 .dsh-security-dialog__close{align-items:center;background:transparent;border:0;border-radius:8px;color:inherit;cursor:pointer;display:inline-flex;height:34px;justify-content:center;width:34px}
 .dsh-security-dialog__close:hover,.dsh-security-dialog__close:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.055));outline:none}
 .dsh-security-dialog__body{display:flex;flex:1;min-height:0;overflow:auto;padding:20px}
+.dsh-security-dialog__body:focus{outline:none}
 .dsh-security-empty{align-items:center;border:1px dashed var(--dsw-alias-border-l2,rgba(0,0,0,.18));border-radius:14px;display:flex;flex:1;flex-direction:column;justify-content:center;min-height:280px;padding:40px;text-align:center}
 .dsh-security-empty__icon{align-items:center;background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.055));border-radius:50%;display:flex;height:48px;justify-content:center;margin-bottom:16px;width:48px}
 .dsh-security-empty h2{font-size:16px;margin:0 0 8px}

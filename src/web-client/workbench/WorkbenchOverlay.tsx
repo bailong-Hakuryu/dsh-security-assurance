@@ -125,10 +125,19 @@ export function WorkbenchOverlay({
   const route = projectWorkbenchRouteStateV1(state)
   const closeRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (open) closeRef.current?.focus()
   }, [open])
+
+  // A view change can unmount the focused control and strand focus outside the
+  // modal, where Escape and the Tab trap no longer apply; bring it back.
+  // Deliberate focus moves inside the dialog are left alone.
+  useEffect(() => {
+    if (!open || dialogRef.current?.contains(document.activeElement) === true) return
+    bodyRef.current?.focus()
+  }, [open, state])
 
   if (!open) return null
 
@@ -181,6 +190,8 @@ export function WorkbenchOverlay({
           </button>
         </header>
         <div
+          ref={bodyRef}
+          tabIndex={-1}
           className="dsh-security-dialog__body"
           data-workbench-route-version={route.schemaVersion}
           data-workbench-view={route.viewId}
@@ -1254,6 +1265,7 @@ function AssessmentDetail({
       <FindingPanel
         state={findings}
         availableActions={snapshot.availableActions}
+        evidenceViewable={snapshot.state === 'SEALED'}
         openFindings={openFindings}
         recordRiskDecision={recordRiskDecision}
         loadMoreFindings={loadMoreFindings}
@@ -1773,6 +1785,7 @@ function BlockedRecoveryPanel({
 function FindingPanel({
   state,
   availableActions,
+  evidenceViewable,
   openFindings,
   recordRiskDecision,
   loadMoreFindings,
@@ -1786,6 +1799,7 @@ function FindingPanel({
 }: {
   readonly state: WorkbenchFindingsStateV1
   readonly availableActions: AssessmentSnapshotV1['availableActions']
+  readonly evidenceViewable: boolean
   readonly openFindings: () => void
   readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
   readonly loadMoreFindings: () => void
@@ -1885,6 +1899,7 @@ function FindingPanel({
     return (
       <FindingDetail
         detail={state.detail}
+        evidenceViewable={evidenceViewable}
         riskDecisionAction={availableActions.find((action): action is RiskDecisionActionV1 => (
           action.kind === 'RECORD_RISK_DECISION'
           && action.finding.recordId === state.detail.recordId
@@ -2058,6 +2073,7 @@ function FindingList({
 
 function FindingDetail({
   detail,
+  evidenceViewable,
   riskDecisionAction,
   riskDecisionSubmission,
   recordRiskDecision,
@@ -2067,6 +2083,8 @@ function FindingDetail({
   t,
 }: {
   readonly detail: FindingDetailViewV1
+  /** Evidence Views exist only for a SEALED Assessment's records. */
+  readonly evidenceViewable: boolean
   readonly riskDecisionAction: RiskDecisionActionV1 | undefined
   readonly riskDecisionSubmission: WorkbenchRiskDecisionSubmissionStateV1
   readonly recordRiskDecision: (submission: WorkbenchRiskDecisionSubmissionV1) => void
@@ -2153,7 +2171,22 @@ function FindingDetail({
         <strong>{t('findingDetail.evidenceLinks')}</strong>
         {detail.evidenceLinks.length === 0
           ? <p className="dsh-security-muted">{t('value.notAvailable')}</p>
-          : (
+          : !evidenceViewable
+            ? (
+                <>
+                  <ul className="dsh-security-metadata-list">
+                    {detail.evidenceLinks.map(link => (
+                      <li key={`${link.artifactId}:${link.digest.value}`}>
+                        <code>{link.artifactId}</code>
+                        <span>{link.purpose}</span>
+                        <MachineBadge value={link.eligibilityDecision} />
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="dsh-security-muted">{t('findingDetail.evidenceAfterSeal')}</p>
+                </>
+              )
+            : (
               <ul className="dsh-security-metadata-list">
                 {detail.evidenceLinks.map(link => (
                   <li key={`${link.artifactId}:${link.digest.value}`}>

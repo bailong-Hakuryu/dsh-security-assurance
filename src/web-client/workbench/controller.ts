@@ -1493,6 +1493,8 @@ export class SecurityAssuranceWorkbenchController extends Service {
     if (
       session === undefined
       || current.kind !== 'READY'
+      // The Service serves Evidence Views only from sealed records.
+      || current.snapshot.state !== 'SEALED'
       || current.findings.kind !== 'DETAIL_READY'
       || current.findings.evidence.kind !== 'NOT_LOADED'
       || current.findings.riskDecisionSubmission.kind !== 'IDLE'

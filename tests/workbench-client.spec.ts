@@ -6,6 +6,13 @@ import {
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { provideConnection, provideSlotRecorder } from './support/workbench-client-host.ts'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { en, type WorkbenchKey } from '../src/web-client/workbench/locales.ts'
+import {
+  WorkbenchOverlay,
+  type WorkbenchOverlayProps,
+} from '../src/web-client/workbench/WorkbenchOverlay.tsx'
 import type {
   AssessmentId,
   AssessmentListItemV1,
@@ -17,6 +24,7 @@ import {
   apply as applyWorkbenchClient,
   inject as workbenchClientInject,
   type SecurityAssuranceWorkbenchController,
+  type SecurityAssuranceWorkbenchStateV1,
   type WorkbenchAuthorityContextId,
 } from '../src/web-client/workbench/controller.ts'
 import type {
@@ -2470,5 +2478,84 @@ describe('Security Assurance Workbench Client', () => {
     expect(controller.getState()).not.toHaveProperty('snapshot')
     expect(JSON.stringify(controller.getState())).not.toContain(authorityId)
     expect(waitSignal?.aborted).toBe(true)
+  })
+})
+
+describe('Evidence becomes viewable only once the Assessment is SEALED', () => {
+  async function openBlockedFindingDetail() {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(TypertRegistry)
+    await installClientUiFoundation(ctx)
+    const id = assessmentId('asm-00000000-0000-0000-0000-000000000081')
+    const snapshot = snapshotAt(id, 4, 'BLOCKED')
+    const summary = findingSummary(id, 4, '8')
+    const detail = findingDetail(summary)
+    const endpoints: string[] = []
+    provideConnection(ctx, { call(_path: string, endpoint: string): Promise<unknown> {
+      endpoints.push(endpoint)
+      if (endpoint === 'securityAssuranceWorkbench/getAssessment') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/listFindings') {
+        return Promise.resolve({
+          ok: true,
+          value: {
+            ok: true,
+            value: { schemaVersion: 1, assessmentId: id, assessmentRevision: 4, findings: [summary], nextCursor: null },
+          },
+        })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/getFinding') {
+        return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
+      }
+      if (endpoint === 'securityAssuranceWorkbench/waitForAssessmentRevision') {
+        return new Promise(() => {})
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`)
+    } })
+    await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
+    await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
+    const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
+    await controller.openAssessment({
+      securityAssuranceWorkbenchContextId: authorityContextId('workbench-session-unsealed-evidence'),
+      assessmentId: id,
+    })
+    await controller.openFindings()
+    await controller.selectFinding(summary.recordId)
+    return { controller, detail, endpoints }
+  }
+
+  function renderOverlay(state: SecurityAssuranceWorkbenchStateV1): string {
+    const props = {
+      t: (key: WorkbenchKey) => en[key],
+      usePresentation: <S>(select: (snapshot: { readonly open: boolean }) => S) => select({ open: true }),
+      useAssessment: <S>(select: (snapshot: SecurityAssuranceWorkbenchStateV1) => S) => select(state),
+    } as unknown as WorkbenchOverlayProps
+    return renderToStaticMarkup(createElement(WorkbenchOverlay, props))
+  }
+
+  it('does not request an Evidence View the Service cannot serve before the seal', async () => {
+    const { controller, detail, endpoints } = await openBlockedFindingDetail()
+    const before = controller.getState()
+    expect(before).toMatchObject({ kind: 'READY', findings: { kind: 'DETAIL_READY', evidence: { kind: 'NOT_LOADED' } } })
+
+    await expect(controller.selectEvidence(detail.evidenceLinks[0]!.artifactId)).resolves.toBe(before)
+    expect(endpoints).not.toContain('securityAssuranceWorkbench/getEvidenceView')
+  })
+
+  it('shows unsealed Evidence links as facts with a note instead of controls', async () => {
+    const { controller, detail } = await openBlockedFindingDetail()
+    const artifactId = detail.evidenceLinks[0]!.artifactId
+    const unsealed = renderOverlay(controller.getState())
+    expect(unsealed).not.toContain(`aria-label="${en['evidence.open']} ${artifactId}"`)
+    expect(unsealed).toContain(artifactId)
+    expect(unsealed).toContain(en['findingDetail.evidenceAfterSeal'])
+
+    const state = controller.getState()
+    if (state.kind !== 'READY') throw new Error('expected a READY Assessment')
+    const sealed = renderOverlay({ ...state, snapshot: { ...state.snapshot, state: 'SEALED' } })
+    expect(sealed).toContain(`aria-label="${en['evidence.open']} ${artifactId}"`)
+    expect(sealed).not.toContain(en['findingDetail.evidenceAfterSeal'])
   })
 })
