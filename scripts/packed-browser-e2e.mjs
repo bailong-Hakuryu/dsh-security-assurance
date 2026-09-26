@@ -1,54 +1,51 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
+import { parse as parseYaml } from 'yaml'
 
+import { SUPPORTED_HARNESS_VERSIONS } from '../lib/contracts.js'
 import { writeReleaseProofRecord } from '../lib/release-proof-output.js'
 
 const execute = promisify(execFile)
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const playwrightHarnessRoot = resolve(projectRoot, '..', 'deepseek-harness-latest')
-const browserHarnessVersion = '0.1.2-rc.1'
+// The npm `latest` Harness a direct-use operator installs; any verified version may be chosen.
+const browserHarnessVersion = process.env.DSH_BROWSER_HARNESS_VERSION ?? '0.1.5-rc.3'
+if (!SUPPORTED_HARNESS_VERSIONS.includes(browserHarnessVersion)) {
+  throw new Error(`DSH_BROWSER_HARNESS_VERSION ${browserHarnessVersion} is outside the verified Harness set`)
+}
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'dsh-security-browser-e2e-'))
 const npmCache = join(temporaryRoot, 'npm-cache')
 const artifactRoot = join(temporaryRoot, 'artifacts')
 const runnerRoot = join(temporaryRoot, 'runner')
 const repositoryRoot = join(temporaryRoot, 'repository')
 const dshHome = join(temporaryRoot, 'dsh-home')
-const referencePackageRoot = join(temporaryRoot, 'reference-browser')
-const fullAuthorityContextId = 'workbench-browser-e2e-full-authority'
-const deniedAuthorityContextId = 'workbench-browser-e2e-denied-authority'
-const operatorPrincipalId = 'reference-browser-host-operator'
 const repositoryDisplayName = 'Packed Browser E2E Repository'
 const deliveryDestinationId = 'delivery/local-audit'
 const scriptBodyMarker = 'browser-e2e-secret-body.js'
-const riskRationale = 'The validated install lifecycle risk remains blocking for this release.'
+const cancellationSummary = 'Packed browser acceptance cancels the blocked Assessment.'
 const proofOutputPath = process.env.DSH_RELEASE_PROOF_OUTPUT
 const suppliedSecurityArtifact = process.env.DSH_SECURITY_PACKED_ARTIFACT
-const fullPermissions = [
-  'health:read',
-  'repository:read',
-  'repository:admin',
-  'assessment:start',
-  'assessment:read',
-  'assessment:resume',
-  'assessment:cancel',
-  'evidence:disclose:validation-review',
-  'assurance-submission:read',
-  'export:request',
-  'export:read',
-  'export:download',
-  'risk:decide',
-  'risk:break-glass',
-]
+const openLocalContextEndpoint = 'securityAssuranceWorkbenchSession/openLocalContext'
+
+/** Harness onboarding a fresh profile presents, per browser language. */
+const ONBOARDING = Object.freeze({
+  en: { notice: 'Internal Testing Notice', continue: 'Continue', provider: 'Add an API key to get started', later: 'Configure later' },
+  zh: { notice: '内测声明', continue: '继续', provider: '添加一个 API Key 开始使用', later: '稍后配置' },
+})
 
 let hostProcess
 let browser
 let hostUrl
+let pageUrl
+let activePage
+let hostOutput = ''
 
 function normalizedPath(value) {
   return value.replaceAll('\\', '/')
@@ -194,98 +191,31 @@ async function readPackedPackageManifest(artifactPath) {
   return manifest
 }
 
-// `./client` ships the tool cards and the local Workbench (ADRs 0321, 0322).
-// The Workbench flow below still drives the deployment-resolver Reference
-// Host, so only an explicit package-private marker selects it.
-function shipsWorkbenchClient(manifest) {
-  return manifest.exports?.['./client'] !== undefined
-    && Array.isArray(manifest.files)
-    && manifest.files.includes('lib/client.js')
-    && manifest.securityAssuranceClient?.workbench === true
+async function readPackedBundlePatch(artifactPath) {
+  const extracted = await execute('tar', ['-xOf', basename(artifactPath), 'package/cordis.patch.yml'], {
+    cwd: dirname(artifactPath),
+    encoding: 'utf8',
+    windowsHide: true,
+    maxBuffer: 1024 * 1024,
+  })
+  // `!!js` rows are evaluated only by the Harness loader; here they stay inert strings.
+  return parseYaml(extracted.stdout, { logLevel: 'silent' })
 }
 
-async function createReferenceBrowserPackage() {
-  await mkdir(referencePackageRoot, { recursive: true })
-  await writeFile(join(referencePackageRoot, 'package.json'), `${JSON.stringify({
-    name: 'dsh-security-assurance-reference-browser',
-    version: '0.0.0-test-only',
-    private: true,
-    type: 'module',
-    main: './index.js',
-    exports: {
-      '.': './index.js',
-      './client': './client.js',
-      './cordis.patch.yml': './cordis.patch.yml',
-      './package.json': './package.json',
-    },
-    files: ['index.js', 'client.js', 'cordis.patch.yml'],
-    dsh: {
-      bundle: { patch: './cordis.patch.yml' },
-      client: {
-        inject: [
-          'dsh-security-assurance',
-          '@deepseek-ai/dsh-client-locale',
-        ],
-        platform: 'web',
-        immediately: true,
-      },
-    },
-  }, null, 2)}\n`, 'utf8')
-  await writeFile(join(referencePackageRoot, 'index.js'), `
-export const name = 'dsh-security-assurance-reference-browser'
-export function apply() {}
-export default { name, apply }
-`.trimStart(), 'utf8')
-  await writeFile(join(referencePackageRoot, 'cordis.patch.yml'), `
-- insert:
-    - id: dsh-security-assurance-reference-browser
-      name: dsh-security-assurance-reference-browser
-`.trimStart(), 'utf8')
-  await writeFile(join(referencePackageRoot, 'client.js'), `
-window.__ModuleLoader__.load({
-  id: 'dsh-security-assurance-reference-browser',
-  factory: () => {
-    const plugin = {
-      name: 'dsh-security-assurance-reference-browser',
-      inject: ['securityAssuranceWorkbench', 'locale'],
-      apply(ctx) {
-        const api = Object.freeze({
-          openFull() {
-            return ctx.securityAssuranceWorkbench.openAssessmentSelection({
-              securityAssuranceWorkbenchContextId: ${JSON.stringify(fullAuthorityContextId)},
-            })
-          },
-          openDenied() {
-            return ctx.securityAssuranceWorkbench.openAssessmentSelection({
-              securityAssuranceWorkbenchContextId: ${JSON.stringify(deniedAuthorityContextId)},
-            })
-          },
-          close() {
-            ctx.securityAssuranceWorkbench.closeAssessment()
-          },
-          setLocale(locale) {
-            ctx.locale.setLocale(locale)
-          },
-          state() {
-            return ctx.securityAssuranceWorkbench.getState()
-          },
-        })
-        Object.defineProperty(window, '__DSH_SECURITY_BROWSER_E2E__', {
-          configurable: true,
-          enumerable: false,
-          writable: false,
-          value: api,
-        })
-        return () => { delete window.__DSH_SECURITY_BROWSER_E2E__ }
-      },
-    }
-    return { ...plugin, default: plugin }
-  },
-})
-`.trimStart(), 'utf8')
+/**
+ * The candidate ships the local Workbench (ADRs 0321, 0322) when it exports
+ * the browser client and its bundle enables the local authority row. Only
+ * the packed bytes decide; no package-private marker is consulted.
+ */
+async function shipsLocalWorkbench(manifest, artifactPath) {
+  if (manifest.exports?.['./client'] === undefined) return false
+  if (!Array.isArray(manifest.files) || !manifest.files.includes('lib/client.js')) return false
+  const layers = await readPackedBundlePatch(artifactPath)
+  return Array.isArray(layers) && layers.some(layer => Array.isArray(layer?.insert) && layer.insert.some(row =>
+    row?.name === 'dsh-security-assurance/workbench-local' && row.disabled !== true))
 }
 
-async function installFreshHarness(securityTarball, includeReferenceBrowser) {
+async function installFreshHarness(securityTarball) {
   await mkdir(runnerRoot, { recursive: true })
   await writeFile(join(runnerRoot, 'package.json'), `${JSON.stringify({
     name: 'dsh-security-packed-browser-runner',
@@ -299,7 +229,7 @@ async function installFreshHarness(securityTarball, includeReferenceBrowser) {
     'install',
     '--ignore-scripts',
   ], { cwd: runnerRoot, windowsHide: true })
-  console.log('packed-browser-e2e: installing packed Security and reference Host profile layers')
+  console.log('packed-browser-e2e: installing the packed Security profile layer')
 
   const dshBin = join(runnerRoot, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
   const environment = {
@@ -307,15 +237,12 @@ async function installFreshHarness(securityTarball, includeReferenceBrowser) {
     DSH_HOME: dshHome,
     DSH_TELEMETRY_DISABLED: '1',
   }
-  const profileLayers = includeReferenceBrowser
-    ? [securityTarball, referencePackageRoot]
-    : [securityTarball]
   await runStreaming(process.execPath, [
     dshBin,
     'plugin',
     '--profile', 'web',
     'add',
-    ...profileLayers,
+    securityTarball,
     '--save-exact',
     '--ignore-scripts',
   ], {
@@ -326,6 +253,11 @@ async function installFreshHarness(securityTarball, includeReferenceBrowser) {
   return { dshBin, environment }
 }
 
+/**
+ * Bind the fixture Repository and a registered delivery destination. The
+ * Workbench rows keep the packed bundle's defaults: the local authority is
+ * enabled and the deployment-resolver Remote stays disabled.
+ */
 async function configureReferenceHost() {
   const profileRoot = join(dshHome, 'profiles', 'web')
   const profilePatch = join(profileRoot, 'cordis.patch.yml')
@@ -358,31 +290,11 @@ async function configureReferenceHost() {
 
 - id: dsh-security-assurance-invariant
   disabled: true
-
-- id: dsh-security-assurance-workbench-remote
-  disabled: false
-  config: !!js |-
-    ({
-      resolveAuthorityContext(contextId) {
-        if (contextId === ${JSON.stringify(fullAuthorityContextId)}) {
-          return {
-            principalId: ${JSON.stringify(operatorPrincipalId)},
-            permissions: ${JSON.stringify(fullPermissions)}
-          }
-        }
-        if (contextId === ${JSON.stringify(deniedAuthorityContextId)}) {
-          return {
-            principalId: 'reference-browser-denied-operator',
-            permissions: ['health:read']
-          }
-        }
-        return undefined
-      }
-    })
 `.trimStart()
   await writeFile(profilePatch, config, 'utf8')
 }
 
+/** Start `dsh web` and read the authenticated page URL it publishes. */
 function startHost(dshBin, environment) {
   const child = spawn(process.execPath, [
     dshBin,
@@ -403,17 +315,20 @@ function startHost(dshBin, environment) {
       rejectStart(new Error(`Reference Host did not publish a URL\nstdout:\n${stdout}\nstderr:\n${stderr}`))
     }, 90_000)
     const inspect = () => {
-      const match = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+)/u.exec(`${stdout}\n${stderr}`)
+      const match = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+(?:\/\S*)?)/u.exec(`${stdout}\n${stderr}`)
       if (match?.[1] === undefined) return
       clearTimeout(timeout)
-      resolveStart(match[1])
+      const published = new URL(match[1])
+      resolveStart({ origin: published.origin, pageUrl: published.href })
     }
     child.stdout.on('data', chunk => {
       stdout += String(chunk)
+      hostOutput = `${hostOutput}${String(chunk)}`.slice(-16_000)
       inspect()
     })
     child.stderr.on('data', chunk => {
       stderr += String(chunk)
+      hostOutput = `${hostOutput}${String(chunk)}`.slice(-16_000)
       inspect()
     })
     child.once('error', error => {
@@ -425,6 +340,20 @@ function startHost(dshBin, environment) {
       rejectStart(new Error(`Reference Host exited before readiness with ${String(code)}\n${stderr}`))
     })
   })
+}
+
+/** Wait until the published Host accepts connections; its URL line can precede listening. */
+async function waitForHostListening() {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (hostProcess !== undefined && hostProcess.exitCode !== null) {
+      throw new Error(`Reference Host exited with ${String(hostProcess.exitCode)} before listening\n${hostOutput}`)
+    }
+    const reachable = await fetch(hostUrl, { redirect: 'manual', signal: AbortSignal.timeout(2_000) })
+      .then(() => true, () => false)
+    if (reachable) return
+    await new Promise(resolveDelay => setTimeout(resolveDelay, 500))
+  }
+  throw new Error(`Reference Host at ${hostUrl} never accepted connections\n${hostOutput}`)
 }
 
 async function findBrowserExecutable() {
@@ -465,51 +394,12 @@ async function loadPlaywright() {
   }
 }
 
-async function waitForWorkbenchBridge(page) {
-  await page.waitForFunction(() => window.__DSH_SECURITY_BROWSER_E2E__ !== undefined, undefined, {
-    timeout: 45_000,
-  })
-}
-
-async function callWorkbenchBridge(page, method) {
-  return page.evaluate(async selectedMethod => {
-    const bridge = window.__DSH_SECURITY_BROWSER_E2E__
-    if (bridge === undefined) throw new Error('Reference browser bridge is unavailable')
-    return bridge[selectedMethod]()
-  }, method)
-}
-
-async function setWorkbenchLocale(page, locale) {
-  await page.evaluate(selectedLocale => {
-    const bridge = window.__DSH_SECURITY_BROWSER_E2E__
-    if (bridge === undefined) throw new Error('Reference browser bridge is unavailable')
-    bridge.setLocale(selectedLocale)
-  }, locale)
-}
-
-async function waitForWorkbenchState(page, predicateSource, timeout = 45_000) {
-  try {
-    await page.waitForFunction(source => {
-      const bridge = window.__DSH_SECURITY_BROWSER_E2E__
-      if (bridge === undefined) return false
-      const predicate = Function('state', `return (${source})(state)`)
-      return predicate(bridge.state())
-    }, predicateSource, { timeout })
-  } catch (error) {
-    const current = await page.evaluate(() => window.__DSH_SECURITY_BROWSER_E2E__?.state())
-    throw new Error(`Timed out waiting for Workbench state ${predicateSource}; current=${JSON.stringify(current)}`, {
-      cause: error,
-    })
-  }
-  return page.evaluate(() => window.__DSH_SECURITY_BROWSER_E2E__.state())
-}
-
 async function assertFocused(page, locator, message) {
   const focused = await locator.evaluate(element => document.activeElement === element)
   assert.equal(focused, true, message)
 }
 
-async function dismissReferenceHostOnboarding(page, required = false) {
+async function dismissHostOnboarding(page, labels, required = false) {
   const dismiss = async (dialogName, actionName) => {
     const dialog = page.getByRole('dialog', { name: dialogName })
     const visible = await dialog.waitFor({ state: 'visible', timeout: required ? 30_000 : 3_000 })
@@ -519,8 +409,8 @@ async function dismissReferenceHostOnboarding(page, required = false) {
     await dialog.waitFor({ state: 'hidden' })
     return true
   }
-  const noticeDismissed = await dismiss('Internal Testing Notice', 'Continue')
-  const providerDismissed = await dismiss('Add an API key to get started', 'Configure later')
+  const noticeDismissed = await dismiss(labels.notice, labels.continue)
+  const providerDismissed = await dismiss(labels.provider, labels.later)
   if (required) {
     assert.equal(noticeDismissed, true, 'fresh Reference Host must present its testing notice')
     assert.equal(providerDismissed, true, 'fresh Reference Host must present provider setup')
@@ -569,7 +459,7 @@ async function assertAccessibleControls(dialog) {
   assert.deepEqual(violations, [], 'every visible interactive control must have an accessible name')
 }
 
-async function runBrowserScenario() {
+async function launchBrowser() {
   const { chromium } = await loadPlaywright()
   const executablePath = await findBrowserExecutable()
   browser = await chromium.launch({
@@ -577,31 +467,87 @@ async function runBrowserScenario() {
     headless: true,
     args: ['--disable-background-networking', '--disable-component-update'],
   })
+  return browser
+}
+
+/** Remember every context the local authority issues, so the browser can be proven not to retain one. */
+function recordIssuedContexts(page, issued) {
+  page.on('response', response => {
+    if (new URL(response.url()).pathname !== `/api/${openLocalContextEndpoint}`) return
+    void response.json().then(envelope => {
+      const contextId = envelope?.result?.value?.contextId
+      if (typeof contextId === 'string') issued.push(contextId)
+    }, () => {})
+  })
+}
+
+function assertSameOrigin(requestUrls) {
+  const expectedOrigin = new URL(hostUrl).origin
+  for (const requestUrl of requestUrls) {
+    const parsed = new URL(requestUrl)
+    if (parsed.protocol === 'data:' || parsed.protocol === 'blob:') continue
+    assert.equal(parsed.origin, expectedOrigin, `unexpected remote browser resource ${requestUrl}`)
+  }
+}
+
+/** Start one Assessment through the Catalog wizard and return its identity. */
+async function startAssessmentFromWizard(dialog, { riskDecisionWindow }) {
+  await dialog.getByRole('button', { name: 'Repositories and New Assessment', exact: true }).click()
+  await dialog.getByRole('heading', { name: 'Repositories', exact: true }).waitFor()
+  await dialog.getByText(repositoryDisplayName, { exact: true }).first().waitFor()
+  assert.equal((await dialog.innerText()).includes(normalizedPath(repositoryRoot)), false)
+  await dialog.getByRole('button', { name: 'New Assessment', exact: true }).click()
+  await dialog.getByRole('heading', { name: 'New Assessment', exact: true }).waitFor()
+  await dialog.getByRole('combobox', { name: 'Assessment Subject' }).selectOption('workspace_snapshot')
+  if (riskDecisionWindow) await dialog.getByRole('checkbox', { name: /Risk decision window/u }).check()
+  await dialog.getByRole('button', { name: 'Resolve and review preflight', exact: true }).click()
+  await dialog.getByRole('heading', { name: 'Start Preflight', exact: true }).waitFor()
+  await dialog.getByText(/^dsh\/builtin-node-package-lifecycle@/u).first().waitFor()
+  await dialog.getByRole('button', { name: 'Confirm and start Assessment', exact: true }).click()
+  const identity = dialog.locator('.dsh-security-assessment__id')
+  await identity.waitFor({ timeout: 60_000 })
+  const assessmentId = (await identity.innerText()).trim()
+  assert.match(assessmentId, /^asm-[0-9a-f-]{36}$/u)
+  return assessmentId
+}
+
+async function waitForAssessmentState(dialog, state) {
+  await dialog.locator('.dsh-security-assessment__heading').getByText(state, { exact: true })
+    .waitFor({ timeout: 60_000 })
+}
+
+/**
+ * Drive the shipped local Workbench as an operator would (ADRs 0321, 0322):
+ * every step is a real control in the real Harness page, with no test-only
+ * bridge, authority context, or package in the browser.
+ */
+async function runLocalWorkbenchScenario() {
+  await launchBrowser()
   const context = await browser.newContext({ locale: 'en-US', viewport: { width: 1280, height: 900 } })
   const page = await context.newPage()
+  activePage = page
   const consoleEntries = []
   const pageErrors = []
   const requestUrls = []
+  const issuedContextIds = []
   page.on('console', message => { consoleEntries.push(`${message.type()}:${message.text()}`) })
   page.on('pageerror', error => { pageErrors.push(String(error)) })
   page.on('request', request => { requestUrls.push(request.url()) })
+  recordIssuedContexts(page, issuedContextIds)
 
-  await page.goto(hostUrl, { waitUntil: 'domcontentloaded' })
-  await waitForWorkbenchBridge(page)
-  await setWorkbenchLocale(page, 'en')
-  await callWorkbenchBridge(page, 'openFull')
-  await waitForWorkbenchState(page, 'state => state.kind === "SELECTION_READY"')
+  await page.goto(pageUrl, { waitUntil: 'domcontentloaded' })
+  await dismissHostOnboarding(page, ONBOARDING.en, true)
 
-  await dismissReferenceHostOnboarding(page, true)
-
+  // Launcher, dialog focus, focus containment, and focus return.
   const launcher = page.getByRole('button', { name: 'Open Security Assurance Workbench' })
-  await launcher.focus()
+  await launcher.waitFor({ timeout: 45_000 })
   assert.equal(await launcher.evaluate(element => element.tagName), 'BUTTON')
-  assert.equal(await launcher.isEnabled(), true)
   await launcher.click()
   const dialog = page.getByRole('dialog', { name: 'Security Assurance Workbench' })
   await dialog.waitFor({ state: 'visible' })
-  const closeButton = page.getByRole('button', { name: 'Close Workbench' })
+  await dialog.getByRole('heading', { name: 'Overview', exact: true }).waitFor()
+  await dialog.getByText('No Assessments are visible to the current authority.').waitFor()
+  const closeButton = dialog.getByRole('button', { name: 'Close Workbench' })
   await assertFocused(page, closeButton, 'opening the dialog must focus its close control')
   await page.keyboard.press('Tab')
   assert.equal(await dialog.evaluate(element => element.contains(document.activeElement)), true)
@@ -610,132 +556,76 @@ async function runBrowserScenario() {
   await page.keyboard.press('Escape')
   await dialog.waitFor({ state: 'hidden' })
   await assertFocused(page, launcher, 'Escape must return focus to the launcher')
-  await callWorkbenchBridge(page, 'openFull')
-  await waitForWorkbenchState(page, 'state => state.kind === "SELECTION_READY"')
+  assert.equal(issuedContextIds.length > 0, true, 'the launcher must obtain a local Workbench context')
+
+  // Runtime Health reads through the same local context.
   await launcher.click()
-  await dialog.waitFor({ state: 'visible' })
+  await dialog.getByRole('heading', { name: 'Overview', exact: true }).waitFor()
+  await dialog.getByRole('button', { name: 'Runtime Health', exact: true }).click()
+  await dialog.getByRole('heading', { name: 'Runtime Health', exact: true }).waitFor()
+  await dialog.getByText('READY', { exact: true }).first().waitFor()
+  await dialog.getByRole('button', { name: 'Back to Assessment list', exact: true }).click()
+  await dialog.getByRole('heading', { name: 'Overview', exact: true }).waitFor()
 
-  await page.getByRole('button', { name: 'Runtime Health' }).click()
-  await page.getByRole('heading', { name: 'Runtime Health' }).waitFor()
-  assert.equal(await page.getByText('READY', { exact: true }).count() > 0, true)
-  await page.getByRole('button', { name: 'Back to Assessment list' }).click()
+  // A Risk Decision Window blocks the Assessment; the local operator may cancel, never decide.
+  const blockedId = await startAssessmentFromWizard(dialog, { riskDecisionWindow: true })
+  await waitForAssessmentState(dialog, 'BLOCKED')
+  await dialog.locator('.dsh-security-recovery').getByText('RISK_DECISION_WINDOW', { exact: true }).waitFor()
+  await dialog.locator('.dsh-security-actions').getByText('CANCEL_ASSESSMENT', { exact: true }).waitFor()
+  assert.equal(await dialog.getByText('RECORD_RISK_DECISION', { exact: true }).count(), 0,
+    'the local operator must not be offered a Risk Decision')
 
-  await page.getByRole('button', { name: 'Repositories and New Assessment' }).click()
-  await page.getByRole('heading', { name: 'Repositories' }).waitFor()
-  const repositoryLabel = page.getByText(repositoryDisplayName, { exact: true })
-  await repositoryLabel.waitFor()
-  assert.equal(await repositoryLabel.count(), 1)
-  assert.equal((await dialog.innerText()).includes(normalizedPath(repositoryRoot)), false)
-  await page.getByRole('button', { name: 'New Assessment' }).click()
-  await page.getByRole('heading', { name: 'New Assessment' }).waitFor()
-  await page.getByRole('combobox', { name: 'Assessment Subject' }).selectOption('workspace_snapshot')
-  const riskWindow = page.getByRole('checkbox', { name: /Risk decision window/u })
-  await riskWindow.check()
-  await page.getByRole('button', { name: 'Resolve and review preflight' }).click()
-  await page.getByRole('heading', { name: 'Start Preflight' }).waitFor()
-  const preflightState = await waitForWorkbenchState(
-    page,
-    'state => state.kind === "WIZARD_READY" && state.startPreflight !== null',
-  )
-  assert.equal(preflightState.startPreflight.providerComposition[0]?.analyzerId, 'dsh/builtin-node-package-lifecycle')
-  await page.getByText('dsh/builtin-node-package-lifecycle@1.0.0').waitFor()
-  assert.equal(await page.getByText('dsh/builtin-node-package-lifecycle@1.0.0').count(), 1)
-  await page.getByRole('button', { name: 'Confirm and start Assessment' }).click()
+  await dialog.getByRole('button', { name: 'View Findings', exact: true }).click()
+  await dialog.getByRole('heading', { name: 'Findings', exact: true }).waitFor()
+  await dialog.getByRole('button', { name: 'Open Finding' }).first().click()
+  await dialog.getByRole('heading', { name: 'Finding Detail', exact: true }).waitFor()
+  await dialog.getByText('/scripts/postinstall', { exact: true }).first().waitFor()
+  assert.equal(await dialog.getByRole('radio', { name: 'Deny risk acceptance' }).count(), 0)
+  // Evidence Views exist only for sealed records; before the seal the links are facts, not controls.
+  await dialog.getByText('Evidence metadata becomes viewable once the Assessment is SEALED.', { exact: true })
+    .waitFor()
+  assert.equal(await dialog.getByRole('button', { name: /^View Evidence metadata/u }).count(), 0)
 
-  const blocked = await waitForWorkbenchState(
-    page,
-    'state => state.kind === "READY" && state.snapshot.state === "BLOCKED"',
-    60_000,
-  )
-  const assessmentId = blocked.assessmentId
-  assert.match(assessmentId, /^asm-[0-9a-f-]{36}$/u)
-  assert.equal(await page.getByText('BLOCKED', { exact: true }).count() > 0, true)
-  assert.equal(
-    await page.locator('.dsh-security-actions').getByText('RECORD_RISK_DECISION', { exact: true }).count(),
-    1,
-  )
-  assert.equal(
-    await page.locator('.dsh-security-recovery').getByText('RECORD_RISK_DECISION', { exact: true }).count(),
-    1,
-  )
+  await dialog.getByRole('button', { name: 'Back to Assessment list', exact: true }).click()
+  await dialog.getByRole('button', { name: `Open ${blockedId}`, exact: true }).click()
+  await waitForAssessmentState(dialog, 'BLOCKED')
+  const recovery = dialog.locator('.dsh-security-recovery')
+  await recovery.getByRole('textbox', { name: 'Operator reason code' }).fill('OPERATOR_CANCEL')
+  await recovery.getByRole('textbox', { name: 'Operator reason summary' }).fill(cancellationSummary)
+  await recovery.getByRole('button', { name: 'Request Assessment cancellation', exact: true }).click()
+  await waitForAssessmentState(dialog, 'CANCELED')
 
-  await page.getByRole('button', { name: 'View Findings' }).click()
-  await page.getByRole('heading', { name: 'Findings' }).waitFor()
-  await page.getByRole('button', { name: 'Open Finding' }).click()
-  await page.getByRole('heading', { name: 'Finding Detail' }).waitFor()
-  assert.equal(await page.getByText('/scripts/postinstall', { exact: true }).count(), 1)
-
-  await page.getByRole('radio', { name: 'Deny risk acceptance' }).check()
-  await page.getByRole('textbox', { name: 'Rationale' }).fill(riskRationale)
-  await page.getByRole('button', { name: 'Record Risk Decision' }).click()
-  await waitForWorkbenchState(
-    page,
-    'state => state.kind === "READY" && state.snapshot.state === "SEALED"',
-    60_000,
-  )
-  assert.equal((await dialog.innerText()).includes(riskRationale), false)
-
-  await page.getByRole('button', { name: 'View Findings' }).click()
-  await page.getByRole('heading', { name: 'Findings' }).waitFor()
-  await page.getByRole('button', { name: 'Open Finding' }).click()
-  await page.getByRole('heading', { name: 'Finding Detail' }).waitFor()
-  await page.getByRole('button', { name: 'View Evidence metadata' }).click()
-  await waitForWorkbenchState(
-    page,
-    'state => state.kind === "READY" && state.findings.kind === "DETAIL_READY" && state.findings.evidence.kind === "METADATA_READY"',
-  )
-  await page.getByRole('heading', { name: 'Evidence metadata' }).waitFor()
-  assert.equal(await page.getByText('PROFILE_METADATA_ONLY', { exact: true }).count(), 1)
-  assert.equal(await page.locator('pre.dsh-security-evidence-disclosure__json').count(), 0)
-  await page.getByRole('button', { name: 'Explicitly view sensitive Evidence content' }).click()
-  await waitForWorkbenchState(
-    page,
-    'state => state.kind === "READY" && state.findings.kind === "DETAIL_READY" && state.findings.evidence.kind === "DISCLOSURE_READY"',
-  )
-  await page.getByRole('heading', { name: 'Sensitive Evidence content' }).waitFor()
-  const protectedJsonLocator = page.locator('pre.dsh-security-evidence-disclosure__json')
-  await protectedJsonLocator.waitFor()
-  const protectedJson = await protectedJsonLocator.innerText()
-  assert.equal(protectedJson.includes('installLifecycleScripts'), true)
-  assert.equal(protectedJson.includes(scriptBodyMarker), false, 'script bodies must not enter Evidence')
-  await assertNoForbiddenBrowserState(page, [
-    normalizedPath(repositoryRoot),
-    fullAuthorityContextId,
-    deniedAuthorityContextId,
-    operatorPrincipalId,
-    scriptBodyMarker,
-  ])
-  await page.getByRole('button', { name: 'Hide and discard sensitive content' }).click()
-  await protectedJsonLocator.waitFor({ state: 'detached' })
-  assert.equal((await dialog.innerText()).includes(protectedJson), false)
-
-  await page.getByRole('button', { name: 'Back to Finding detail' }).click()
-  await page.getByRole('heading', { name: 'Finding Detail' }).waitFor()
-  await page.getByRole('button', { name: 'View Bundle and Export Readiness' }).click()
-  await waitForWorkbenchState(page, 'state => state.kind === "BUNDLE_READY"')
-  await page.getByRole('heading', { name: 'Bundle and Export Readiness' }).waitFor()
-  assert.equal(await page.getByText(deliveryDestinationId, { exact: true }).count(), 1)
-  await page.getByRole('button', { name: 'Preview Export' }).click()
-  await waitForWorkbenchState(
-    page,
-    'state => state.kind === "BUNDLE_READY" && state.export.kind === "PREVIEW_READY"',
-  )
-  await page.getByRole('heading', { name: 'Export Preview and Delivery' }).waitFor()
-  assert.equal(await page.getByText('security/export/internal-json-v1', { exact: true }).count(), 1)
-  assert.equal(await page.getByText('HOST_REGISTERED_LOCAL_AUDIT', { exact: true }).count(), 1)
-  assert.equal(await page.getByText('Host-registered local audit delivery', { exact: true }).count(), 1)
-  assert.equal(await page.getByText('PRIVATE_STORE_PATHS', { exact: true }).count(), 1)
+  // A sealed Assessment exports to its registered destination; download stays deployment-granted.
+  await dialog.getByRole('button', { name: 'Back to Assessment list', exact: true }).click()
+  await dialog.getByRole('heading', { name: 'Overview', exact: true }).waitFor()
+  const sealedId = await startAssessmentFromWizard(dialog, { riskDecisionWindow: false })
+  await waitForAssessmentState(dialog, 'SEALED')
+  await dialog.getByRole('button', { name: 'View Findings', exact: true }).click()
+  await dialog.getByRole('heading', { name: 'Findings', exact: true }).waitFor()
+  await dialog.getByRole('button', { name: 'Open Finding' }).first().click()
+  await dialog.getByRole('heading', { name: 'Finding Detail', exact: true }).waitFor()
+  await dialog.getByRole('button', { name: /^View Evidence metadata/u }).first().click()
+  await dialog.getByRole('heading', { name: 'Evidence metadata', exact: true }).waitFor()
+  await dialog.getByText('PROFILE_METADATA_ONLY', { exact: true }).first().waitFor()
+  await dialog.getByRole('button', { name: 'Explicitly view sensitive Evidence content', exact: true }).click()
+  await dialog.getByText('DISCLOSURE_NOT_AUTHORIZED', { exact: true }).first().waitFor()
+  await dialog.getByText('Security Service denied sensitive content disclosure.', { exact: true }).first().waitFor()
+  assert.equal(await page.locator('pre.dsh-security-evidence-disclosure__json').count(), 0,
+    'the local operator must not receive sensitive Evidence content')
+  assert.equal((await dialog.innerText()).includes('installLifecycleScripts'), false)
+  await dialog.getByRole('button', { name: 'View Bundle and Export Readiness', exact: true }).click()
+  await dialog.getByRole('heading', { name: 'Bundle and Export Readiness', exact: true }).waitFor()
+  await dialog.getByText(deliveryDestinationId, { exact: true }).first().waitFor()
+  await dialog.getByRole('button', { name: 'Preview Export', exact: true }).click()
+  await dialog.getByRole('heading', { name: 'Export Preview and Delivery', exact: true }).waitFor()
+  await dialog.getByText('security/export/internal-json-v1', { exact: true }).first().waitFor()
   assert.equal((await dialog.innerText()).includes(normalizedPath(dshHome)), false)
-  assert.equal(await page.getByRole('button', { name: /download/iu }).count(), 0)
-  await page.getByRole('button', { name: 'Request and deliver Export' }).click()
-  const deliveredExport = await waitForWorkbenchState(
-    page,
-    'state => state.kind === "BUNDLE_READY" && state.export.kind === "STATUS_READY" && state.export.status.status === "DELIVERED"',
-  )
-  const exportId = deliveredExport.export.status.exportId
-  assert.match(exportId, /^export-[0-9a-f]{64}$/u)
-  assert.equal(deliveredExport.export.status.accessAction.kind, 'ONE_USE_DOWNLOAD')
-  assert.equal(deliveredExport.export.status.artifact?.digest.mediaType, 'application/vnd.dsh.security.export+json')
+  await dialog.getByRole('button', { name: 'Request and deliver Export', exact: true }).click()
+  await dialog.getByText('DELIVERED', { exact: true }).first().waitFor({ timeout: 60_000 })
+  const exportId = /export-[0-9a-f]{64}/u.exec(await dialog.innerText())?.[0]
+  assert.match(exportId ?? '', /^export-[0-9a-f]{64}$/u)
+  assert.equal(await dialog.getByRole('button', { name: /download/iu }).count(), 0,
+    'the local operator must not be offered an Export download')
   const deliveredArtifact = await readFile(join(
     dshHome,
     'security-assurance',
@@ -744,32 +634,10 @@ async function runBrowserScenario() {
     'local-audit',
     `${exportId}.json`,
   ), 'utf8')
-  const deliveredArtifactValue = JSON.parse(deliveredArtifact)
-  assert.equal(deliveredArtifactValue.source.assessmentId, assessmentId)
-  assert.equal(deliveredArtifactValue.exportProfileId, 'security/export/internal-json-v1')
+  assert.equal(JSON.parse(deliveredArtifact).source.assessmentId, sealedId)
   assert.equal(deliveredArtifact.includes(normalizedPath(repositoryRoot)), false)
-  const hrefBeforeDownload = page.url()
-  const browserDownloadPromise = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Authorize and download once' }).click()
-  const browserDownload = await browserDownloadPromise
-  const downloadedExport = await waitForWorkbenchState(
-    page,
-    'state => state.kind === "BUNDLE_READY" && state.export.kind === "STATUS_READY" && state.export.download.kind === "COMPLETE"',
-  )
-  const downloadedPath = await browserDownload.path()
-  assert.notEqual(downloadedPath, null, 'browser download must produce a temporary file')
-  const downloadedBytes = await readFile(downloadedPath)
-  assert.equal(downloadedBytes.equals(Buffer.from(deliveredArtifact, 'utf8')), true)
-  assert.equal(browserDownload.suggestedFilename(), downloadedExport.export.download.fileName)
-  assert.equal(downloadedExport.export.download.digest, deliveredExport.export.status.artifact.digest.value)
-  assert.equal(JSON.stringify(downloadedExport).includes(Buffer.from(deliveredArtifact).toString('base64')), false)
-  assert.equal(page.url(), hrefBeforeDownload, 'one-use download must not enter navigation or history')
 
-  await setWorkbenchLocale(page, 'zh')
-  await page.getByRole('dialog', { name: '安全保障工作台' }).waitFor()
-  await page.getByRole('heading', { name: 'Bundle 与 Export Readiness' }).waitFor()
-  await setWorkbenchLocale(page, 'en')
-
+  // Narrow viewport and accessible names.
   await page.setViewportSize({ width: 390, height: 844 })
   const bounded = await dialog.evaluate(element => {
     const rect = element.getBoundingClientRect()
@@ -777,52 +645,78 @@ async function runBrowserScenario() {
   })
   assert.equal(bounded, true, 'Workbench dialog must remain inside a narrow viewport')
   await assertAccessibleControls(dialog)
-
   await page.setViewportSize({ width: 1280, height: 900 })
+
+  // Nothing survives a reload except what the Service returns again.
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await waitForWorkbenchBridge(page)
-  await setWorkbenchLocale(page, 'en')
-  await callWorkbenchBridge(page, 'openFull')
-  await waitForWorkbenchState(page, 'state => state.kind === "SELECTION_READY"')
-  await dismissReferenceHostOnboarding(page)
-  await page.getByRole('button', { name: 'Open Security Assurance Workbench' }).click()
-  const reloadedDialog = page.getByRole('dialog', { name: 'Security Assurance Workbench' })
-  await reloadedDialog.waitFor({ state: 'visible' })
-  await reloadedDialog.getByRole('button', { name: `Open ${assessmentId}`, exact: true }).click()
-  await waitForWorkbenchState(
-    page,
-    `state => state.kind === "READY" && state.assessmentId === ${JSON.stringify(assessmentId)} && state.snapshot.state === "SEALED"`,
-  )
-  assert.equal((await page.locator('body').innerText()).includes(protectedJson), false)
+  await dismissHostOnboarding(page, ONBOARDING.en)
+  await launcher.click()
+  await dialog.getByRole('heading', { name: 'Overview', exact: true }).waitFor()
+  assert.equal(await dialog.getByRole('button', { name: `Open ${blockedId}`, exact: true }).count(), 1)
+  await dialog.getByRole('button', { name: `Open ${sealedId}`, exact: true }).click()
+  await waitForAssessmentState(dialog, 'SEALED')
 
+  // Losing the transport fails closed; the next open recovers with a fresh context.
   await page.keyboard.press('Escape')
+  await dialog.waitFor({ state: 'hidden' })
   await context.setOffline(true)
-  await callWorkbenchBridge(page, 'openFull')
-  await waitForWorkbenchState(page, 'state => state.kind === "FAILED"')
+  await launcher.click()
+  await dialog.getByText('Assessment unavailable', { exact: true }).first().waitFor({ timeout: 45_000 })
+  await page.keyboard.press('Escape')
+  await dialog.waitFor({ state: 'hidden' })
   await context.setOffline(false)
-  await callWorkbenchBridge(page, 'openFull')
-  await waitForWorkbenchState(page, 'state => state.kind === "SELECTION_READY"')
-  await callWorkbenchBridge(page, 'openDenied')
-  const denied = await waitForWorkbenchState(
-    page,
-    'state => state.kind === "FAILED" && state.failure.code === "UNAUTHORIZED"',
-  )
-  assert.equal(denied.assessmentId, null)
-  await callWorkbenchBridge(page, 'openFull')
-  await waitForWorkbenchState(page, 'state => state.kind === "SELECTION_READY"')
+  // Reopen only once the page can reach its Host again, as an operator would.
+  await page.waitForFunction(async () => {
+    try {
+      await fetch(location.origin, { method: 'HEAD', cache: 'no-store' })
+      return true
+    } catch {
+      return false
+    }
+  }, undefined, { timeout: 30_000, polling: 500 })
+  await launcher.click()
+  await dialog.getByRole('heading', { name: 'Overview', exact: true }).waitFor({ timeout: 45_000 })
 
+  // An unauthenticated caller cannot obtain a context from the same Host.
+  const anonymous = await fetch(new URL(`/api/${openLocalContextEndpoint}`, hostUrl), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: hostUrl },
+    body: JSON.stringify({
+      type: 'client-request',
+      rpcId: randomUUID(),
+      method: openLocalContextEndpoint,
+      payload: { args: { request: { schemaVersion: 1 } } },
+    }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  assert.equal(anonymous.ok, false, `an unauthenticated caller reached ${openLocalContextEndpoint}`)
+
+  // The Chinese page offers the same Workbench.
+  const zhContext = await browser.newContext({ locale: 'zh-CN', viewport: { width: 1280, height: 900 } })
+  const zhPage = await zhContext.newPage()
+  const zhErrors = []
+  zhPage.on('pageerror', error => { zhErrors.push(String(error)) })
+  recordIssuedContexts(zhPage, issuedContextIds)
+  await zhPage.goto(pageUrl, { waitUntil: 'domcontentloaded' })
+  await dismissHostOnboarding(zhPage, ONBOARDING.zh)
+  await zhPage.getByRole('button', { name: '打开安全保障工作台' }).click()
+  const zhDialog = zhPage.getByRole('dialog', { name: '安全保障工作台' })
+  await zhDialog.getByRole('heading', { name: '概览', exact: true }).waitFor()
+  await zhDialog.getByRole('button', { name: `打开 ${sealedId}`, exact: true }).click()
+  await zhDialog.getByRole('button', { name: '返回 Assessment 列表', exact: true }).waitFor()
+  assert.deepEqual(zhErrors, [], `Chinese page errors: ${zhErrors.join('\n')}`)
+  await zhContext.close()
+
+  // No context, path, or script body is retained by the browser.
+  const forbidden = [
+    normalizedPath(repositoryRoot),
+    normalizedPath(dshHome),
+    scriptBodyMarker,
+    ...issuedContextIds,
+  ]
   const cdp = await context.newCDPSession(page)
   const navigationHistory = await cdp.send('Page.getNavigationHistory')
   const browserHistory = JSON.stringify(navigationHistory.entries.map(entry => entry.url))
-  const forbidden = [
-    normalizedPath(repositoryRoot),
-    fullAuthorityContextId,
-    deniedAuthorityContextId,
-    operatorPrincipalId,
-    scriptBodyMarker,
-    riskRationale,
-    protectedJson,
-  ]
   for (const value of forbidden) {
     assert.equal(browserHistory.includes(value), false, `browser history retained ${JSON.stringify(value)}`)
   }
@@ -832,33 +726,24 @@ async function runBrowserScenario() {
     assert.equal(browserLogs.includes(value), false, `browser console retained ${JSON.stringify(value)}`)
   }
   assert.deepEqual(pageErrors, [], `browser page errors: ${pageErrors.join('\n')}`)
-  const expectedOrigin = new URL(hostUrl).origin
-  for (const requestUrl of requestUrls) {
-    const parsed = new URL(requestUrl)
-    if (parsed.protocol === 'data:' || parsed.protocol === 'blob:') continue
-    assert.equal(parsed.origin, expectedOrigin, `unexpected remote browser resource ${requestUrl}`)
-  }
+  assertSameOrigin(requestUrls)
 
   await context.close()
   await browser.close()
   browser = undefined
+  activePage = undefined
   return {
-    assessmentId,
+    blockedAssessmentId: blockedId,
+    sealedAssessmentId: sealedId,
     exportId,
-    downloadFileName: browserDownload.suggestedFilename(),
+    issuedContexts: issuedContextIds.length,
     requestCount: requestUrls.length,
     consoleCount: consoleEntries.length,
   }
 }
 
 async function runCurrentWebScenario() {
-  const { chromium } = await loadPlaywright()
-  const executablePath = await findBrowserExecutable()
-  browser = await chromium.launch({
-    executablePath,
-    headless: true,
-    args: ['--disable-background-networking', '--disable-component-update'],
-  })
+  await launchBrowser()
   const context = await browser.newContext({ locale: 'en-US', viewport: { width: 1280, height: 900 } })
   const page = await context.newPage()
   const pageErrors = []
@@ -866,22 +751,17 @@ async function runCurrentWebScenario() {
   page.on('pageerror', error => { pageErrors.push(String(error)) })
   page.on('request', request => { requestUrls.push(request.url()) })
 
-  await page.goto(hostUrl, { waitUntil: 'domcontentloaded' })
-  await dismissReferenceHostOnboarding(page)
+  await page.goto(pageUrl, { waitUntil: 'domcontentloaded' })
+  await dismissHostOnboarding(page, ONBOARDING.en)
   const bodyText = await page.locator('body').innerText()
   assert.equal(bodyText.trim().length > 0, true, 'Harness Web must render visible content')
   assert.equal(
     await page.getByRole('button', { name: 'Open Security Assurance Workbench' }).count(),
     0,
-    'a candidate without ./client must not expose the retired Workbench launcher',
+    'a candidate without the local Workbench must not expose its launcher',
   )
   assert.deepEqual(pageErrors, [], `browser page errors: ${pageErrors.join('\n')}`)
-  const expectedOrigin = new URL(hostUrl).origin
-  for (const requestUrl of requestUrls) {
-    const parsed = new URL(requestUrl)
-    if (parsed.protocol === 'data:' || parsed.protocol === 'blob:') continue
-    assert.equal(parsed.origin, expectedOrigin, `unexpected remote browser resource ${requestUrl}`)
-  }
+  assertSameOrigin(requestUrls)
 
   await context.close()
   await browser.close()
@@ -891,6 +771,12 @@ async function runCurrentWebScenario() {
     workbenchClient: 'NOT_SHIPPED',
     requestCount: requestUrls.length,
   }
+}
+
+/** On failure, show what the Workbench dialog displayed; it renders no context or Host path. */
+async function reportWorkbenchDialog() {
+  const text = await activePage?.locator('.dsh-security-dialog').innerText({ timeout: 2_000 }).catch(() => undefined)
+  if (text !== undefined) console.error(`packed-browser-e2e: Workbench dialog at failure:\n${text.slice(0, 6_000)}`)
 }
 
 async function stopHost() {
@@ -935,19 +821,21 @@ try {
   await createFixtureRepository()
   const securityArtifact = await packSecurityArtifact()
   const packedManifest = await readPackedPackageManifest(securityArtifact.target)
-  const workbenchShipped = shipsWorkbenchClient(packedManifest)
-  if (workbenchShipped) await createReferenceBrowserPackage()
+  const workbenchShipped = await shipsLocalWorkbench(packedManifest, securityArtifact.target)
 
   console.log(`packed-browser-e2e: installing fresh Harness ${browserHarnessVersion} profile`)
-  const host = await installFreshHarness(securityArtifact.target, workbenchShipped)
+  const host = await installFreshHarness(securityArtifact.target)
   await configureReferenceHost()
 
   console.log('packed-browser-e2e: starting packed Reference Test Host')
-  hostUrl = await startHost(host.dshBin, host.environment)
+  const started = await startHost(host.dshBin, host.environment)
+  hostUrl = started.origin
+  pageUrl = started.pageUrl
+  await waitForHostListening()
 
   console.log(`packed-browser-e2e: driving real browser at ${hostUrl}`)
   const evidence = workbenchShipped
-    ? await runBrowserScenario()
+    ? await runLocalWorkbenchScenario()
     : await runCurrentWebScenario()
   const exit = await stopHost()
   assert.equal(
@@ -999,6 +887,7 @@ try {
   console.log(JSON.stringify(workbenchShipped
     ? {
         packedHost: 'PASS',
+        harnessVersion: browserHarnessVersion,
         realBrowser: 'PASS',
         realAuthority: 'PASS',
         accessibility: 'PASS',
@@ -1010,10 +899,14 @@ try {
       }
     : {
         packedHost: 'PASS',
+        harnessVersion: browserHarnessVersion,
         realBrowser: 'PASS',
         lifecycle: 'PASS',
         ...evidence,
       }, null, 2))
+} catch (error) {
+  await reportWorkbenchDialog()
+  throw error
 } finally {
   await browser?.close().catch(() => {})
   await stopHost().catch(() => {})

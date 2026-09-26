@@ -41,9 +41,9 @@ supported version and honor reduced motion. Strings ship in Chinese and English
 (ADR 0294); canonical identifiers are never translated.
 
 The cards do not depend on the Workbench that ADR 0321 adds to the same
-bundle. Release tooling selects the Workbench browser flow only from an
-explicit package-private marker, so shipping `./client` never claims
-`WORKBENCH_CLIENT_SHIPPED` by itself.
+bundle. Release tooling selects the Workbench browser flow only when the
+packed bundle enables the local authority (ADR 0324), so shipping `./client`
+never claims `WORKBENCH_CLIENT_SHIPPED` by itself.
 
 ## Consequences
 

@@ -67,8 +67,7 @@ codecs. Its styles use only theme tokens present in every supported version.
 - The packed profile smoke proves over the real `/api` transport that an
   unauthenticated request receives no context and an authenticated one reads
   the current workspace with exactly the local permissions.
-- The release-grade packed browser E2E still drives the deployment-resolver
-  Reference Host. Until it drives the local Workbench, its record keeps
-  `WORKBENCH` `INCONCLUSIVE`.
+- The release-grade packed browser E2E drives this local Workbench
+  (ADR 0324).
 - The client bundle grows to about 630 kB unminified, mostly the strict Remote
   codecs and their validator.

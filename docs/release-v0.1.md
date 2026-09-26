@@ -86,10 +86,13 @@ pnpm pack:profile-smoke
 ```
 
 The real-browser runner uses the same Security candidate variable and output
-variable. It selects the actual package manifest from the tarball. For the
-current candidate, ADR 0307 excludes `./client`, so the run verifies the current
-Harness Web shell but records `WORKBENCH` as `INCONCLUSIVE`. It must never turn
-generic Web availability into passed Workbench evidence.
+variable. It reads the package manifest and bundle patch from the tarball. When
+the candidate ships the local Workbench (ADRs 0321, 0324), it installs a fresh
+Harness (`DSH_BROWSER_HARNESS_VERSION`, default the npm `latest` in the
+verified set) and drives the Workbench through real controls; otherwise it
+verifies only the Harness Web shell and records `WORKBENCH` as
+`INCONCLUSIVE`. It must never turn generic Web availability into passed
+Workbench evidence.
 
 ```powershell
 $env:DSH_RELEASE_PROOF_OUTPUT = "$PWD\evidence\workbench.json"

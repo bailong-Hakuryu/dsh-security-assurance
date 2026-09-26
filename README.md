@@ -268,7 +268,7 @@ pnpm release:qualify -- --input .\release-qualification-input.json --output .\re
 pnpm release:handoff -- --input .\release-handoff-input.json --output .\release-promotion-handoff.json
 ~~~
 
-第一条命令只记录已复核的文件事实，不制造测试或安全证明；packed smoke 可用 <code>DSH_RELEASE_PROOF_OUTPUT</code> 输出绑定同一 tarball 的严格证明记录，第二条命令验证并按规范顺序收集这些记录，逐字节摘要后生成 proof index；第三条命令重新读取 index、binding 与每份 proof record，把状态原样合并到 <code>release:qualify</code> 的严格输入；第四条命令再次读取绑定的真实文件，并且只在 Release Constitution 为 <code>PROMOTE</code> 且最终 Manifest 为 <code>VERIFIED</code> 时返回 0，原子生成 Manifest、公开 Scorecard 和资格结论三件套；第五条命令绑定这三件套与原 RC tarball，逐项比较拟发布 stable tarball，只允许同基线版本替换及 README/CHANGELOG 发布元数据变化，并输出明确写有 <code>authorization: NOT_GRANTED</code> 的交接收据。发布级真实浏览器 E2E 仍驱动部署方解析器的 Reference Host，尚未覆盖 ADR 0321 的本地工作台，因此其记录会诚实标记 <code>WORKBENCH</code> 为 <code>INCONCLUSIVE</code>，不会把通用 Web 外壳冒充成 Workbench。有效但阻断/不完整的证据返回 2 并保留可审计产物；字节摘要、Git HEAD、已跟踪源码、资格组合或包行为不一致时返回 1 且不生成对应产物。所有 CLI 都不会自动打 tag、签名、上传或发布包。完整输入契约见 [v0.1 发布清单](docs/release-v0.1.md)。
+第一条命令只记录已复核的文件事实，不制造测试或安全证明；packed smoke 可用 <code>DSH_RELEASE_PROOF_OUTPUT</code> 输出绑定同一 tarball 的严格证明记录，第二条命令验证并按规范顺序收集这些记录，逐字节摘要后生成 proof index；第三条命令重新读取 index、binding 与每份 proof record，把状态原样合并到 <code>release:qualify</code> 的严格输入；第四条命令再次读取绑定的真实文件，并且只在 Release Constitution 为 <code>PROMOTE</code> 且最终 Manifest 为 <code>VERIFIED</code> 时返回 0，原子生成 Manifest、公开 Scorecard 和资格结论三件套；第五条命令绑定这三件套与原 RC tarball，逐项比较拟发布 stable tarball，只允许同基线版本替换及 README/CHANGELOG 发布元数据变化，并输出明确写有 <code>authorization: NOT_GRANTED</code> 的交接收据。发布级真实浏览器 E2E 在全新安装的 Harness 中以真实操作驱动候选包自带的本地工作台（ADR 0324）：只有当 tarball 本身启用本地授权时才记录 <code>WORKBENCH</code>，否则如实标记为 <code>INCONCLUSIVE</code>，不会把通用 Web 外壳冒充成 Workbench。有效但阻断/不完整的证据返回 2 并保留可审计产物；字节摘要、Git HEAD、已跟踪源码、资格组合或包行为不一致时返回 1 且不生成对应产物。所有 CLI 都不会自动打 tag、签名、上传或发布包。完整输入契约见 [v0.1 发布清单](docs/release-v0.1.md)。
 
 手动 **Release Candidate Evidence** workflow 会要求一个完整的 40 位 Control Plane commit SHA，只打包并绑定一次候选，然后让 Linux、macOS、Windows 下载同一组 tarball 生成三份平台证明；最终收集任务从候选包安装公开 CLI，生成可下载的 <code>release-evidence-index</code>。该 workflow 不执行资格提升、打 tag、创建 Release 或发布 npm。
 
@@ -490,9 +490,10 @@ The fifth binds those three files and the retained RC tarball, compares every
 entry in the proposed stable tarball, permits only the same-base stable version
 transition plus README/CHANGELOG release metadata, and emits a receipt whose
 `authorization` is explicitly `NOT_GRANTED`.
-The release-grade real-browser E2E still drives the deployment-resolver
-Reference Host rather than the ADR 0321 local Workbench, so its record
-honestly reports `WORKBENCH` as `INCONCLUSIVE`; a generic Web shell is never
+The release-grade real-browser E2E drives the candidate's own local Workbench
+through real controls in a freshly installed Harness (ADR 0324). It records
+`WORKBENCH` only when the tarball itself enables the local authority and
+otherwise honestly reports `INCONCLUSIVE`; a generic Web shell is never
 relabelled as Workbench proof.
 Valid blocked or incomplete evidence exits `2` with auditable output; byte,
 Git `HEAD`, tracked-source, portfolio, or package-behavior mismatches exit `1`

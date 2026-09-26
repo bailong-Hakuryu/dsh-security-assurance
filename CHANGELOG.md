@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+- Make the release `WORKBENCH` proof pass for a candidate that ships the local
+  Workbench (ADR 0324). The packed browser E2E now installs a fresh Harness
+  (default the npm `latest`, `0.1.5-rc.3`) and operates the candidate's own
+  Workbench through real controls, with no test-only package or bridge; it
+  selects that flow from the packed bundle patch instead of a manifest marker
+  no candidate declared. The retired reference-package scenario could no
+  longer load on any supported Harness.
+- Fix two Workbench defects the real-browser run exposed. Evidence links on
+  an unsealed Assessment are now facts with a note instead of controls; before,
+  opening one made the Service answer `CONFLICT` and ended the session. And
+  focus now stays inside the dialog when a view change removes the focused
+  control; before, Escape and the Tab trap stopped working after opening an
+  Assessment from the list.
 - Open an Assessment in the Workbench straight from its tool card
   (ADR 0323). Start, status, findings, resume, cancel, and export cards offer
   「在工作台中打开」 once the Workbench is available; the card passes only a
