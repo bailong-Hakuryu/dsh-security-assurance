@@ -45,6 +45,7 @@ import type {
 } from '../../workbench-remote.ts'
 import { en, WORKBENCH_LOCALE_NAMESPACE, zh } from './locales.ts'
 import { WorkbenchPresentation } from './presentation.ts'
+import type { WorkbenchBridge } from '../workbench-bridge.ts'
 import type { HostObservable } from './slot-types.ts'
 import { installWorkbenchStyles } from './styles.ts'
 import {
@@ -368,19 +369,43 @@ export class SecurityAssuranceWorkbenchController extends Service {
    * identity or permission. A Host that exports no local authority leaves the
    * Workbench closed for its own authenticated integration to open.
    */
-  async openLocalAssessmentSelection(): Promise<SecurityAssuranceWorkbenchStateV1> {
+  openLocalAssessmentSelection(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    return this.openUnderLocalContext(
+      undefined,
+      contextId => this.openAssessmentSelection({ securityAssuranceWorkbenchContextId: contextId }),
+    )
+  }
+
+  /**
+   * Open one Assessment a tool card names (ADR 0323) under a fresh local
+   * context, exactly as the selector would; the Service still decides whether
+   * this operator may read it.
+   */
+  openLocalAssessment(assessmentId: AssessmentId): Promise<SecurityAssuranceWorkbenchStateV1> {
+    return this.openUnderLocalContext(
+      assessmentId,
+      contextId => this.openAssessment({ securityAssuranceWorkbenchContextId: contextId, assessmentId }),
+    )
+  }
+
+  private async openUnderLocalContext(
+    assessmentId: AssessmentId | undefined,
+    open: (contextId: WorkbenchAuthorityContextId) => Promise<SecurityAssuranceWorkbenchStateV1>,
+  ): Promise<SecurityAssuranceWorkbenchStateV1> {
     this.eraseSession()
     const issuing: LiveAssessmentSession = {
       generation: ++this.nextGeneration,
       contextId: UNISSUED_CONTEXT_ID,
-      assessmentId: undefined,
+      assessmentId,
       abort: new AbortController(),
       monitorGeneration: 0,
       evidenceExpiryTimer: undefined,
       evidenceAbort: undefined,
     }
     this.session = issuing
-    this.publish(Object.freeze({ kind: 'SELECTION_LOADING' }))
+    this.publish(Object.freeze(assessmentId === undefined
+      ? { kind: 'SELECTION_LOADING' as const }
+      : { kind: 'LOADING' as const, assessmentId }))
 
     let result: RemoteResult<LocalWorkbenchContextV1>
     try {
@@ -406,7 +431,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
         retryable: false,
       })
     }
-    return this.openAssessmentSelection({ securityAssuranceWorkbenchContextId: issued.contextId })
+    return open(issued.contextId)
   }
 
   /** Append the next page from the current authority-bound consistency window. */
@@ -2648,8 +2673,17 @@ interface WorkbenchClientContext {
 /** Required Client services: Remote transport plus the Host-owned UI assembly seams. */
 export const inject = ['remote', 'slots', 'locale']
 
+/** Bundle-internal wiring beside the Workbench. */
+export interface WorkbenchClientOptions {
+  /** Lets the tool cards open the Assessment they name (ADR 0323). */
+  readonly cards?: WorkbenchBridge | undefined
+}
+
 /** Mount the strict contribution and install the transient Workbench Controller. */
-export async function apply(ctx: Context): Promise<() => Promise<void>> {
+export async function apply(
+  ctx: Context,
+  options: WorkbenchClientOptions = {},
+): Promise<() => Promise<void>> {
   const unmount = await ctx.remote.$mount(workbenchRemote)
   const controller = ctx.plugin(SecurityAssuranceWorkbenchController)
   let uninstallUi: (() => void) | undefined
@@ -2658,6 +2692,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     uninstallUi = installWorkbenchUi(
       ctx as unknown as WorkbenchClientContext,
       ctx.get('securityAssuranceWorkbench') as SecurityAssuranceWorkbenchController,
+      options?.cards,
     )
   } catch (error) {
     uninstallUi?.()
@@ -2676,6 +2711,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
 function installWorkbenchUi(
   ctx: WorkbenchClientContext,
   controller: SecurityAssuranceWorkbenchController,
+  cards: WorkbenchBridge | undefined,
 ): () => void {
   const presentation = new WorkbenchPresentation(controller)
   const assessment: HostObservable<SecurityAssuranceWorkbenchStateV1> = {
@@ -2687,6 +2723,7 @@ function installWorkbenchUi(
 
   let removeLauncher: (() => void) | undefined
   let removeOverlay: (() => void) | undefined
+  let detachCards: (() => void) | undefined
   try {
     removeLauncher = ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
       name: 'sidebar.footer.action',
@@ -2735,7 +2772,12 @@ function installWorkbenchUi(
         selectFinding: recordId => { void controller.selectFinding(recordId) },
       }),
     }, WorkbenchOverlay))
+    detachCards = cards?.attach(async (assessmentId, returnFocus) => {
+      presentation.show(returnFocus)
+      await controller.openLocalAssessment(assessmentId)
+    })
   } catch (error) {
+    detachCards?.()
     removeOverlay?.()
     removeLauncher?.()
     removeDictionary()
@@ -2745,6 +2787,7 @@ function installWorkbenchUi(
   }
 
   return () => {
+    detachCards?.()
     removeOverlay?.()
     removeLauncher?.()
     removeDictionary()

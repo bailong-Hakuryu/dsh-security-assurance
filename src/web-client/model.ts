@@ -5,6 +5,7 @@
  * field is read defensively: a truncated stream, an error result, or a future
  * output shape degrades to a plainer card instead of throwing.
  */
+import { assessmentIdSchema, type AssessmentId } from '../contracts.ts'
 import type { SecurityCardMessageKey } from './locales.ts'
 
 /** Tools whose calls render as Security cards instead of the generic row. */
@@ -57,6 +58,8 @@ export interface ToolCardModel {
   readonly errorText: string | null
   readonly rawInput: string
   readonly rawOutput: string | null
+  /** The well-formed Assessment the call concerns, if it did not fail (ADR 0323). */
+  readonly assessmentId: AssessmentId | null
 }
 
 type Json = Readonly<Record<string, unknown>>
@@ -348,6 +351,27 @@ function exportReceipt({ state, args, output }: ToolCallFacts): Body {
   }
 }
 
+/** Tools whose calls concern exactly one Assessment. */
+const ASSESSMENT_TOOLS: ReadonlySet<string> = new Set([
+  'security_assessment_start',
+  'security_assessment_status',
+  'security_assessment_findings',
+  'security_assessment_resume',
+  'security_assessment_cancel',
+  'security_assessment_export',
+])
+
+/** Whether a value is a canonical Assessment identity. */
+export function isAssessmentId(value: unknown): value is AssessmentId {
+  return assessmentIdSchema.safeParse(value).success
+}
+
+function namedAssessment(toolName: string, { state, args, output }: ToolCallFacts): AssessmentId | null {
+  if (state === 'error' || !ASSESSMENT_TOOLS.has(toolName)) return null
+  const id = output['assessmentId'] ?? args['assessment_id']
+  return isAssessmentId(id) ? id : null
+}
+
 const CARDS: Readonly<Record<SecurityToolName, readonly [SecurityCardMessageKey, (facts: ToolCallFacts) => Body]>> = {
   security_repositories: ['title.repositories', repositories],
   security_catalog: ['title.catalog', catalog],
@@ -373,5 +397,6 @@ export function securityToolCard(toolName: SecurityToolName | string, block: unk
     errorText: facts.state === 'error' ? (facts.outputText ?? '').split('\n')[0] ?? '' : null,
     rawInput: facts.argsRaw,
     rawOutput: facts.outputText,
+    assessmentId: namedAssessment(toolName, facts),
   }
 }

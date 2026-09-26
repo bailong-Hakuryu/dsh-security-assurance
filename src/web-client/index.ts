@@ -8,6 +8,7 @@
 import { en, zh } from './locales.ts'
 import { SECURITY_TOOL_CARD_NAMES } from './model.ts'
 import { SECURITY_TOOL_CARD_CSS, SecurityToolCard } from './card.ts'
+import { WorkbenchBridge } from './workbench-bridge.ts'
 import * as workbench from './workbench/controller.ts'
 
 /** Locale namespace bound to every Security card's `t`. */
@@ -25,7 +26,12 @@ interface ToolCardClientContext {
   readonly slots: {
     inject(name: string, register: () => () => void): unknown
     register(
-      options: { readonly name: string; readonly key: string; readonly locale: string },
+      options: {
+        readonly name: string
+        readonly key: string
+        readonly locale: string
+        readonly inject: () => object
+      },
       component: unknown,
     ): () => void
   }
@@ -48,6 +54,7 @@ function installStyles(): () => void {
 }
 
 export function apply(ctx: ToolCardClientContext): void {
+  const bridge = new WorkbenchBridge()
   ctx.effect(installStyles, 'dsh-security-assurance: tool card styles')
   ctx.effect(
     () => ctx.locale.register(SECURITY_TOOL_CARD_NAMESPACE, { zh, en }),
@@ -58,7 +65,12 @@ export function apply(ctx: ToolCardClientContext): void {
       name: 'tool.call.toolview',
       key: toolName,
       locale: SECURITY_TOOL_CARD_NAMESPACE,
+      inject: () => ({ hooks: { workbench: bridge }, openInWorkbench: bridge.open }),
     }, SecurityToolCard))
   }
-  ctx.plugin({ name: 'dsh-security-assurance/workbench', inject: workbench.inject, apply: workbench.apply })
+  ctx.plugin({
+    name: 'dsh-security-assurance/workbench',
+    inject: workbench.inject,
+    apply: (workbenchCtx: Parameters<typeof workbench.apply>[0]) => workbench.apply(workbenchCtx, { cards: bridge }),
+  })
 }

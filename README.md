@@ -141,7 +141,7 @@ dsh web
 /security 只检查 packages/api 和 packages/web 的包安装生命周期
 ~~~
 
-在 Harness Web 中，这八个工具的调用会显示为专用的安全卡片，而不是通用工具行：一行标题与摘要，配以状态、结论和严重程度标签，展开后可查看详情和原始输入输出。卡片只读取会话中已有的工具调用记录，不调用服务、不持有任何权限（ADR 0322）。
+在 Harness Web 中，这八个工具的调用会显示为专用的安全卡片，而不是通用工具行：一行标题与摘要，配以状态、结论和严重程度标签，展开后可查看详情和原始输入输出。卡片只读取会话中已有的工具调用记录，不调用服务、不持有任何权限（ADR 0322）。涉及某个 Assessment 的卡片会在行尾提供「在工作台中打开」，一键进入该 Assessment 的工作台详情（ADR 0323）。
 
 **安全保障工作台**：点击 Harness Web 侧栏底部的「安全保障」即可打开工作台，浏览可见的 Assessment、查看进度、Findings、Evidence 元数据与 Bundle，并在已注册仓库上经目录预检后新建 Assessment。工作台使用的权限与上述模型工具相同：读取、启动、恢复、取消 Assessment，以及请求和读取导出。风险决策、紧急授权、敏感 Evidence 披露和导出下载仍只能由部署方的认证解析器授予（ADR 0321）。
 
@@ -399,7 +399,7 @@ Natural-language requests are routed through the catalog-first workflow. Users c
 
 The eight tools are <code>security_repositories</code>, <code>security_catalog</code>, <code>security_assessment_start</code>, <code>security_assessment_status</code>, <code>security_assessment_findings</code>, <code>security_assessment_resume</code>, <code>security_assessment_cancel</code>, and <code>security_assessment_export</code>. The normal order is repositories, catalog, start, status, and findings. Mutations require the exact Service revision and a fresh idempotency key.
 
-In Harness Web, calls to these eight tools render as purpose-built Security cards instead of generic tool rows: one line of title and summary with state, verdict, and severity chips, expandable into details and the raw input and output. The cards read only the tool-call records already in the conversation; they call no Service and hold no authority (ADR 0322).
+In Harness Web, calls to these eight tools render as purpose-built Security cards instead of generic tool rows: one line of title and summary with state, verdict, and severity chips, expandable into details and the raw input and output. The cards read only the tool-call records already in the conversation; they call no Service and hold no authority (ADR 0322). A card that concerns an Assessment offers 「在工作台中打开」 (Open in Workbench) at the end of its row, which opens that Assessment in the Workbench in one step (ADR 0323).
 
 **Security Assurance Workbench**: select 「安全保障」 (Security Assurance) at the foot of the Harness Web sidebar to browse visible Assessments, follow their progress, and inspect Findings, Evidence metadata, and Bundles, or to start a new Assessment on a registered Repository after a Catalog preflight. The Workbench has exactly the reach of the model tools: read, start, resume, and cancel Assessments, and request and read exports. Risk Decisions, break-glass, sensitive Evidence disclosure, and export download remain grants only a deployment's authenticated resolver can make (ADR 0321).
 

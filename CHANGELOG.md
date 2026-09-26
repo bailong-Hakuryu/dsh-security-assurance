@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Open an Assessment in the Workbench straight from its tool card
+  (ADR 0323). Start, status, findings, resume, cancel, and export cards offer
+  「在工作台中打开」 once the Workbench is available; the card passes only a
+  canonical Assessment identity, and the Workbench opens it under a fresh
+  local context. Cards still call no Service and hold no context. The
+  Assessment detail now also leads back to the Assessment list, which it
+  previously could not.
 - Open the Security Assurance Workbench from the Harness Web sidebar
   (ADR 0321). The direct-use bundle now enables `workbench-local`, which
   issues expiring Workbench contexts only to a page Harness Web has already

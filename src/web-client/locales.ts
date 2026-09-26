@@ -58,6 +58,7 @@ export const zh = {
   'action.details': '详情',
   'action.raw': '原始数据',
   'action.hideRaw': '收起原始数据',
+  'action.openInWorkbench': '在工作台中打开',
   'raw.input': '输入',
   'raw.output': '输出',
 } as const
@@ -118,6 +119,7 @@ export const en: Record<SecurityCardMessageKey, string> = {
   'action.details': 'Details',
   'action.raw': 'Raw data',
   'action.hideRaw': 'Hide raw data',
+  'action.openInWorkbench': 'Open in Workbench',
   'raw.input': 'Input',
   'raw.output': 'Output',
 }

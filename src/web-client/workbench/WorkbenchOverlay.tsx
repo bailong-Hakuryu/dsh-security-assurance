@@ -288,6 +288,7 @@ export function WorkbenchOverlay({
           )}
           {state.kind === 'READY' && (
             <AssessmentDetail
+              backToAssessmentSelection={backToAssessmentSelection}
               snapshot={state.snapshot}
               findings={state.findings}
               assessmentCommand={state.assessmentCommand}
@@ -1118,6 +1119,7 @@ function BundleExportView({
 }
 
 function AssessmentDetail({
+  backToAssessmentSelection,
   snapshot,
   findings,
   assessmentCommand,
@@ -1135,6 +1137,7 @@ function AssessmentDetail({
   hideEvidenceDisclosure,
   t,
 }: {
+  readonly backToAssessmentSelection: () => void
   readonly snapshot: AssessmentSnapshotV1
   readonly findings: WorkbenchFindingsStateV1
   readonly assessmentCommand: WorkbenchAssessmentCommandStateV1
@@ -1158,6 +1161,11 @@ function AssessmentDetail({
   const actionAvailability = projectAssessmentActionAvailabilityV1(snapshot)
   return (
     <div className="dsh-security-assessment">
+      <div>
+        <button type="button" className="dsh-security-secondary-action" onClick={backToAssessmentSelection}>
+          {t('detail.backToSelection')}
+        </button>
+      </div>
       <div className="dsh-security-assessment__heading">
         <div>
           <span className="dsh-security-eyebrow">{t('label.assessment')}</span>
