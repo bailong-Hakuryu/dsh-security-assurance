@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
 import { access, copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -85,7 +85,10 @@ async function stageSuppliedArtifact(path, label) {
 }
 
 async function readPackedPackageManifest(artifactPath) {
-  const extracted = await execute('tar', ['-xOf', artifactPath, 'package/package.json'], {
+  // A bare file name keeps GNU tar (Git Bash) from reading a Windows drive
+  // letter such as `C:` as a remote `host:path` archive.
+  const extracted = await execute('tar', ['-xOf', basename(artifactPath), 'package/package.json'], {
+    cwd: dirname(artifactPath),
     encoding: 'utf8',
     windowsHide: true,
     maxBuffer: 1024 * 1024,

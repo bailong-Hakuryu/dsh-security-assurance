@@ -3,7 +3,7 @@ import { execFile, spawn } from 'node:child_process'
 import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
@@ -179,7 +179,10 @@ async function packSecurityArtifact() {
 }
 
 async function readPackedPackageManifest(artifactPath) {
-  const extracted = await execute('tar', ['-xOf', artifactPath, 'package/package.json'], {
+  // A bare file name keeps GNU tar (Git Bash) from reading a Windows drive
+  // letter such as `C:` as a remote `host:path` archive.
+  const extracted = await execute('tar', ['-xOf', basename(artifactPath), 'package/package.json'], {
+    cwd: dirname(artifactPath),
     encoding: 'utf8',
     windowsHide: true,
     maxBuffer: 1024 * 1024,
