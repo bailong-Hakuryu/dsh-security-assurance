@@ -1825,7 +1825,7 @@ if (importContext.reflect.get('securityAssurance') !== undefined
 const SecurityAssuranceService = (await import('dsh-security-assurance')).default
 const EngineeringControlPlane = (await import('dsh-engineering-control-plane')).default
 const engineeringTools = await import('dsh-engineering-control-plane/tools')
-const engineeringClient = await import('dsh-engineering-control-plane/client')
+const engineeringClient = await import('dsh-engineering-control-plane/projection')
 const engineeringInvariant = await import('dsh-engineering-control-plane/invariant')
 const { sealAssuranceSubmissionV1 } = await import('dsh-engineering-control-plane/assurance-provider')
 if (
