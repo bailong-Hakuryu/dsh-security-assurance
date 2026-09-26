@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Render the eight Security tools as native Harness Web cards (ADR 0320): a
+  one-line title and summary with state, verdict, and severity chips, which
+  expands into details and the raw input and output. The browser-only
+  `./client` bundle reproduces the Harness loader factory format, keeps React
+  external, and holds no authority. The packed profile smoke now asserts the
+  Web boot graph serves it, and the packed browser E2E no longer mistakes it
+  for the retired Workbench client.
 - Show `/security` text in Chinese and English, because Harness localizes only
   its built-in commands. Make `limit` optional on `security_repositories` and
   `security_assessment_findings` with a bounded default of 20, so a model that

@@ -141,6 +141,8 @@ dsh web
 /security 只检查 packages/api 和 packages/web 的包安装生命周期
 ~~~
 
+在 Harness Web 中，这八个工具的调用会显示为专用的安全卡片，而不是通用工具行：一行标题与摘要，配以状态、结论和严重程度标签，展开后可查看详情和原始输入输出。卡片只读取会话中已有的工具调用记录，不调用服务、不持有任何权限（ADR 0320）。
+
 ### npm audit 报告适配
 
 npm audit 由 Host、CI 或操作者在评估外部执行；插件不会在 PURE 分析边界内启动 npm、访问 Registry 或读取实时网络状态。先生成 UTF-8 报告，并确保它在评估启动前包含于所选 Subject：
@@ -227,6 +229,7 @@ gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.j
 | <code>dsh-security-assurance/control-plane-provider</code> | 可选 Control Plane 适配器 |
 | <code>dsh-security-assurance/invariant</code> | 启动就绪诊断 |
 | <code>dsh-security-assurance/workbench-remote</code> | 需要部署方认证解析器，默认禁用 |
+| <code>dsh-security-assurance/client</code> | Harness Web 安全工具卡片（仅浏览器端，无权限） |
 
 ### 常见排查
 
@@ -392,6 +395,8 @@ Natural-language requests are routed through the catalog-first workflow. Users c
 ~~~
 
 The eight tools are <code>security_repositories</code>, <code>security_catalog</code>, <code>security_assessment_start</code>, <code>security_assessment_status</code>, <code>security_assessment_findings</code>, <code>security_assessment_resume</code>, <code>security_assessment_cancel</code>, and <code>security_assessment_export</code>. The normal order is repositories, catalog, start, status, and findings. Mutations require the exact Service revision and a fresh idempotency key.
+
+In Harness Web, calls to these eight tools render as purpose-built Security cards instead of generic tool rows: one line of title and summary with state, verdict, and severity chips, expandable into details and the raw input and output. The cards read only the tool-call records already in the conversation; they call no Service and hold no authority (ADR 0320).
 
 ## npm audit report adapter
 

@@ -206,4 +206,26 @@ export default defineConfig([
     clean: false,
     plugins: [{ ...decorators, writeBundle: undefined }],
   },
+  {
+    // Harness Web client module (ADR 0320): the loader's lazy-CJS factory
+    // artifact. React and every @deepseek-ai module come from the page's
+    // module table, so the bundle carries only the tool-card code.
+    name: 'dsh-security-assurance/client',
+    entry: { client: 'lib/types/web-client/index.js' },
+    outDir: 'lib',
+    format: 'cjs',
+    platform: 'browser',
+    target: 'es2022',
+    dts: false,
+    clean: false,
+    deps: {
+      neverBundle: (id: string) => id === 'react' || id.startsWith('react/') || id.startsWith('@deepseek-ai/'),
+    },
+    outputOptions: {
+      entryFileNames: 'client.js',
+      banner: 'window.__ModuleLoader__.load({ id: "dsh-security-assurance", factory: (require) => {',
+      intro: 'var module = { exports: {} }; var exports = module.exports;',
+      footer: 'return module.exports; } });',
+    },
+  },
 ])

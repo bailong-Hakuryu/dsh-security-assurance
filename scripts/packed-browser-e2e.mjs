@@ -194,10 +194,13 @@ async function readPackedPackageManifest(artifactPath) {
   return manifest
 }
 
+// `./client` alone now ships the tool-card client (ADR 0320), which is not the
+// Workbench; only an explicit package-private marker selects the Workbench flow.
 function shipsWorkbenchClient(manifest) {
   return manifest.exports?.['./client'] !== undefined
     && Array.isArray(manifest.files)
     && manifest.files.includes('lib/client.js')
+    && manifest.securityAssuranceClient?.workbench === true
 }
 
 async function createReferenceBrowserPackage() {
