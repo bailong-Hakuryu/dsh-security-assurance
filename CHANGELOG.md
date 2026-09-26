@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+- Admit DeepSeek Harness `0.1.5-rc.3`, the current npm `latest`, into the
+  closed verified compatibility set and exact DSH peer disjunction. Before
+  this, a direct-use install on rc.3 failed the composition invariant closed
+  and a fresh `npm install dsh-security-assurance` failed with `ERESOLVE`.
+- Pin the Cordis vendor peers to the exact graph the verified Harness
+  versions ship: `@deepseek-ai/cordis` `4.0.1 || 4.0.2`,
+  `@deepseek-ai/cordis-plugin-loader` `1.0.2 || 1.0.3`, and the optional
+  `@deepseek-ai/cordis-plugin-include` `1.0.6 || 1.0.7`. The previous
+  floating ranges let npm select the 0.1.7-era Cordis 4.0.4 graph, whose
+  optional loader and include peers conflict with rc.3's pinned Cordis.
+- Read the packed manifest in the profile smoke and packed browser E2E
+  scripts through a bare archive name, so `release:check` also passes from
+  Git Bash on Windows, where GNU tar reads `C:\...` as a remote host.
 - Bind every current v0.1 Analyzer qualification to the only implemented
   `security/standard` Assessment Profile. Catalog and Start Preflight now
   report `security/deep` or Host-defined Profiles as unsupported, and a direct
