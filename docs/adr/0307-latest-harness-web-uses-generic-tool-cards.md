@@ -1,6 +1,6 @@
 # ADR 0307: Latest Harness Web Uses Generic Tool Cards
 
-Status: Accepted
+Status: Accepted; the Workbench client exclusion is superseded by ADR 0321
 
 ## Context
 

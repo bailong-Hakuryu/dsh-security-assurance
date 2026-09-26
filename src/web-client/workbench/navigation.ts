@@ -1,4 +1,4 @@
-import type { SecurityAssuranceWorkbenchStateV1 } from '../index.ts'
+import type { SecurityAssuranceWorkbenchStateV1 } from './controller.ts'
 
 /** Reviewed v0.1 Workbench views. Adding a value requires a Service-contract review. */
 export const WORKBENCH_INFORMATION_ARCHITECTURE_V1 = Object.freeze([

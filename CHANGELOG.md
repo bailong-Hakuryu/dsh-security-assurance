@@ -2,7 +2,23 @@
 
 ## [Unreleased]
 
-- Render the eight Security tools as native Harness Web cards (ADR 0320): a
+- Open the Security Assurance Workbench from the Harness Web sidebar
+  (ADR 0321). The direct-use bundle now enables `workbench-local`, which
+  issues expiring Workbench contexts only to a page Harness Web has already
+  authenticated, with exactly the model tools' permissions; Risk Decisions,
+  break-glass, Evidence disclosure, and export download stay grants only a
+  deployment resolver can make. The `./client` bundle carries the Workbench
+  beside the tool cards, requests only the page's platform modules, and
+  bundles its strict Remote codecs (about 630 kB unminified). The profile
+  smoke now proves over the real `/api` transport that an unauthenticated
+  caller receives no context. A composition that enables `workbench-remote`
+  must disable `workbench-local`.
+- Run the Workbench client tests again, against the current API Gateway
+  client. Because Harness no longer decodes Remote results in the browser,
+  the Controller itself must now reject schema-invalid Evidence views.
+- Renumber the tool-card ADR to 0322, because 0320 already names the npm
+  publish-surface ADR.
+- Render the eight Security tools as native Harness Web cards (ADR 0322): a
   one-line title and summary with state, verdict, and severity chips, which
   expands into details and the raw input and output. The browser-only
   `./client` bundle reproduces the Harness loader factory format, keeps React

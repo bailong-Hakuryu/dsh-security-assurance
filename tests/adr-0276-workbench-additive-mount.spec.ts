@@ -1,12 +1,12 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { inject as workbenchClientInject } from '../src/client/index.ts'
-import { WorkbenchPresentation } from '../src/client/workbench/presentation.ts'
+import { inject as workbenchClientInject } from '../src/web-client/workbench/controller.ts'
+import { WorkbenchPresentation } from '../src/web-client/workbench/presentation.ts'
 
 describe('ADR 0276 additive Workbench mount', () => {
   it('contributes only the additive launcher and overlay Host slots', async () => {
-    const source = await readFile(join(import.meta.dirname, '..', 'src', 'client', 'index.ts'), 'utf8')
+    const source = await readFile(join(import.meta.dirname, '..', 'src', 'web-client', 'workbench', 'controller.ts'), 'utf8')
     expect(workbenchClientInject).toEqual(['remote', 'slots', 'locale'])
     expect(source).toContain("ctx.slots.inject('sidebar.footer.action'")
     expect(source).toContain("ctx.slots.inject('shell.overlay'")

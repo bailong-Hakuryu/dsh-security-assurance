@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, realpath, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -7,6 +7,7 @@ import { Context } from '@deepseek-ai/cordis'
 import TypertGatewayService from '@deepseek-ai/dsh-api-gateway'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import { afterEach, describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
 import {
   RISK_DECISION_WINDOW_CONTROL_ID,
   type AssessmentId,
@@ -80,6 +81,19 @@ describe('ADR 0321 local Workbench authority', () => {
     ]) {
       expect(LOCAL_WORKBENCH_PERMISSIONS).not.toContain(denied)
     }
+  })
+
+  it("ships the local authority as the direct-use bundle's only enabled Workbench Remote", async () => {
+    const patch = parse(
+      await readFile(join(import.meta.dirname, '..', 'cordis.patch.yml'), 'utf8'),
+      { logLevel: 'silent' },
+    ) as readonly { readonly insert: readonly { readonly name: string; readonly disabled?: boolean }[] }[]
+    const workbenchRows = patch.flatMap(layer => layer.insert)
+      .filter(row => row.name.startsWith('dsh-security-assurance/workbench-'))
+    expect(workbenchRows.map(row => [row.name, row.disabled === true])).toEqual([
+      ['dsh-security-assurance/workbench-remote', true],
+      ['dsh-security-assurance/workbench-local', false],
+    ])
   })
 
   it('forgets unknown, evicted, and revoked contexts', () => {

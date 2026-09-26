@@ -1,4 +1,4 @@
-# ADR 0320: Native Tool Cards Target the Harness Client Module System
+# ADR 0322: Native Tool Cards Target the Harness Client Module System
 
 Status: Accepted
 
@@ -28,9 +28,9 @@ Harness publishes no bundling preset for packages outside its repository.
 
 The package ships a browser-only `./client` bundle that registers one
 Security card per model tool in `tool.call.toolview`. Its tsdown entry
-reproduces the loader factory artifact directly and keeps React and every
-`@deepseek-ai/*` specifier external, so the package adds no runtime
-dependency and ships no copy of React.
+reproduces the loader factory artifact directly and keeps exactly the page's
+platform modules external, so the package adds no runtime dependency and
+ships no copy of React.
 
 Each card is a pure function of the tool-call block: a one-line title and
 summary with state, verdict, and severity chips, expandable into detail fields
@@ -40,9 +40,10 @@ React text nodes. Styles use only Harness theme tokens present in every
 supported version and honor reduced motion. Strings ship in Chinese and English
 (ADR 0294); canonical identifiers are never translated.
 
-The client is not the Workbench. Release tooling selects the Workbench browser
-flow only from an explicit package-private marker, so shipping `./client` alone
-never claims `WORKBENCH_CLIENT_SHIPPED`.
+The cards do not depend on the Workbench that ADR 0321 adds to the same
+bundle. Release tooling selects the Workbench browser flow only from an
+explicit package-private marker, so shipping `./client` never claims
+`WORKBENCH_CLIENT_SHIPPED` by itself.
 
 ## Consequences
 

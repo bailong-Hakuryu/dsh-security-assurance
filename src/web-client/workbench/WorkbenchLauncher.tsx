@@ -1,21 +1,21 @@
 import { IconDataOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MouseEvent } from 'react'
-import type { WORKBENCH_LOCALE_NAMESPACE } from './locales.ts'
+import type { PropsWorkbenchLocale, SidebarFooterActionOwnerProps } from './slot-types.ts'
 
 export interface WorkbenchLauncherInjected {
-  readonly showWorkbench: (returnFocus: HTMLElement) => void
+  /** Show the overlay; a closed Workbench then opens under the Host's local authority. */
+  readonly showWorkbench: (returnFocus: HTMLElement) => Promise<void>
 }
 
 export type WorkbenchLauncherProps =
-  & PropsRuntime<'sidebar.footer.action'>
-  & PropsLocale<typeof WORKBENCH_LOCALE_NAMESPACE>
+  & SidebarFooterActionOwnerProps
+  & PropsWorkbenchLocale
   & WorkbenchLauncherInjected
 
 /** Additive sidebar action; it opens the overlay but acquires no authority. */
 export function WorkbenchLauncher({ wide, t, showWorkbench }: WorkbenchLauncherProps) {
   const onClick = (event: MouseEvent<HTMLButtonElement>): void => {
-    showWorkbench(event.currentTarget)
+    void showWorkbench(event.currentTarget)
   }
   return (
     <button

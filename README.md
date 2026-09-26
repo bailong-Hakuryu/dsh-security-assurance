@@ -141,7 +141,9 @@ dsh web
 /security 只检查 packages/api 和 packages/web 的包安装生命周期
 ~~~
 
-在 Harness Web 中，这八个工具的调用会显示为专用的安全卡片，而不是通用工具行：一行标题与摘要，配以状态、结论和严重程度标签，展开后可查看详情和原始输入输出。卡片只读取会话中已有的工具调用记录，不调用服务、不持有任何权限（ADR 0320）。
+在 Harness Web 中，这八个工具的调用会显示为专用的安全卡片，而不是通用工具行：一行标题与摘要，配以状态、结论和严重程度标签，展开后可查看详情和原始输入输出。卡片只读取会话中已有的工具调用记录，不调用服务、不持有任何权限（ADR 0322）。
+
+**安全保障工作台**：点击 Harness Web 侧栏底部的「安全保障」即可打开工作台，浏览可见的 Assessment、查看进度、Findings、Evidence 元数据与 Bundle，并在已注册仓库上经目录预检后新建 Assessment。工作台使用的权限与上述模型工具相同：读取、启动、恢复、取消 Assessment，以及请求和读取导出。风险决策、紧急授权、敏感 Evidence 披露和导出下载仍只能由部署方的认证解析器授予（ADR 0321）。
 
 ### npm audit 报告适配
 
@@ -228,8 +230,9 @@ gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.j
 | <code>dsh-security-assurance/host-repository-provider</code> | Host Repository 注册适配器 |
 | <code>dsh-security-assurance/control-plane-provider</code> | 可选 Control Plane 适配器 |
 | <code>dsh-security-assurance/invariant</code> | 启动就绪诊断 |
-| <code>dsh-security-assurance/workbench-remote</code> | 需要部署方认证解析器，默认禁用 |
-| <code>dsh-security-assurance/client</code> | Harness Web 安全工具卡片（仅浏览器端，无权限） |
+| <code>dsh-security-assurance/workbench-local</code> | 为已认证的 Harness Web 页面签发与模型工具同等权限的工作台上下文，默认启用 |
+| <code>dsh-security-assurance/workbench-remote</code> | 需要部署方认证解析器，默认禁用；启用时须禁用 workbench-local |
+| <code>dsh-security-assurance/client</code> | Harness Web 安全工具卡片与安全保障工作台（仅浏览器端） |
 
 ### 常见排查
 
@@ -265,7 +268,7 @@ pnpm release:qualify -- --input .\release-qualification-input.json --output .\re
 pnpm release:handoff -- --input .\release-handoff-input.json --output .\release-promotion-handoff.json
 ~~~
 
-第一条命令只记录已复核的文件事实，不制造测试或安全证明；packed smoke 可用 <code>DSH_RELEASE_PROOF_OUTPUT</code> 输出绑定同一 tarball 的严格证明记录，第二条命令验证并按规范顺序收集这些记录，逐字节摘要后生成 proof index；第三条命令重新读取 index、binding 与每份 proof record，把状态原样合并到 <code>release:qualify</code> 的严格输入；第四条命令再次读取绑定的真实文件，并且只在 Release Constitution 为 <code>PROMOTE</code> 且最终 Manifest 为 <code>VERIFIED</code> 时返回 0，原子生成 Manifest、公开 Scorecard 和资格结论三件套；第五条命令绑定这三件套与原 RC tarball，逐项比较拟发布 stable tarball，只允许同基线版本替换及 README/CHANGELOG 发布元数据变化，并输出明确写有 <code>authorization: NOT_GRANTED</code> 的交接收据。当前候选依照 ADR 0307 不发布旧 Workbench client，因此真实浏览器记录会诚实标记 <code>WORKBENCH</code> 为 <code>INCONCLUSIVE</code>，不会把通用 Web 外壳冒充成 Workbench。有效但阻断/不完整的证据返回 2 并保留可审计产物；字节摘要、Git HEAD、已跟踪源码、资格组合或包行为不一致时返回 1 且不生成对应产物。所有 CLI 都不会自动打 tag、签名、上传或发布包。完整输入契约见 [v0.1 发布清单](docs/release-v0.1.md)。
+第一条命令只记录已复核的文件事实，不制造测试或安全证明；packed smoke 可用 <code>DSH_RELEASE_PROOF_OUTPUT</code> 输出绑定同一 tarball 的严格证明记录，第二条命令验证并按规范顺序收集这些记录，逐字节摘要后生成 proof index；第三条命令重新读取 index、binding 与每份 proof record，把状态原样合并到 <code>release:qualify</code> 的严格输入；第四条命令再次读取绑定的真实文件，并且只在 Release Constitution 为 <code>PROMOTE</code> 且最终 Manifest 为 <code>VERIFIED</code> 时返回 0，原子生成 Manifest、公开 Scorecard 和资格结论三件套；第五条命令绑定这三件套与原 RC tarball，逐项比较拟发布 stable tarball，只允许同基线版本替换及 README/CHANGELOG 发布元数据变化，并输出明确写有 <code>authorization: NOT_GRANTED</code> 的交接收据。发布级真实浏览器 E2E 仍驱动部署方解析器的 Reference Host，尚未覆盖 ADR 0321 的本地工作台，因此其记录会诚实标记 <code>WORKBENCH</code> 为 <code>INCONCLUSIVE</code>，不会把通用 Web 外壳冒充成 Workbench。有效但阻断/不完整的证据返回 2 并保留可审计产物；字节摘要、Git HEAD、已跟踪源码、资格组合或包行为不一致时返回 1 且不生成对应产物。所有 CLI 都不会自动打 tag、签名、上传或发布包。完整输入契约见 [v0.1 发布清单](docs/release-v0.1.md)。
 
 手动 **Release Candidate Evidence** workflow 会要求一个完整的 40 位 Control Plane commit SHA，只打包并绑定一次候选，然后让 Linux、macOS、Windows 下载同一组 tarball 生成三份平台证明；最终收集任务从候选包安装公开 CLI，生成可下载的 <code>release-evidence-index</code>。该 workflow 不执行资格提升、打 tag、创建 Release 或发布 npm。
 
@@ -396,7 +399,9 @@ Natural-language requests are routed through the catalog-first workflow. Users c
 
 The eight tools are <code>security_repositories</code>, <code>security_catalog</code>, <code>security_assessment_start</code>, <code>security_assessment_status</code>, <code>security_assessment_findings</code>, <code>security_assessment_resume</code>, <code>security_assessment_cancel</code>, and <code>security_assessment_export</code>. The normal order is repositories, catalog, start, status, and findings. Mutations require the exact Service revision and a fresh idempotency key.
 
-In Harness Web, calls to these eight tools render as purpose-built Security cards instead of generic tool rows: one line of title and summary with state, verdict, and severity chips, expandable into details and the raw input and output. The cards read only the tool-call records already in the conversation; they call no Service and hold no authority (ADR 0320).
+In Harness Web, calls to these eight tools render as purpose-built Security cards instead of generic tool rows: one line of title and summary with state, verdict, and severity chips, expandable into details and the raw input and output. The cards read only the tool-call records already in the conversation; they call no Service and hold no authority (ADR 0322).
+
+**Security Assurance Workbench**: select 「安全保障」 (Security Assurance) at the foot of the Harness Web sidebar to browse visible Assessments, follow their progress, and inspect Findings, Evidence metadata, and Bundles, or to start a new Assessment on a registered Repository after a Catalog preflight. The Workbench has exactly the reach of the model tools: read, start, resume, and cancel Assessments, and request and read exports. Risk Decisions, break-glass, sensitive Evidence disclosure, and export download remain grants only a deployment's authenticated resolver can make (ADR 0321).
 
 ## npm audit report adapter
 
@@ -485,9 +490,10 @@ The fifth binds those three files and the retained RC tarball, compares every
 entry in the proposed stable tarball, permits only the same-base stable version
 transition plus README/CHANGELOG release metadata, and emits a receipt whose
 `authorization` is explicitly `NOT_GRANTED`.
-Because ADR 0307 excludes the retired Workbench client from the current
-candidate, its real-browser record honestly reports `WORKBENCH` as
-`INCONCLUSIVE`; a generic Web shell is never relabelled as Workbench proof.
+The release-grade real-browser E2E still drives the deployment-resolver
+Reference Host rather than the ADR 0321 local Workbench, so its record
+honestly reports `WORKBENCH` as `INCONCLUSIVE`; a generic Web shell is never
+relabelled as Workbench proof.
 Valid blocked or incomplete evidence exits `2` with auditable output; byte,
 Git `HEAD`, tracked-source, portfolio, or package-behavior mismatches exit `1`
 without output. None of the CLIs or proof emitters tag, sign, upload, or publish

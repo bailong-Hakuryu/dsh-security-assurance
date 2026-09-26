@@ -5,25 +5,26 @@ import {
   decodeWorkbenchRouteStateV1,
   projectWorkbenchRouteStateV1,
   type SecurityAssuranceWorkbenchStateV1,
-} from '../src/client/index.ts'
+} from '../src/web-client/workbench/controller.ts'
 
 const clientFiles = [
-  'index.ts',
-  'workbench/actions.ts',
-  'workbench/finding-triage.ts',
-  'workbench/locales.ts',
-  'workbench/navigation.ts',
-  'workbench/presentation.ts',
-  'workbench/progress.ts',
-  'workbench/styles.ts',
-  'workbench/WorkbenchLauncher.tsx',
-  'workbench/WorkbenchOverlay.tsx',
+  'controller.ts',
+  'actions.ts',
+  'finding-triage.ts',
+  'locales.ts',
+  'navigation.ts',
+  'presentation.ts',
+  'progress.ts',
+  'styles.ts',
+  'WorkbenchLauncher.tsx',
+  'WorkbenchOverlay.tsx',
+  'slot-types.ts',
 ] as const
 
 describe('ADR 0293 browser persistence excludes sensitive Assessment payloads', () => {
   it('uses no browser persistence, navigation state, Service Worker cache, or payload logging seam', async () => {
     const sources = await Promise.all(clientFiles.map(file => (
-      readFile(join(import.meta.dirname, '..', 'src', 'client', file), 'utf8')
+      readFile(join(import.meta.dirname, '..', 'src', 'web-client', 'workbench', file), 'utf8')
     )))
     const source = sources.join('\n')
 

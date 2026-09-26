@@ -29,7 +29,7 @@ try {
       '@deepseek-ai/dsh-typert-protocol': ['packages/typert-protocol/src/index.ts'],
     },
   }
-  packageTsconfig.exclude = ['src/client']
+  packageTsconfig.exclude = ['src/web-client']
   await writeFile(
     join(syntheticPackageRoot, 'tsconfig.json'),
     `${JSON.stringify(packageTsconfig, null, 2)}\n`,
@@ -85,6 +85,7 @@ try {
   if (host === undefined || host.remote === undefined) {
     throw new Error('Typert generation did not produce the Security Assurance Host and Remote artifacts')
   }
+  await mkdir(join(packageRoot, 'lib'), { recursive: true })
   await Promise.all([
     writeFile(join(packageRoot, 'lib', 'typert.host.js'), host.js, 'utf8'),
     writeFile(join(packageRoot, 'lib', 'typert.host.d.ts'), host.dts, 'utf8'),

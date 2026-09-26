@@ -5,21 +5,21 @@
     "declaration": false,
     "declarationMap": false,
     "noEmit": true,
-    "rootDir": "."
+    "rootDir": ".",
+    // The generated Remote declarations name the package's own subpaths; the
+    // build config maps them to source through outDir, this config cannot.
+    "paths": {
+      "dsh-security-assurance/contracts": ["./src/contracts.ts"],
+      "dsh-security-assurance/workbench-local": ["./src/workbench-local.ts"],
+      "dsh-security-assurance/workbench-remote": ["./src/workbench-remote.ts"],
+      // Tests run the Harness gateway client from source; check against its declarations.
+      "@deepseek-ai/dsh-api-gateway/src/client/index.ts": [
+        "./node_modules/@deepseek-ai/dsh-api-gateway/lib/types/client/index.d.ts"
+      ]
+    }
   },
   "include": ["src", "tests", "vitest.config.ts", "tsdown.config.ts"],
   "exclude": [
-    "src/client",
-    "tests/adr-0275-workbench-service-client.spec.ts",
-    "tests/adr-0276-workbench-additive-mount.spec.ts",
-    "tests/adr-0277-workbench-information-architecture.spec.ts",
-    "tests/adr-0278-workbench-low-sensitivity-route.spec.ts",
-    "tests/adr-0281-assessment-progress-view.spec.ts",
-    "tests/adr-0285-service-projected-available-actions.spec.ts",
-    "tests/adr-0287-finding-triage-dimensions.spec.ts",
-    "tests/adr-0293-browser-sensitive-persistence.spec.ts",
-    "tests/adr-0294-host-web-security-accessibility.spec.ts",
-    "tests/workbench-client.spec.ts",
     "tests/workbench-ui.client.spec.tsx"
   ]
 }

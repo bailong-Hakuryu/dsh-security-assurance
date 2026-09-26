@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   inject as workbenchClientInject,
   SecurityAssuranceWorkbenchController,
-} from '../src/client/index.ts'
+} from '../src/web-client/workbench/controller.ts'
 import SecurityAssuranceWorkbenchRemote from '../src/workbench-remote.ts'
 
 describe('ADR 0275 Workbench Service Client boundary', () => {
@@ -13,12 +13,14 @@ describe('ADR 0275 Workbench Service Client boundary', () => {
     expect(SecurityAssuranceWorkbenchController.inject).toEqual([
       'remote',
       'remote.securityAssuranceWorkbench',
+      // ADR 0321: the Host's local authority issues contexts through its own namespace.
+      'remote.securityAssuranceWorkbenchSession',
     ])
     expect(SecurityAssuranceWorkbenchRemote.inject).toEqual(['securityAssurance', 'typert'])
   })
 
   it('keeps authority, persistence, and canonical artifact access out of the browser Client', async () => {
-    const clientSource = await readFile(join(import.meta.dirname, '..', 'src', 'client', 'index.ts'), 'utf8')
+    const clientSource = await readFile(join(import.meta.dirname, '..', 'src', 'web-client', 'workbench', 'controller.ts'), 'utf8')
     expect(clientSource).toContain('this.ownerCtx.remote.securityAssuranceWorkbench')
     expect(clientSource).not.toMatch(/from ['"]node:(?:fs|path|sqlite|child_process)/u)
     expect(clientSource).not.toMatch(/internal\/(?:persistence|sealed-artifacts|authority)/u)

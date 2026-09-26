@@ -41,3 +41,9 @@
     - id: dsh-security-assurance-workbench-remote
       name: dsh-security-assurance/workbench-remote
       disabled: true
+    # The local operator's Workbench (ADR 0321): contexts are issued only to a
+    # browser Harness Web has already authenticated, with exactly the reach of
+    # the model tools. It provides the same Remote as workbench-remote, so a
+    # deployment that enables workbench-remote disables this row.
+    - id: dsh-security-assurance-workbench-local
+      name: dsh-security-assurance/workbench-local

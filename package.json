@@ -169,7 +169,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsdown && node scripts/generate-typert.mjs",
+    "build": "node scripts/generate-typert.mjs && tsc -p tsconfig.json && tsdown",
     "lint": "oxlint src tests scripts/latest-harness-profile-smoke.mjs scripts/packed-browser-e2e.mjs scripts/harness-compat-matrix.mjs scripts/support/remove-temporary-root.mjs --deny-warnings",
     "prepack": "pnpm build",
     "test": "vitest run",
@@ -238,8 +238,12 @@
     "@deepseek-ai/dsh-typert-protocol": "link:../deepseek-harness-latest/packages/typert/protocol",
     "@deepseek-ai/dsh-typert-registry": "link:../deepseek-harness-latest/packages/typert/registry",
     "@types/node": "^22.20.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
     "dsh-engineering-control-plane": "link:../DSH Engineering Control Plane",
     "oxlint": "link:../deepseek-harness-latest/node_modules/oxlint",
+    "react": "~18.3.1",
+    "react-dom": "~18.3.1",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"

@@ -194,8 +194,9 @@ async function readPackedPackageManifest(artifactPath) {
   return manifest
 }
 
-// `./client` alone now ships the tool-card client (ADR 0320), which is not the
-// Workbench; only an explicit package-private marker selects the Workbench flow.
+// `./client` ships the tool cards and the local Workbench (ADRs 0321, 0322).
+// The Workbench flow below still drives the deployment-resolver Reference
+// Host, so only an explicit package-private marker selects it.
 function shipsWorkbenchClient(manifest) {
   return manifest.exports?.['./client'] !== undefined
     && Array.isArray(manifest.files)

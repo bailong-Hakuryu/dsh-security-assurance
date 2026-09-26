@@ -1,10 +1,4 @@
 import { IconCloseOutline16, IconDataOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type {
-  HostObservable,
-  PropsHooks,
-  PropsLocale,
-  PropsRuntime,
-} from '@deepseek-ai/dsh-client-ui-slots'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, MouseEvent, RefObject } from 'react'
 import type {
@@ -17,7 +11,7 @@ import type {
   WorkbenchRiskDecisionSubmissionStateV1,
   WorkbenchRiskDecisionSubmissionV1,
   WorkbenchStartSubmissionStateV1,
-} from '../index.ts'
+} from './controller.ts'
 import type {
   WorkbenchEvidenceDisclosureViewV1,
   WorkbenchEvidenceMetadataViewV1,
@@ -36,7 +30,7 @@ import type {
   StartAssessmentSelectionV1,
   StartPreflightV1,
 } from '../../contracts.ts'
-import type { WORKBENCH_LOCALE_NAMESPACE } from './locales.ts'
+import type { HostObservable, PropsHooks, PropsWorkbenchLocale } from './slot-types.ts'
 import {
   projectAssessmentActionAvailabilityV1,
   selectAssessmentAvailableActionV1,
@@ -88,8 +82,7 @@ export interface WorkbenchOverlayInjected {
 }
 
 export type WorkbenchOverlayProps =
-  & PropsRuntime<'shell.overlay'>
-  & PropsLocale<typeof WORKBENCH_LOCALE_NAMESPACE>
+  & PropsWorkbenchLocale
   & PropsHooks<WorkbenchOverlaySources>
   & Omit<WorkbenchOverlayInjected, 'hooks'>
 

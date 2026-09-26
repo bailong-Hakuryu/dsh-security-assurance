@@ -22,7 +22,7 @@ afterEach(async () => {
 
 describe('ADR 0292 reconnect recovery by ID, revision, and idempotency', () => {
   it('reopens an Assessment by opaque ID and fetches current Service truth without starting work', async () => {
-    const source = await readFile(join(import.meta.dirname, '..', 'src', 'client', 'index.ts'), 'utf8')
+    const source = await readFile(join(import.meta.dirname, '..', 'src', 'web-client', 'workbench', 'controller.ts'), 'utf8')
     const start = source.indexOf('  async openAssessment(\n')
     const end = source.indexOf('  /** Resume exactly', start)
     expect(start).toBeGreaterThan(-1)

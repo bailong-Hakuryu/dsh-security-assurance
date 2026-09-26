@@ -1,5 +1,5 @@
 /**
- * Pure view models for the Security tool cards (ADR 0320). A model is a
+ * Pure view models for the Security tool cards (ADR 0322). A model is a
  * function of one Harness tool-call block only — no Service access, clock, or
  * storage — so live streaming and session replay render the same card. Every
  * field is read defensively: a truncated stream, an error result, or a future

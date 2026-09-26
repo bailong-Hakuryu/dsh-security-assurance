@@ -1,5 +1,5 @@
 /**
- * Security tool card view (ADR 0320). It mirrors the Harness tool row — one
+ * Security tool card view (ADR 0322). It mirrors the Harness tool row — one
  * 24px line of icon, title, and summary that expands into details — and adds
  * state chips whose meaning never relies on color alone. All text renders
  * through React text nodes; nothing is injected as HTML.

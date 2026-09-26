@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { access, copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -111,7 +112,7 @@ async function runHarness(args) {
 }
 
 /**
- * ADR 0320 browser acceptance: the Web boot graph must list the package's
+ * ADR 0322 browser acceptance: the Web boot graph must list the package's
  * tool-card client, and the served file must be its loader-wrapped factory.
  */
 async function assertToolCardClientServed(html, pageUrl, cookie, packageName) {
@@ -127,6 +128,51 @@ async function assertToolCardClientServed(html, pageUrl, cookie, packageName) {
   const source = await served.text()
   const factoryHead = /window\.__ModuleLoader__\.load\(\{\s*id: "([^"]+)"/u.exec(source)
   assert.equal(factoryHead?.[1], packageName, `${packageName} client bundle is not a loader factory artifact`)
+}
+
+/**
+ * ADR 0321 acceptance through the real Harness `/api` transport: the local
+ * Workbench authority issues a context only to an authenticated page, and the
+ * context reads the registered Repository with exactly the model tools' reach.
+ */
+async function assertLocalWorkbenchAuthority(pageUrl, cookie) {
+  const call = async (endpoint, args, headers) => {
+    const response = await fetch(new URL(`/api/${endpoint}`, pageUrl), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: pageUrl.origin, ...headers },
+      body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method: endpoint, payload: { args } }),
+      signal: AbortSignal.timeout(15_000),
+    })
+    return { status: response.status, envelope: response.ok ? await response.json() : undefined }
+  }
+  const open = 'securityAssuranceWorkbenchSession/openLocalContext'
+  const anonymous = await call(open, { request: { schemaVersion: 1 } }, {})
+  assert.equal(anonymous.envelope, undefined, `an unauthenticated caller reached ${open} (HTTP ${anonymous.status})`)
+  assert.notEqual(cookie, undefined, 'Harness Web issued no login cookie to authenticate the local Workbench')
+
+  const opened = await call(open, { request: { schemaVersion: 1 } }, { cookie })
+  assert.equal(opened.envelope?.result?.ok, true, `${open} failed: ${JSON.stringify(opened.envelope ?? opened.status)}`)
+  const context = opened.envelope.result.value
+  assert.deepEqual(context.permissions, [
+    'health:read',
+    'repository:read',
+    'assessment:read',
+    'assessment:start',
+    'assessment:resume',
+    'assessment:cancel',
+    'export:request',
+    'export:read',
+  ])
+  const listed = await call('securityAssuranceWorkbench/listRepositories', {
+    securityAssuranceWorkbenchContextId: context.contextId,
+    request: { schemaVersion: 1, limit: 10 },
+  }, { cookie })
+  const repositories = listed.envelope?.result?.value?.value?.repositories
+  assert.equal(
+    Array.isArray(repositories) && repositories.some(repository => repository.displayName === 'Current workspace'),
+    true,
+    `the local Workbench context could not read the current workspace: ${JSON.stringify(listed.envelope ?? listed.status)}`,
+  )
 }
 
 async function bootAndProbeWeb() {
@@ -183,6 +229,7 @@ async function bootAndProbeWeb() {
           const body = await response.text()
           assert.match(body, /<html|<!doctype html/iu)
           await assertToolCardClientServed(body, url, cookie, 'dsh-security-assurance')
+          await assertLocalWorkbenchAuthority(url, cookie)
           const database = new DatabaseSync(
             join(dshHome, 'security-assurance', 'security-assurance.sqlite'),
             { readOnly: true },
@@ -293,6 +340,10 @@ try {
   assert.match(dump.stdout, /name: dsh-security-assurance\/tools/u)
   assert.match(dump.stdout, /bindingId: current-workspace/u)
   assert.match(dump.stdout, /name: dsh-security-assurance\/workbench-remote[\s\S]*disabled: true/u)
+  const localRow = /name: dsh-security-assurance\/workbench-local\r?\n(?<rest>(?:[ \t]+(?![ \t]|- ).*\r?\n?)*)/u
+    .exec(dump.stdout)
+  assert.notEqual(localRow, null, 'the direct-use bundle omitted the local Workbench authority')
+  assert.doesNotMatch(localRow?.groups?.rest ?? '', /disabled: true/u)
 
   await bootAndProbeWeb()
   if (proofOutputPath !== undefined) {

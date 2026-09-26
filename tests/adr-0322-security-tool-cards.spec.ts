@@ -54,7 +54,7 @@ function chipTexts(model: ToolCardModel): string[] {
   return model.chips.map(chip => `${text(chip.label)}:${chip.tone}`)
 }
 
-describe('ADR 0320 Security tool card view models', () => {
+describe('ADR 0322 Security tool card view models', () => {
   it('covers every Security model tool', () => {
     expect([...SECURITY_TOOL_CARD_NAMES].sort()).toEqual([
       'security_assessment_cancel',

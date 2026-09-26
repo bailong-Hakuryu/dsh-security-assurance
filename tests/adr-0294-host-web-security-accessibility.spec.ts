@@ -1,19 +1,20 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { en, zh } from '../src/client/workbench/locales.ts'
+import { en, zh } from '../src/web-client/workbench/locales.ts'
 
 const clientFiles = [
-  'index.ts',
-  'workbench/actions.ts',
-  'workbench/finding-triage.ts',
-  'workbench/locales.ts',
-  'workbench/navigation.ts',
-  'workbench/presentation.ts',
-  'workbench/progress.ts',
-  'workbench/styles.ts',
-  'workbench/WorkbenchLauncher.tsx',
-  'workbench/WorkbenchOverlay.tsx',
+  'controller.ts',
+  'actions.ts',
+  'finding-triage.ts',
+  'locales.ts',
+  'navigation.ts',
+  'presentation.ts',
+  'progress.ts',
+  'styles.ts',
+  'WorkbenchLauncher.tsx',
+  'WorkbenchOverlay.tsx',
+  'slot-types.ts',
 ] as const
 
 describe('ADR 0294 Host web security, accessibility, and bilingual UI', () => {
@@ -26,7 +27,7 @@ describe('ADR 0294 Host web security, accessibility, and bilingual UI', () => {
 
   it('adds no independent remote channel or asset origin and preserves semantic focus controls', async () => {
     const sources = await Promise.all(clientFiles.map(file => (
-      readFile(join(import.meta.dirname, '..', 'src', 'client', file), 'utf8')
+      readFile(join(import.meta.dirname, '..', 'src', 'web-client', 'workbench', file), 'utf8')
     )))
     const source = sources.join('\n')
     const styles = sources[7]

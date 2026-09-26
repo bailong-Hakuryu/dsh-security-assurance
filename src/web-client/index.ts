@@ -1,12 +1,14 @@
 /**
  * Browser half of Security Assurance for the Harness Web client module system
- * (ADR 0320). It only replaces the generic rows of the eight Security model
- * tools with purpose-built cards; it holds no authority, calls no Service,
- * and reads nothing beyond the tool-call blocks the conversation already has.
+ * (ADR 0322). The tool cards replace the generic rows of the eight Security
+ * model tools; they hold no authority, call no Service, and read nothing
+ * beyond the tool-call blocks the conversation already has. The Workbench
+ * starts beside them once the Remote transport exists (ADR 0321).
  */
 import { en, zh } from './locales.ts'
 import { SECURITY_TOOL_CARD_NAMES } from './model.ts'
 import { SECURITY_TOOL_CARD_CSS, SecurityToolCard } from './card.ts'
+import * as workbench from './workbench/controller.ts'
 
 /** Locale namespace bound to every Security card's `t`. */
 export const SECURITY_TOOL_CARD_NAMESPACE = 'dsh-security-assurance.tool-cards'
@@ -19,6 +21,7 @@ interface StyleHost {
 /** Client services the cards need; everything else stays with the Host. */
 interface ToolCardClientContext {
   effect(execute: () => () => void, label?: string): unknown
+  plugin(plugin: { readonly name: string; readonly inject: readonly string[]; readonly apply: unknown }): unknown
   readonly slots: {
     inject(name: string, register: () => () => void): unknown
     register(
@@ -57,4 +60,5 @@ export function apply(ctx: ToolCardClientContext): void {
       locale: SECURITY_TOOL_CARD_NAMESPACE,
     }, SecurityToolCard))
   }
+  ctx.plugin({ name: 'dsh-security-assurance/workbench', inject: workbench.inject, apply: workbench.apply })
 }

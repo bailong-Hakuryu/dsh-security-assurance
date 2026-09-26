@@ -3,6 +3,22 @@ import { typertPlugin } from '@deepseek-ai/dsh-typert-generator/tsdown'
 
 const decorators = typertPlugin({ faces: ['host'] })
 
+/**
+ * Modules every supported Harness Web page seeds into its client module
+ * table (`PLATFORM_MODULES` of `0.1.2-alpha.1` through `0.1.5-rc.3`). The
+ * client bundle requires only these; everything else it uses is bundled.
+ */
+const HARNESS_PLATFORM_MODULES = new Set([
+  'react',
+  'react/jsx-runtime',
+  'react-dom',
+  'react-dom/client',
+  '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
+  '@deepseek-ai/dsh-client-ui-slots',
+  '@deepseek-ai/dsh-client-ui-primitives',
+])
+
 /** Bundle implemented public entries from declaration-build JavaScript. */
 export default defineConfig([
   {
@@ -218,9 +234,9 @@ export default defineConfig([
     plugins: [{ ...decorators, writeBundle: undefined }],
   },
   {
-    // Harness Web client module (ADR 0320): the loader's lazy-CJS factory
-    // artifact. React and every @deepseek-ai module come from the page's
-    // module table, so the bundle carries only the tool-card code.
+    // Harness Web client module (ADRs 0321, 0322): the loader's lazy-CJS
+    // factory artifact. Platform modules come from the page's module table;
+    // the tool cards, the Workbench, and its strict Remote codecs are bundled.
     name: 'dsh-security-assurance/client',
     entry: { client: 'lib/types/web-client/index.js' },
     outDir: 'lib',
@@ -230,7 +246,8 @@ export default defineConfig([
     dts: false,
     clean: false,
     deps: {
-      neverBundle: (id: string) => id === 'react' || id.startsWith('react/') || id.startsWith('@deepseek-ai/'),
+      neverBundle: (id: string) => HARNESS_PLATFORM_MODULES.has(id),
+      alwaysBundle: (id: string) => !HARNESS_PLATFORM_MODULES.has(id),
     },
     outputOptions: {
       entryFileNames: 'client.js',

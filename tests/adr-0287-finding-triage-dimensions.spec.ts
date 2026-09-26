@@ -6,7 +6,7 @@ import {
 import {
   FINDING_TRIAGE_DIMENSIONS,
   findingTriageValues,
-} from '../src/client/workbench/finding-triage.ts'
+} from '../src/web-client/workbench/finding-triage.ts'
 
 const summary: FindingSummaryV1 = {
   schemaVersion: 1,

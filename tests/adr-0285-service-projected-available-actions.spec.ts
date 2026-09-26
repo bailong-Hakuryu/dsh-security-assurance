@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AssessmentSnapshotV1 } from '../src/index.ts'
-import { projectAssessmentActionAvailabilityV1 } from '../src/client/index.ts'
+import { projectAssessmentActionAvailabilityV1 } from '../src/web-client/workbench/controller.ts'
 
 function snapshot(availableActions: AssessmentSnapshotV1['availableActions']): AssessmentSnapshotV1 {
   const digest = {

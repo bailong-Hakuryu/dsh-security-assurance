@@ -2,10 +2,10 @@ import { Context } from '@deepseek-ai/cordis'
 import {
   apply as applyClientRemote,
   inject as clientRemoteInject,
-} from '../../deepseek-harness-master/packages/api/gateway/lib/types/client/index.js'
+} from '@deepseek-ai/dsh-api-gateway/src/client/index.ts'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
-import { SlotRegistry } from '../../deepseek-harness-master/packages/client/runtime/lib/types/client/slots.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { provideConnection, provideSlotRecorder } from './support/workbench-client-host.ts'
 import type {
   AssessmentId,
   AssessmentListItemV1,
@@ -18,7 +18,7 @@ import {
   inject as workbenchClientInject,
   type SecurityAssuranceWorkbenchController,
   type WorkbenchAuthorityContextId,
-} from '../src/client/index.ts'
+} from '../src/web-client/workbench/controller.ts'
 import type {
   WorkbenchEvidenceDisclosureViewV1,
   WorkbenchEvidenceMetadataViewV1,
@@ -40,8 +40,7 @@ function authorityContextId(value: string): WorkbenchAuthorityContextId {
 }
 
 async function installClientUiFoundation(ctx: Context): Promise<void> {
-  await ctx.plugin(SlotRegistry)
-  ctx.provide('locale', { register: () => () => {} } as never)
+  provideSlotRecorder(ctx)
 }
 
 function snapshotAt(
@@ -311,7 +310,7 @@ async function openMetadataReadyFixture(options: {
   const summary = findingSummary(options.id, options.revision, options.findingHex)
   const detail = findingDetail(summary)
   const metadata = evidenceMetadataView(detail)
-  ctx.provide('connection', { rpc: { call(
+  provideConnection(ctx, { call(
     _path: string,
     endpoint: string,
     payload: unknown,
@@ -345,7 +344,7 @@ async function openMetadataReadyFixture(options: {
       return options.disclosure(detail, payload, signal)
     }
     throw new Error(`Unexpected endpoint: ${endpoint}`)
-  } } } as never)
+  } })
   await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
   await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
   const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -388,10 +387,11 @@ const disclosureBindingMismatches: readonly [
   })],
 ]
 
+// Harness relays Remote results without decoding them in the browser, so the
+// Controller itself must reject every binding change, schema-invalid ones too.
 const evidenceBindingMismatches: readonly [
   label: string,
   mutate: (view: WorkbenchEvidenceMetadataViewV1) => WorkbenchEvidenceMetadataViewV1,
-  transportRejection?: boolean,
 ][] = [
   ['Assessment identity', view => ({
     ...view,
@@ -436,15 +436,15 @@ const evidenceBindingMismatches: readonly [
   ['View purpose', view => ({
     ...view,
     purpose: 'VALIDATION_REVIEW',
-  }) as unknown as WorkbenchEvidenceMetadataViewV1, true],
+  }) as unknown as WorkbenchEvidenceMetadataViewV1],
   ['View Profile', view => ({
     ...view,
     viewProfileId: 'security/evidence-view/bounded-json-v1',
-  }) as unknown as WorkbenchEvidenceMetadataViewV1, true],
+  }) as unknown as WorkbenchEvidenceMetadataViewV1],
   ['content disclosure', view => ({
     ...view,
     content: { kind: 'BOUNDED_JSON', byteLength: 16, value: { secret: true } },
-  }) as unknown as WorkbenchEvidenceMetadataViewV1, true],
+  }) as unknown as WorkbenchEvidenceMetadataViewV1],
 ]
 
 describe('Security Assurance Workbench Client', () => {
@@ -459,7 +459,7 @@ describe('Security Assurance Workbench Client', () => {
     const summary = findingSummary(id, 3, 'a')
     const authorityId = authorityContextId('workbench-session-finding-list')
     const payloads: unknown[] = []
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -484,7 +484,7 @@ describe('Security Assurance Workbench Client', () => {
         })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -518,7 +518,7 @@ describe('Security Assurance Workbench Client', () => {
     const id = assessmentId('asm-00000000-0000-0000-0000-000000000064')
     const snapshot = snapshotAt(id, 6, 'SEALED')
     const authorityId = authorityContextId('workbench-session-finding-protocol')
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
     ): Promise<unknown> {
@@ -541,7 +541,7 @@ describe('Security Assurance Workbench Client', () => {
         })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -572,7 +572,7 @@ describe('Security Assurance Workbench Client', () => {
     let findingCalls = 0
     const findingPayloads: unknown[] = []
     let resolveContinuation: ((value: unknown) => void) | undefined
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -601,7 +601,7 @@ describe('Security Assurance Workbench Client', () => {
         return new Promise(resolve => { resolveContinuation = resolve })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -666,7 +666,7 @@ describe('Security Assurance Workbench Client', () => {
     const summary = findingSummary(id, 5, 'e')
     const detail = findingDetail(summary)
     const payloads: unknown[] = []
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -694,7 +694,7 @@ describe('Security Assurance Workbench Client', () => {
         return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -748,7 +748,7 @@ describe('Security Assurance Workbench Client', () => {
     const detail = findingDetail(summary)
     const view = evidenceMetadataView(detail)
     const payloads: unknown[] = []
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -779,7 +779,7 @@ describe('Security Assurance Workbench Client', () => {
         return Promise.resolve({ ok: true, value: { ok: true, value: view } })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -847,7 +847,7 @@ describe('Security Assurance Workbench Client', () => {
     const detail = findingDetail(summary)
     const metadata = evidenceMetadataView(detail)
     const payloads: Array<{ readonly endpoint: string; readonly payload: unknown }> = []
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -887,7 +887,7 @@ describe('Security Assurance Workbench Client', () => {
         })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -1093,7 +1093,7 @@ describe('Security Assurance Workbench Client', () => {
       readonly resolve: (value: unknown) => void
       readonly reject: (reason: unknown) => void
     }> = []
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
     ): Promise<unknown> {
@@ -1122,7 +1122,7 @@ describe('Security Assurance Workbench Client', () => {
         return new Promise((resolve, reject) => { evidenceDeferred.push({ resolve, reject }) })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -1187,7 +1187,7 @@ describe('Security Assurance Workbench Client', () => {
     const summary = findingSummary(id, 9, '9')
     const detail = findingDetail(summary)
     const endpoints: string[] = []
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
     ): Promise<unknown> {
@@ -1214,7 +1214,7 @@ describe('Security Assurance Workbench Client', () => {
         return Promise.resolve({ ok: true, value: { ok: true, value: detail } })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -1243,7 +1243,7 @@ describe('Security Assurance Workbench Client', () => {
 
   it.each(evidenceBindingMismatches)(
     'fails closed when Evidence metadata changes its %s binding',
-    async (_label, mutate, transportRejection = false) => {
+    async (_label, mutate) => {
       const ctx = new Context()
       contexts.push(ctx)
       await ctx.plugin(TypertRegistry)
@@ -1254,7 +1254,7 @@ describe('Security Assurance Workbench Client', () => {
       const summary = findingSummary(id, 10, '7')
       const detail = findingDetail(summary)
       const view = mutate(evidenceMetadataView(detail))
-      ctx.provide('connection', { rpc: { call(
+      provideConnection(ctx, { call(
         _path: string,
         endpoint: string,
       ): Promise<unknown> {
@@ -1283,7 +1283,7 @@ describe('Security Assurance Workbench Client', () => {
           return Promise.resolve({ ok: true, value: { ok: true, value: view } })
         }
         throw new Error(`Unexpected endpoint: ${endpoint}`)
-      } } } as never)
+      } })
       await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
       await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
       const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -1300,9 +1300,7 @@ describe('Security Assurance Workbench Client', () => {
       )).resolves.toMatchObject({
         kind: 'FAILED',
         assessmentId: id,
-        failure: transportRejection
-          ? { source: 'TRANSPORT', code: 'internal' }
-          : { source: 'CLIENT', code: 'EVIDENCE_PROTOCOL_VIOLATION' },
+        failure: { source: 'CLIENT', code: 'EVIDENCE_PROTOCOL_VIOLATION' },
       })
       expect(controller.getState()).not.toHaveProperty('snapshot')
       expect(controller.getState()).not.toHaveProperty('findings')
@@ -1319,7 +1317,7 @@ describe('Security Assurance Workbench Client', () => {
     const firstId = assessmentId('asm-00000000-0000-0000-0000-000000000021')
     const secondId = assessmentId('asm-00000000-0000-0000-0000-000000000022')
     const listPayloads: unknown[] = []
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -1341,7 +1339,7 @@ describe('Security Assurance Workbench Client', () => {
           },
         },
       })
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -1374,7 +1372,7 @@ describe('Security Assurance Workbench Client', () => {
     const firstId = assessmentId('asm-00000000-0000-0000-0000-000000000031')
     const secondId = assessmentId('asm-00000000-0000-0000-0000-000000000032')
     let page = 0
-    ctx.provide('connection', { rpc: { call(): Promise<unknown> {
+    provideConnection(ctx, { call(): Promise<unknown> {
       page += 1
       return Promise.resolve({
         ok: true,
@@ -1388,7 +1386,7 @@ describe('Security Assurance Workbench Client', () => {
           },
         },
       })
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -1416,7 +1414,7 @@ describe('Security Assurance Workbench Client', () => {
     const secondId = assessmentId('asm-00000000-0000-0000-0000-000000000042')
     let calls = 0
     let resolveContinuation: ((value: unknown) => void) | undefined
-    ctx.provide('connection', { rpc: { call(): Promise<unknown> {
+    provideConnection(ctx, { call(): Promise<unknown> {
       calls += 1
       if (calls === 1) {
         return Promise.resolve({
@@ -1433,7 +1431,7 @@ describe('Security Assurance Workbench Client', () => {
         })
       }
       return new Promise(resolve => { resolveContinuation = resolve })
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -1479,7 +1477,7 @@ describe('Security Assurance Workbench Client', () => {
     const snapshot = snapshotAt(id, 3, 'SEALED')
     const authorityId = authorityContextId('workbench-session-selector')
     const endpoints: string[] = []
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -1519,7 +1517,7 @@ describe('Security Assurance Workbench Client', () => {
         return Promise.resolve({ ok: true, value: { ok: true, value: snapshot } })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -1586,7 +1584,7 @@ describe('Security Assurance Workbench Client', () => {
     const endpoints: string[] = []
     const riskPayloads: unknown[] = []
     let assessmentReads = 0
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -1659,7 +1657,7 @@ describe('Security Assurance Workbench Client', () => {
         })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -1733,7 +1731,7 @@ describe('Security Assurance Workbench Client', () => {
     }
     let assessmentReads = 0
     const cancelPayloads: unknown[] = []
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -1779,7 +1777,7 @@ describe('Security Assurance Workbench Client', () => {
         })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -1839,7 +1837,7 @@ describe('Security Assurance Workbench Client', () => {
     }
     let assessmentReads = 0
     const cancelPayloads: unknown[] = []
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -1876,7 +1874,7 @@ describe('Security Assurance Workbench Client', () => {
         })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -1931,7 +1929,7 @@ describe('Security Assurance Workbench Client', () => {
         message: state === 'READY' ? 'SQLite persistence is ready.' : 'SQLite persistence is unavailable.',
       }],
     })
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -1956,7 +1954,7 @@ describe('Security Assurance Workbench Client', () => {
         })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -2042,7 +2040,7 @@ describe('Security Assurance Workbench Client', () => {
     }
     let manifestResponse = manifest
     const payloads: Array<{ readonly endpoint: string; readonly payload: unknown }> = []
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -2075,7 +2073,7 @@ describe('Security Assurance Workbench Client', () => {
         } } })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -2216,7 +2214,7 @@ describe('Security Assurance Workbench Client', () => {
     }
     const id = assessmentId('asm-00000000-0000-0000-0000-000000000091')
     const payloads: Array<{ readonly endpoint: string; readonly payload: unknown }> = []
-    ctx.provide('connection', { rpc: { call(
+    provideConnection(ctx, { call(
       _path: string,
       endpoint: string,
       payload: unknown,
@@ -2271,7 +2269,7 @@ describe('Security Assurance Workbench Client', () => {
         return Promise.resolve({ ok: true, value: { ok: true, value: snapshotAt(id, 2, 'SEALED') } })
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
-    } } } as never)
+    } })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController
@@ -2347,7 +2345,7 @@ describe('Security Assurance Workbench Client', () => {
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
     }
-    ctx.provide('connection', { rpc: { call } } as never)
+    provideConnection(ctx, { call })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     const workbenchFiber = ctx.plugin({
       inject: workbenchClientInject,
@@ -2453,7 +2451,7 @@ describe('Security Assurance Workbench Client', () => {
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`)
     }
-    ctx.provide('connection', { rpc: { call } } as never)
+    provideConnection(ctx, { call })
     await ctx.plugin({ inject: clientRemoteInject, apply: applyClientRemote })
     await ctx.plugin({ inject: workbenchClientInject, apply: applyWorkbenchClient })
     const controller = ctx.securityAssuranceWorkbench as SecurityAssuranceWorkbenchController

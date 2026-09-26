@@ -1,5 +1,5 @@
 /**
- * Chinese and English strings for the Security tool cards (ADR 0294, 0320).
+ * Chinese and English strings for the Security tool cards (ADRs 0294, 0322).
  * Canonical machine identifiers (ids, weakness codes, profile ids) are shown
  * verbatim and never translated.
  */

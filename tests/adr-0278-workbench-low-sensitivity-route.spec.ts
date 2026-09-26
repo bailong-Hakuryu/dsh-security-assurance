@@ -1,12 +1,12 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { SecurityAssuranceWorkbenchStateV1 } from '../src/client/index.ts'
+import type { SecurityAssuranceWorkbenchStateV1 } from '../src/web-client/workbench/controller.ts'
 import {
   decodeWorkbenchRouteStateV1,
   projectWorkbenchRouteStateV1,
   WORKBENCH_INFORMATION_ARCHITECTURE_V1,
-} from '../src/client/index.ts'
+} from '../src/web-client/workbench/controller.ts'
 
 describe('ADR 0278 low-sensitivity Workbench route state', () => {
   it('admits only a version and reviewed opaque View identifier', () => {
@@ -49,11 +49,11 @@ describe('ADR 0278 low-sensitivity Workbench route state', () => {
     expect(Object.isFrozen(route)).toBe(true)
 
     const sources = await Promise.all([
-      'index.ts',
-      'workbench/navigation.ts',
-      'workbench/WorkbenchOverlay.tsx',
-      'workbench/presentation.ts',
-    ].map(file => readFile(join(import.meta.dirname, '..', 'src', 'client', file), 'utf8')))
+      'controller.ts',
+      'navigation.ts',
+      'WorkbenchOverlay.tsx',
+      'presentation.ts',
+    ].map(file => readFile(join(import.meta.dirname, '..', 'src', 'web-client', 'workbench', file), 'utf8')))
     expect(sources.join('\n')).not.toMatch(
       /\b(?:localStorage|sessionStorage|indexedDB)\b|history\.(?:pushState|replaceState)/u,
     )

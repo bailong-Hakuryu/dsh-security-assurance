@@ -1,4 +1,4 @@
-import type { SecurityAssuranceWorkbenchController } from '../index.ts'
+import type { SecurityAssuranceWorkbenchController } from './controller.ts'
 
 /** Immutable visibility state; Assessment authority and payload stay in the Controller. */
 export interface WorkbenchPresentationSnapshotV1 {

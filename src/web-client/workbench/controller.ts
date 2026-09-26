@@ -3,16 +3,9 @@
  * strict Remote contribution and owns one transient Assessment view session.
  */
 import { Service, type Context } from '@deepseek-ai/cordis'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import type {
-  RemoteFailure,
-  RemoteResult,
-  TypertClientRemote,
-} from '@deepseek-ai/dsh-typert-protocol'
+// Type only: the page's API Gateway client provides `ctx.remote`.
+import type {} from '@deepseek-ai/dsh-api-gateway/client'
+import type { RemoteFailure, RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import workbenchRemote from 'dsh-security-assurance/remote'
 import type {
   AssessmentCancellationReceiptV1,
@@ -42,42 +35,39 @@ import type {
   SecurityResult,
   StartAssessmentSelectionV1,
   StartPreflightV1,
-} from '../contracts.ts'
-import { INTERNAL_JSON_EXPORT_PROFILE_ID } from '../contracts.ts'
+} from '../../contracts.ts'
+import { INTERNAL_JSON_EXPORT_PROFILE_ID } from '../../contracts.ts'
+import type { LocalWorkbenchContextV1 } from '../../workbench-local.ts'
 import type {
   WorkbenchAuthorityContextId,
   WorkbenchEvidenceDisclosureViewV1,
   WorkbenchEvidenceMetadataViewV1,
-} from 'dsh-security-assurance/workbench-remote'
-import {
-  en,
-  WORKBENCH_LOCALE_NAMESPACE,
-  zh,
-  type WorkbenchKey,
-} from './workbench/locales.ts'
-import { WorkbenchPresentation } from './workbench/presentation.ts'
-import { installWorkbenchStyles } from './workbench/styles.ts'
+} from '../../workbench-remote.ts'
+import { en, WORKBENCH_LOCALE_NAMESPACE, zh } from './locales.ts'
+import { WorkbenchPresentation } from './presentation.ts'
+import type { HostObservable } from './slot-types.ts'
+import { installWorkbenchStyles } from './styles.ts'
 import {
   WorkbenchLauncher,
   type WorkbenchLauncherInjected,
-} from './workbench/WorkbenchLauncher.tsx'
+} from './WorkbenchLauncher.tsx'
 import {
   WorkbenchOverlay,
   type WorkbenchOverlayInjected,
-} from './workbench/WorkbenchOverlay.tsx'
-import { selectAssessmentAvailableActionV1 } from './workbench/actions.ts'
+} from './WorkbenchOverlay.tsx'
+import { selectAssessmentAvailableActionV1 } from './actions.ts'
 export {
   projectAssessmentActionAvailabilityV1,
   selectAssessmentAvailableActionV1,
   type AssessmentActionAvailabilityV1,
-} from './workbench/actions.ts'
+} from './actions.ts'
 export {
   decodeWorkbenchRouteStateV1,
   projectWorkbenchRouteStateV1,
   WORKBENCH_INFORMATION_ARCHITECTURE_V1,
   type WorkbenchRouteStateV1,
   type WorkbenchViewIdV1,
-} from './workbench/navigation.ts'
+} from './navigation.ts'
 export {
   projectAssessmentProgressViewV1,
   type AssessmentProgressAttemptStateV1,
@@ -85,23 +75,14 @@ export {
   type AssessmentProgressPhaseIdV1,
   type AssessmentProgressPhaseNodeV1,
   type AssessmentProgressViewV1,
-} from './workbench/progress.ts'
+} from './progress.ts'
 
-export type { WorkbenchAuthorityContextId } from 'dsh-security-assurance/workbench-remote'
+export type { WorkbenchAuthorityContextId } from '../../workbench-remote.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
-    /** Generated Client Remote namespaces selected by the active Client assembly. */
-    remote: TypertClientRemote
     /** One transient, authority-bound Security Assessment Workbench session. */
     securityAssuranceWorkbench: SecurityAssuranceWorkbenchController
-  }
-}
-
-declare module '@deepseek-ai/dsh-client-ui-slots' {
-  interface LocaleNamespaceMap {
-    /** Security Assurance Workbench presentation copy. */
-    'security-assurance-workbench': WorkbenchKey
   }
 }
 
@@ -319,13 +300,18 @@ const START_SUBMISSION_IDLE: WorkbenchStartSubmissionStateV1 = Object.freeze({ k
 const EXPORT_IDLE: WorkbenchExportStateV1 = Object.freeze({ kind: 'IDLE' })
 const EXPORT_DOWNLOAD_IDLE: WorkbenchExportDownloadStateV1 = Object.freeze({ kind: 'IDLE' })
 const LONG_POLL_TIMEOUT_MS = 25_000
+/** Held only while a local context is being issued; no Remote call ever carries it. */
+const UNISSUED_CONTEXT_ID = '' as WorkbenchAuthorityContextId
+/** The Host exports no local Workbench authority (every supported Harness spelling). */
+const LOCAL_AUTHORITY_ABSENT = /^(?:gateway\/)?invocation-unavailable$/u
+const WORKBENCH_CONTEXT_ID = /^[A-Za-z0-9_-]{16,256}$/u
 
 /**
  * Deep Client module hiding nested Remote results, revision long-polling,
  * cancellation, stale-response fencing, and sensitive in-memory cleanup.
  */
 export class SecurityAssuranceWorkbenchController extends Service {
-  static inject = ['remote', 'remote.securityAssuranceWorkbench']
+  static inject = ['remote', 'remote.securityAssuranceWorkbench', 'remote.securityAssuranceWorkbenchSession']
 
   private readonly ownerCtx: Context
   private readonly listeners = new Set<SecurityAssuranceWorkbenchListener>()
@@ -374,6 +360,53 @@ export class SecurityAssuranceWorkbenchController extends Service {
     const page = this.readRemoteResult(session, result)
     if (page === undefined) return this.state
     return this.publishSelection(page)
+  }
+
+  /**
+   * Open the selector under a context the Host's local Workbench authority
+   * issues to this already-authenticated page (ADR 0321). The page sends no
+   * identity or permission. A Host that exports no local authority leaves the
+   * Workbench closed for its own authenticated integration to open.
+   */
+  async openLocalAssessmentSelection(): Promise<SecurityAssuranceWorkbenchStateV1> {
+    this.eraseSession()
+    const issuing: LiveAssessmentSession = {
+      generation: ++this.nextGeneration,
+      contextId: UNISSUED_CONTEXT_ID,
+      assessmentId: undefined,
+      abort: new AbortController(),
+      monitorGeneration: 0,
+      evidenceExpiryTimer: undefined,
+      evidenceAbort: undefined,
+    }
+    this.session = issuing
+    this.publish(Object.freeze({ kind: 'SELECTION_LOADING' }))
+
+    let result: RemoteResult<LocalWorkbenchContextV1>
+    try {
+      result = await this.ownerCtx.remote.securityAssuranceWorkbenchSession.openLocalContext(
+        { schemaVersion: 1 },
+        issuing.abort.signal,
+      )
+    } catch (error) {
+      return this.failClient(issuing, error)
+    }
+    if (!this.isActive(issuing)) return this.state
+    if (!result.ok) {
+      if (!LOCAL_AUTHORITY_ABSENT.test(result.error.code)) return this.fail(issuing, remoteFailure(result.error))
+      this.closeAssessment()
+      return this.state
+    }
+    const issued: unknown = result.value
+    if (!isLocalWorkbenchContext(issued)) {
+      return this.fail(issuing, {
+        source: 'CLIENT',
+        code: 'LOCAL_CONTEXT_PROTOCOL_VIOLATION',
+        message: 'The local Workbench authority returned an unusable context.',
+        retryable: false,
+      })
+    }
+    return this.openAssessmentSelection({ securityAssuranceWorkbenchContextId: issued.contextId })
   }
 
   /** Append the next page from the current authority-bound consistency window. */
@@ -429,7 +462,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
     this.clearEvidenceExpiry(session)
     session.assessmentId = undefined
     this.publish(Object.freeze({ kind: 'REPOSITORIES_LOADING' }))
-    let result: RemoteResult<SecurityResult<import('../contracts.ts').RepositoryListSnapshotV1>>
+    let result: RemoteResult<SecurityResult<import('../../contracts.ts').RepositoryListSnapshotV1>>
     try {
       result = await this.ownerCtx.remote.securityAssuranceWorkbench.listRepositories(
         session.contextId,
@@ -563,7 +596,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
       ...current,
       export: Object.freeze({ kind: 'PREVIEW_LOADING' as const, deliveryDestinationId }),
     }))
-    let result: RemoteResult<SecurityResult<import('../contracts.ts').ExportViewV1>>
+    let result: RemoteResult<SecurityResult<import('../../contracts.ts').ExportViewV1>>
     try {
       result = await this.ownerCtx.remote.securityAssuranceWorkbench.getExport(
         session.contextId,
@@ -671,7 +704,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
       })
     }
 
-    let statusResult: RemoteResult<SecurityResult<import('../contracts.ts').ExportViewV1>>
+    let statusResult: RemoteResult<SecurityResult<import('../../contracts.ts').ExportViewV1>>
     try {
       statusResult = await this.ownerCtx.remote.securityAssuranceWorkbench.getExport(
         session.contextId,
@@ -728,7 +761,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
       || current.export.kind !== 'STATUS_READY'
     ) return current
     const retained = current.export
-    let result: RemoteResult<SecurityResult<import('../contracts.ts').ExportViewV1>>
+    let result: RemoteResult<SecurityResult<import('../../contracts.ts').ExportViewV1>>
     try {
       result = await this.ownerCtx.remote.securityAssuranceWorkbench.getExport(
         session.contextId,
@@ -804,7 +837,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
       ...current,
       export: Object.freeze({ ...retainedExport, download: Object.freeze({ kind: 'DOWNLOADING' as const }) }),
     }))
-    let result: RemoteResult<SecurityResult<import('../contracts.ts').ExportViewV1>>
+    let result: RemoteResult<SecurityResult<import('../../contracts.ts').ExportViewV1>>
     try {
       result = await this.ownerCtx.remote.securityAssuranceWorkbench.getExport(
         session.contextId,
@@ -2565,6 +2598,16 @@ function matchesAssessmentCommandReceipt(
     && receipt.acceptedState === snapshot.state
 }
 
+function isLocalWorkbenchContext(
+  value: unknown,
+): value is { readonly schemaVersion: 1; readonly contextId: WorkbenchAuthorityContextId } {
+  if (typeof value !== 'object' || value === null) return false
+  const candidate = value as { readonly schemaVersion?: unknown; readonly contextId?: unknown }
+  return candidate.schemaVersion === 1
+    && typeof candidate.contextId === 'string'
+    && WORKBENCH_CONTEXT_ID.test(candidate.contextId)
+}
+
 function remoteFailure(error: RemoteFailure): WorkbenchClientFailureV1 {
   return Object.freeze({
     source: 'TRANSPORT',
@@ -2583,6 +2626,25 @@ function securityFailure(error: PublicSecurityError): WorkbenchClientFailureV1 {
   })
 }
 
+/** Registration options for one additive, id-keyed slot entry. */
+interface WorkbenchSlotEntry {
+  readonly name: 'sidebar.footer.action' | 'shell.overlay'
+  readonly id: string
+  readonly locale: typeof WORKBENCH_LOCALE_NAMESPACE
+  readonly inject: () => object
+}
+
+/** The Host-owned UI assembly seams the Workbench uses, in every supported Harness version. */
+interface WorkbenchClientContext {
+  readonly slots: {
+    inject(name: WorkbenchSlotEntry['name'], register: () => () => void): () => void
+    register(entry: WorkbenchSlotEntry, component: unknown): () => void
+  }
+  readonly locale: {
+    register(namespace: typeof WORKBENCH_LOCALE_NAMESPACE, dictionaries: { readonly zh: typeof zh; readonly en: typeof en }): () => void
+  }
+}
+
 /** Required Client services: Remote transport plus the Host-owned UI assembly seams. */
 export const inject = ['remote', 'slots', 'locale']
 
@@ -2594,7 +2656,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   try {
     await controller
     uninstallUi = installWorkbenchUi(
-      ctx as ClientContext,
+      ctx as unknown as WorkbenchClientContext,
       ctx.get('securityAssuranceWorkbench') as SecurityAssuranceWorkbenchController,
     )
   } catch (error) {
@@ -2612,7 +2674,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
 
 /** Register the additive launcher/overlay pair around one presentation machine. */
 function installWorkbenchUi(
-  ctx: ClientContext,
+  ctx: WorkbenchClientContext,
   controller: SecurityAssuranceWorkbenchController,
 ): () => void {
   const presentation = new WorkbenchPresentation(controller)
@@ -2631,7 +2693,10 @@ function installWorkbenchUi(
       id: 'security-assurance-workbench-launcher',
       locale: WORKBENCH_LOCALE_NAMESPACE,
       inject: (): WorkbenchLauncherInjected => ({
-        showWorkbench: returnFocus => { presentation.show(returnFocus) },
+        showWorkbench: async returnFocus => {
+          presentation.show(returnFocus)
+          if (controller.getState().kind === 'CLOSED') await controller.openLocalAssessmentSelection()
+        },
       }),
     }, WorkbenchLauncher))
     removeOverlay = ctx.slots.inject('shell.overlay', () => ctx.slots.register({

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { SecurityAssuranceWorkbenchStateV1 } from '../src/client/index.ts'
+import type { SecurityAssuranceWorkbenchStateV1 } from '../src/web-client/workbench/controller.ts'
 import {
   projectWorkbenchRouteStateV1,
   WORKBENCH_INFORMATION_ARCHITECTURE_V1,
-} from '../src/client/index.ts'
-import { en, zh } from '../src/client/workbench/locales.ts'
+} from '../src/web-client/workbench/controller.ts'
+import { en, zh } from '../src/web-client/workbench/locales.ts'
 
 describe('ADR 0277 fixed Workbench information architecture', () => {
   it('publishes the exact nine v0.1 views in stable order', () => {
