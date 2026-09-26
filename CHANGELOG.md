@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Show `/security` text in Chinese and English, because Harness localizes only
+  its built-in commands. Make `limit` optional on `security_repositories` and
+  `security_assessment_findings` with a bounded default of 20, so a model that
+  omits the page size no longer fails the call.
 - Admit DeepSeek Harness `0.1.5-rc.3`, the current npm `latest`, into the
   closed verified compatibility set and exact DSH peer disjunction. Before
   this, a direct-use install on rc.3 failed the composition invariant closed

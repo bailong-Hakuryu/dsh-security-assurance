@@ -459,7 +459,7 @@ describe('security assessment tool registration', () => {
     try {
       expect(fixture.ctx.commands.list(root.agent)).toContainEqual({
         name: 'security',
-        description: 'Run a standalone repository security assessment',
+        description: '运行独立的仓库安全评估 · Run a standalone repository security assessment',
         input: { hint: '[scope]' },
       })
       const execution = await fixture.ctx.commands.execute(
@@ -470,7 +470,7 @@ describe('security assessment tool registration', () => {
       )
       expect(execution?.result).toEqual({
         kind: 'success',
-        text: 'Security assessment request submitted.',
+        text: '已提交安全评估请求 · Security assessment request submitted.',
       })
       expect(root.steered).toHaveLength(1)
       expect(root.steered[0]?.content).toEqual([{
@@ -497,7 +497,7 @@ describe('security assessment tool transport conformance', () => {
       const contracts = {
         security_repositories: {
           input: ['limit', 'state'],
-          required: ['limit'],
+          required: [],
           output: ['repositories', 'schemaVersion', 'truncated'],
         },
         security_catalog: {
@@ -549,7 +549,7 @@ describe('security assessment tool transport conformance', () => {
         },
         security_assessment_findings: {
           input: ['assessment_id', 'cursor', 'limit', 'validation_states'],
-          required: ['assessment_id', 'limit'],
+          required: ['assessment_id'],
           output: ['assessmentId', 'assessmentRevision', 'findings', 'nextCursor', 'schemaVersion'],
         },
         security_assessment_resume: {
@@ -1488,6 +1488,21 @@ describe('security_assessment_findings disclosure', () => {
       const secondFinding = (second['findings'] as Array<Record<string, unknown>>)[0]
       expect(secondFinding?.['recordId']).not.toBe(firstFinding?.['recordId'])
 
+      const { limit: _pageSize, ...unpaged } = baseArgs
+      const defaultPage = resultValue(await executeTool(
+        fixture.ctx,
+        'security_assessment_findings',
+        unpaged,
+        root.agent,
+      ))
+      expect(defaultPage).toMatchObject({
+        assessmentId: started.value.assessmentId,
+        nextCursor: null,
+      })
+      expect((defaultPage['findings'] as unknown[]).map(
+        finding => (finding as Record<string, unknown>)['recordId'],
+      )).toEqual([firstFinding?.['recordId'], secondFinding?.['recordId']])
+
       const invalid = await executeTool(
         fixture.ctx,
         'security_assessment_findings',
@@ -1639,6 +1654,13 @@ describe('security repository and catalog selection tools', () => {
       })
       expect(JSON.stringify(repositories)).not.toContain(repository)
       expect(JSON.stringify(repositories)).not.toContain('rootIdentityDigest')
+      // Models often omit a page size; the bounded default keeps that call useful.
+      expect(resultValue(await executeTool(
+        fixture.ctx,
+        'security_repositories',
+        { state: 'ENABLED' },
+        root.agent,
+      ))).toEqual(repositories)
 
       const catalog = resultValue(await executeTool(
         fixture.ctx,

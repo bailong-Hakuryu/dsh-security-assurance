@@ -37,6 +37,9 @@ import { readSessionEvents } from './internal/session-events.ts'
 export const SECURITY_COMMAND_NAME = 'security'
 
 /** Build the model-visible routing request owned by the explicit `/security` command. */
+/** Bounded page size used when a model omits an optional `limit`. */
+const DEFAULT_TOOL_PAGE_LIMIT = 20
+
 export function securityCommandPrompt(scope: string): string {
   return [
     'Run a standalone Security Assurance assessment for the current workspace.',
@@ -800,8 +803,7 @@ const SecurityAssuranceTools = {
       parameters: {
         limit: {
           type: 'integer',
-          required: true,
-          description: 'Maximum repositories to return, from 1 through 100.',
+          description: `Maximum repositories to return, from 1 through 100; defaults to ${DEFAULT_TOOL_PAGE_LIMIT}.`,
         },
         state: {
           type: 'string',
@@ -813,7 +815,7 @@ const SecurityAssuranceTools = {
       async execute(args, exec) {
         const parsed = listRepositoriesRequestSchema.safeParse({
           schemaVersion: 1,
-          limit: args.limit,
+          limit: args.limit ?? DEFAULT_TOOL_PAGE_LIMIT,
           ...args.state === undefined ? {} : { state: args.state },
         })
         if (!parsed.success) {
@@ -1097,8 +1099,8 @@ const SecurityAssuranceTools = {
         },
         limit: {
           type: 'integer',
-          required: true,
-          description: 'Page size from 1 through 100; the Security Service enforces the bound.',
+          description: `Page size from 1 through 100; defaults to ${DEFAULT_TOOL_PAGE_LIMIT}. `
+            + 'The Security Service enforces the bound.',
         },
         cursor: {
           type: 'string',
@@ -1118,7 +1120,7 @@ const SecurityAssuranceTools = {
         const parsed = listFindingsRequestSchema.safeParse({
           schemaVersion: 1,
           assessmentId: args.assessment_id,
-          limit: args.limit,
+          limit: args.limit ?? DEFAULT_TOOL_PAGE_LIMIT,
           ...args.cursor === undefined ? {} : { cursor: args.cursor },
           ...args.validation_states === undefined
             ? {}
@@ -1345,11 +1347,16 @@ const SecurityAssuranceTools = {
     ctx.inject(['commands'], (commandCtx) => {
       commandCtx.commands.register({
         name: SECURITY_COMMAND_NAME,
-        description: 'Run a standalone repository security assessment',
+        // Harness localizes only its built-in commands, so plugin text carries
+        // both product languages (ADR 0294).
+        description: '运行独立的仓库安全评估 · Run a standalone repository security assessment',
         input: { hint: '[scope]' },
         handler: ({ agent, rawInput }) => {
           if (agent.session.header.origin === 'subagent') {
-            return { kind: 'error', text: '/security is available only in a top-level session.' }
+            return {
+              kind: 'error',
+              text: '/security 只能在顶层会话中使用 · /security is available only in a top-level session.',
+            }
           }
           agent.steer(createUserMessage({
             content: [{ type: 'text', text: securityCommandPrompt(rawInput.trim()) }],
@@ -1360,7 +1367,7 @@ const SecurityAssuranceTools = {
               summary: 'Run a standalone Security Assurance assessment.',
             },
           }))
-          return { kind: 'success', text: 'Security assessment request submitted.' }
+          return { kind: 'success', text: '已提交安全评估请求 · Security assessment request submitted.' }
         },
       })
     })
