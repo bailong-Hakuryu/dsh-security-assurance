@@ -207,6 +207,17 @@ export default defineConfig([
     plugins: [{ ...decorators, writeBundle: undefined }],
   },
   {
+    entry: ['lib/types/workbench-local.js'],
+    outDir: 'lib',
+    format: ['esm'],
+    platform: 'node',
+    target: 'es2024',
+    fixedExtension: false,
+    dts: false,
+    clean: false,
+    plugins: [{ ...decorators, writeBundle: undefined }],
+  },
+  {
     // Harness Web client module (ADR 0320): the loader's lazy-CJS factory
     // artifact. React and every @deepseek-ai module come from the page's
     // module table, so the bundle carries only the tool-card code.
