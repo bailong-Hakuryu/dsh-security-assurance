@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.16] - 2026-09-27
+
+- Qualify the optional Control Plane integration against exactly `0.2.1`,
+  which lets a reworked Mission be approved again. Publish this RC only to
+  `next`, retaining `latest` at `0.1.0-rc.12`.
+
 - Tell the model which Repository is the launch workspace (ADR 0326).
   `security_repositories` now adds `hostBindingIds` (e.g.
   `["current-workspace"]`) to the Repository a current Host binding resolved
