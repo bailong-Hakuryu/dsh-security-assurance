@@ -96,6 +96,13 @@ export class SecurityAssuranceHostRepositoryProvider extends Service {
     return this.resolved.get(bindingId)
   }
 
+  /** List every configured binding after registration has settled; path-free like resolve. */
+  async bindings(): Promise<readonly HostRepositoryBindingV1[]> {
+    await this.ready
+    if (this.disposed) throw new Error('Security Assurance Host Repository Provider is disposing')
+    return [...this.resolved.values()]
+  }
+
   private async initialize(service: SecurityAssuranceService, config: Config): Promise<void> {
     const parsed = configSchema.safeParse(config)
     if (!parsed.success) throw new TypeError('Host Repository Provider configuration is invalid')

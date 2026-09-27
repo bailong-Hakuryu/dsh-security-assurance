@@ -187,7 +187,7 @@ gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.j
 
 | 顺序 | 工具 | 作用 |
 | --- | --- | --- |
-| 1 | <code>security_repositories</code> | 列出当前会话可见的已授权仓库 |
+| 1 | <code>security_repositories</code> | 列出当前会话可见的已授权仓库；启动目录对应的仓库带 <code>hostBindingIds: ["current-workspace"]</code> |
 | 2 | <code>security_catalog</code> | 获取指定仓库支持的模式、Subject、Profile 和控制 |
 | 3 | <code>security_assessment_start</code> | 用精确选择启动一次持久化评估 |
 | 4 | <code>security_assessment_status</code> | 读取版本化状态、Coverage 和 Verdict |

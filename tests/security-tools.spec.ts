@@ -17,6 +17,7 @@ import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import SecurityAssuranceService from '../src/index.ts'
 import SecurityAssuranceTools from '../src/tools.ts'
+import SecurityAssuranceHostRepositoryProvider from '../src/host-repository-provider.ts'
 import type { AssessmentId, SecurityInvocation } from '../src/contracts.ts'
 import { referenceHostInvocation } from './support/reference-host.ts'
 import { readSessionEvents } from '../src/internal/session-events.ts'
@@ -1686,6 +1687,82 @@ describe('security repository and catalog selection tools', () => {
       expect(JSON.stringify(catalog)).not.toContain(repository)
       expect(JSON.stringify(catalog)).not.toContain('rootIdentityDigest')
     } finally {
+      disposeRoot()
+      await fixture.dispose()
+    }
+  })
+
+  it('names the Host binding of the launch workspace among same-named Repositories (ADR 0326)', async () => {
+    const stale = await repositoryFixture({ name: 'stale-launch-directory', version: '1.0.0' })
+    const launched = await repositoryFixture({ name: 'current-launch-directory', version: '1.0.0' })
+    const fixture = await harness()
+    const root = stubAgent(`security-tool-host-binding-${Math.random()}`)
+    const disposeRoot = fixture.ctx.agents.register(root.agent)
+    let hostRepositoryFiber: Awaited<ReturnType<Context['plugin']>> | undefined
+    try {
+      const platform = process.platform
+      if (platform !== 'win32' && platform !== 'linux' && platform !== 'darwin') {
+        throw new Error(`unsupported test platform: ${platform}`)
+      }
+      const bindings = {
+        policyId: 'security/node-package-lifecycle',
+        assessmentProfileId: 'security/standard',
+        evidenceProtectionId: 'evidence/local-protected',
+        dataEgressPolicyId: 'egress/deny-by-default',
+        platform,
+        deliveryDestinationIds: [],
+      }
+      // An earlier launch from another directory left a Repository with the same display name.
+      const earlier = await fixture.ctx.securityAssurance.registerRepository(
+        referenceHostInvocation(fixture.ctx.securityAssurance),
+        {
+          schemaVersion: 1,
+          contractVersion: 1,
+          idempotencyKey: 'security-tool-host-binding-stale-v1',
+          root: stale,
+          displayName: 'Current workspace',
+          bindings,
+        },
+      )
+      if (!earlier.ok) throw new Error(`registration failed: ${earlier.error.code}`)
+      hostRepositoryFiber = await fixture.ctx.plugin(SecurityAssuranceHostRepositoryProvider, {
+        repositories: [{
+          schemaVersion: 1,
+          bindingId: 'current-workspace',
+          root: launched,
+          displayName: 'Current workspace',
+          bindings,
+        }],
+      })
+      const current = await fixture.ctx.securityAssuranceHostRepositories.resolve('current-workspace')
+      if (current === undefined) throw new Error('Host binding did not resolve')
+
+      openTurn(root)
+      const listed = resultValue(await executeTool(
+        fixture.ctx,
+        'security_repositories',
+        { state: 'ENABLED' },
+        root.agent,
+      )) as { repositories: Record<string, unknown>[] }
+      expect(listed.repositories).toHaveLength(2)
+      expect(listed.repositories.find(entry => entry.repositoryId === current.repositoryId)).toMatchObject({
+        displayName: 'Current workspace',
+        hostBindingIds: ['current-workspace'],
+      })
+      const other = listed.repositories.find(entry => entry.repositoryId === earlier.value.repositoryId)
+      expect(other?.displayName).toBe('Current workspace')
+      expect(other).not.toHaveProperty('hostBindingIds')
+      expect(JSON.stringify(listed)).not.toContain(launched)
+      expect(JSON.stringify(listed)).not.toContain(stale)
+      expect(fixture.ctx.tools.get('security_repositories')?.description).toContain('hostBindingIds')
+
+      await fixture.ctx.commands.execute(root.agent, '/security', [], toolSignal)
+      expect(root.steered.at(-1)?.content).toEqual([{
+        type: 'text',
+        text: expect.stringContaining('hostBindingIds includes current-workspace'),
+      }])
+    } finally {
+      await hostRepositoryFiber?.dispose()
       disposeRoot()
       await fixture.dispose()
     }

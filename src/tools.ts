@@ -26,6 +26,7 @@ import {
   type SecurityInvocation,
   type SecurityVerdict,
 } from './contracts.ts'
+import type { SecurityAssuranceHostRepositoryProvider } from './host-repository-provider.ts'
 import type { SecurityAssuranceService } from './index.ts'
 import {
   createTrustedCallerChannel,
@@ -45,6 +46,7 @@ export function securityCommandPrompt(scope: string): string {
   return [
     'Run a standalone Security Assurance assessment for the current workspace.',
     'First call security_repositories, then call security_catalog with an ENABLED repositoryId. Select only a supported mode, subject, target, profile, and stronger controls from those results; never guess identifiers or repository paths.',
+    'The current workspace is the Repository whose hostBindingIds includes current-workspace; display names can repeat across launch directories, so never choose by display name alone.',
     'Start the assessment with a fresh stable idempotency key, query status to a terminal or blocked state without busy polling, and report the authoritative coverage, verdict, and redacted findings.',
     ...(scope.length === 0 ? [] : ['', 'User-requested scope:', scope]),
   ].join('\n')
@@ -155,6 +157,8 @@ export interface SecurityRepositorySelectionV1 {
     readonly policyId: string
     readonly assessmentProfileId: string
     readonly platform: 'win32' | 'linux' | 'darwin'
+    /** Host bindings resolved to this Repository at launch, such as current-workspace (ADR 0326). */
+    readonly hostBindingIds?: string[]
   }[]
   readonly truncated: boolean
 }
@@ -207,6 +211,11 @@ const REPOSITORIES_OUTPUT = {
             policyId: { type: 'string', required: true },
             assessmentProfileId: { type: 'string', required: true },
             platform: { type: 'string', enum: ['win32', 'linux', 'darwin'], required: true },
+            hostBindingIds: {
+              type: 'array',
+              description: 'Host bindings resolved to this Repository at launch; current-workspace is the launch workspace.',
+              items: { type: 'string' },
+            },
           },
         },
       },
@@ -728,18 +737,46 @@ async function findingLocations(
   return locations
 }
 
-function repositoriesValue(snapshot: RepositoryListSnapshotV1): SecurityRepositorySelectionV1 {
+/**
+ * Path-free Host bindings grouped by Repository (ADR 0326). A missing,
+ * failed, or disposing Host Repository Provider yields no marks, never a
+ * guessed one.
+ */
+async function hostBindingIdsByRepository(ctx: Context): Promise<ReadonlyMap<string, readonly string[]>> {
+  const grouped = new Map<string, string[]>()
+  try {
+    const provider = ctx.get('securityAssuranceHostRepositories') as SecurityAssuranceHostRepositoryProvider | undefined
+    for (const binding of await provider?.bindings() ?? []) {
+      const ids = grouped.get(binding.repositoryId) ?? []
+      ids.push(binding.bindingId)
+      grouped.set(binding.repositoryId, ids)
+    }
+  } catch {
+    return new Map()
+  }
+  for (const ids of grouped.values()) ids.sort()
+  return grouped
+}
+
+function repositoriesValue(
+  snapshot: RepositoryListSnapshotV1,
+  hostBindingIds: ReadonlyMap<string, readonly string[]>,
+): SecurityRepositorySelectionV1 {
   return {
     schemaVersion: 1,
-    repositories: snapshot.repositories.map(repository => ({
-      repositoryId: repository.repositoryId,
-      repositoryRevision: repository.repositoryRevision,
-      state: repository.state,
-      displayName: repository.displayName,
-      policyId: repository.bindings.policyId,
-      assessmentProfileId: repository.bindings.assessmentProfileId,
-      platform: repository.bindings.platform,
-    })),
+    repositories: snapshot.repositories.map((repository) => {
+      const bindingIds = hostBindingIds.get(repository.repositoryId)
+      return {
+        repositoryId: repository.repositoryId,
+        repositoryRevision: repository.repositoryRevision,
+        state: repository.state,
+        displayName: repository.displayName,
+        policyId: repository.bindings.policyId,
+        assessmentProfileId: repository.bindings.assessmentProfileId,
+        platform: repository.bindings.platform,
+        ...bindingIds === undefined ? {} : { hostBindingIds: [...bindingIds] },
+      }
+    }),
     truncated: snapshot.truncated,
   }
 }
@@ -859,8 +896,9 @@ const SecurityAssuranceTools = {
         + 'assessment unless the user explicitly requests one. List the bounded, path-free Security Repository '
         + 'choices visible to the calling Harness '
         + 'session. Use an ENABLED repositoryId from this result with security_catalog and '
-        + 'security_assessment_start. This tool never returns repository roots, root digests, credentials, '
-        + 'authority metadata, or storage handles.',
+        + 'security_assessment_start. Display names can repeat across launch directories; the Repository whose '
+        + 'hostBindingIds includes current-workspace is the directory the Host was launched from. This tool '
+        + 'never returns repository roots, root digests, credentials, authority metadata, or storage handles.',
       parameters: {
         limit: {
           type: 'integer',
@@ -891,7 +929,7 @@ const SecurityAssuranceTools = {
           { signal: exec.signal },
         )
         if (!result.ok) return reject(result.error.message, `SECURITY_${result.error.code}`)
-        return repositoriesValue(result.value)
+        return repositoriesValue(result.value, await hostBindingIdsByRepository(ctx))
       },
       isConcurrencySafe: () => true,
       presentCall: presentRepositories,

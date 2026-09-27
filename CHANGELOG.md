@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Tell the model which Repository is the launch workspace (ADR 0326).
+  `security_repositories` now adds `hostBindingIds` (e.g.
+  `["current-workspace"]`) to the Repository a current Host binding resolved
+  to, and `/security` tells the model to choose by it. A real run launched from
+  a third directory listed three "Current workspace" entries; the model
+  assessed the wrong one and reported it as the workspace. No paths are added.
 - Tell the model where a Finding is (ADR 0325, amending ADR 0130).
   `security_assessment_findings` now adds a `location` — repository-relative
   path and JSON pointer, e.g. `package.json` `/scripts/postinstall` — when
