@@ -311,11 +311,15 @@ function findings({ state, args, output }: ToolCallFacts): Body {
       const weakness = text(record(item['weaknessClassification'])['primary'])
       if (severity.length === 0 || weakness === undefined) return []
       const component = text(item['component'])
+      const place = record(item['location'])
+      const path = text(place['path'])
+      const pointer = typeof place['pointer'] === 'string' ? place['pointer'] : undefined
       return [{
         label: severity[0]!,
         value: join([
           literal(weakness),
           ...component === undefined ? [] : [literal(component)],
+          ...path === undefined || pointer === undefined ? [] : [literal(`${path}#${pointer}`)],
           ...label(item['validationState'], VALIDATION),
           ...label(item['policySignificance'], SIGNIFICANCE),
         ]),

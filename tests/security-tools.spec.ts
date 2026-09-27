@@ -1447,6 +1447,11 @@ describe('security_assessment_findings disclosure', () => {
             state: 'SATISFIED',
           }],
           hasProtectedDetail: true,
+          // ADR 0325: an allowlisted location, never the anchor's digest or content.
+          location: {
+            path: 'package.json',
+            pointer: expect.stringMatching(/^\/scripts\/(?:pre|post)install$/u),
+          },
         }],
         nextCursor: expect.stringMatching(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u),
       })

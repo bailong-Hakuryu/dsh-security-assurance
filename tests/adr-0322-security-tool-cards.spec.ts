@@ -152,6 +152,33 @@ describe('ADR 0322 Security tool card view models', () => {
     ])
   })
 
+  it('shows where a finding is when the tool names its location', () => {
+    const model = securityToolCard('security_assessment_findings', settled(
+      'security_assessment_findings',
+      { assessment_id: ASSESSMENT_ID },
+      {
+        schemaVersion: 1,
+        assessmentId: ASSESSMENT_ID,
+        assessmentRevision: 3,
+        findings: [{
+          recordKind: 'FINDING',
+          recordId: 'finding-located',
+          validationState: 'VALIDATED',
+          weaknessClassification: { primary: 'DSH-NODE-POLICY-001', secondary: [] },
+          technicalSeverity: 'MEDIUM',
+          evidenceConfidence: 'HIGH',
+          policySignificance: 'BLOCKING',
+          component: 'repository-root',
+          location: { path: 'package.json', pointer: '/scripts/postinstall' },
+        }],
+        nextCursor: null,
+      },
+    ))
+    expect(model.fields.map(field => [text(field.label), text(field.value)])).toEqual([
+      ['中', 'DSH-NODE-POLICY-001 · repository-root · package.json#/scripts/postinstall · 已验证 · 阻断'],
+    ])
+  })
+
   it('reports an empty findings page without inventing severity', () => {
     const model = securityToolCard('security_assessment_findings', settled(
       'security_assessment_findings',

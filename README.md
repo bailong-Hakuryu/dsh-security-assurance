@@ -191,7 +191,7 @@ gitleaks dir . --redact=100 --report-format=json --report-path=gitleaks-report.j
 | 2 | <code>security_catalog</code> | 获取指定仓库支持的模式、Subject、Profile 和控制 |
 | 3 | <code>security_assessment_start</code> | 用精确选择启动一次持久化评估 |
 | 4 | <code>security_assessment_status</code> | 读取版本化状态、Coverage 和 Verdict |
-| 5 | <code>security_assessment_findings</code> | 分页读取脱敏 Finding 摘要 |
+| 5 | <code>security_assessment_findings</code> | 分页读取脱敏 Finding 摘要；锚点纯净时附带仓库内相对位置（路径与 JSON 指针） |
 | 6 | <code>security_assessment_resume</code> | 仅按服务公布的合法动作恢复阻塞评估 |
 | 7 | <code>security_assessment_cancel</code> | 按精确 revision 取消并等待外部工作静默 |
 | 8 | <code>security_assessment_export</code> | 请求固定格式、固定目标的官方导出 |

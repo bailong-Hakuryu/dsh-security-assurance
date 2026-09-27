@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Tell the model where a Finding is (ADR 0325, amending ADR 0130).
+  `security_assessment_findings` now adds a `location` — repository-relative
+  path and JSON pointer, e.g. `package.json` `/scripts/postinstall` — when
+  every segment passes a strict allowlist; anything else is omitted, and the
+  anchor's digest and the file's content never reach the model. The findings
+  card shows it as `path#pointer`.
 - Point a model that passes a Control Plane assurance identity
   (`mission-…:assurance:…`) to a Security tool at the right identity: the
   rejection now says to use the `asm-` identity the Mission status lists in

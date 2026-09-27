@@ -34,7 +34,8 @@ describe('ADR 0252: Transport Adapters contain no domain Policy', () => {
 
   it('restricts every shipped adapter to framing, authority, and DTO translation internals', async () => {
     const adapters = {
-      'tools.ts': ['authority.ts', 'session-events.ts'],
+      // finding-location.ts projects a Detail View field into the model DTO (ADR 0325).
+      'tools.ts': ['authority.ts', 'finding-location.ts', 'session-events.ts'],
       'workbench-remote.ts': ['authority.ts'],
       'host-repository-provider.ts': ['authority.ts', 'freeze.ts'],
       'control-plane-provider.ts': [
