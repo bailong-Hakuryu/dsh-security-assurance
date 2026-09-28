@@ -4,6 +4,13 @@
 
 ## [0.1.0-rc.17] - 2026-09-28
 
+- Preserve strict Typert codec compatibility in the published artifact (ADR
+  0329). Host and Remote contributions expose both `schema` and `create()`
+  using the same generated parser, so a candidate built on the primary
+  Harness also loads on 0.1.7. Per-version source rebuilds alone did not
+  catch the missing factory; release acceptance now explicitly exercises
+  one retained candidate on both 0.1.5-rc.3 and 0.1.7-rc.2.
+
 - Qualify the optional Control Plane integration against exactly `0.2.2`.
   Publish this RC only to `next`, retaining `latest` at `0.1.0-rc.12`.
 

@@ -2,6 +2,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WorkspaceTypertGenerator } from '@deepseek-ai/dsh-typert-generator'
+import { withCodecCompatibility } from './support/typert-codec-compat.mjs'
 
 const packageRoot = process.cwd()
 const scratchParent = join(packageRoot, '.scratch')
@@ -87,9 +88,9 @@ try {
   }
   await mkdir(join(packageRoot, 'lib'), { recursive: true })
   await Promise.all([
-    writeFile(join(packageRoot, 'lib', 'typert.host.js'), host.js, 'utf8'),
+    writeFile(join(packageRoot, 'lib', 'typert.host.js'), withCodecCompatibility(host.js, 'TYPERT.invocations'), 'utf8'),
     writeFile(join(packageRoot, 'lib', 'typert.host.d.ts'), host.dts, 'utf8'),
-    writeFile(join(packageRoot, 'lib', 'typert.remote-client.js'), host.remote.js, 'utf8'),
+    writeFile(join(packageRoot, 'lib', 'typert.remote-client.js'), withCodecCompatibility(host.remote.js, 'TYPERT_REMOTE.descriptors'), 'utf8'),
     writeFile(join(packageRoot, 'lib', 'typert.remote-client.d.ts'), host.remote.dts, 'utf8'),
     writeFile(join(packageRoot, 'lib', 'typert.remote-client.d.ts.map'), host.remote.dtsMap, 'utf8'),
   ])

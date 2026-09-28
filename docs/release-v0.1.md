@@ -94,6 +94,13 @@ verifies only the Harness Web shell and records `WORKBENCH` as
 `INCONCLUSIVE`. It must never turn generic Web availability into passed
 Workbench evidence.
 
+Run the same retained candidate on both `0.1.5-rc.3` and `0.1.7-rc.2`
+before publication (ADR 0329). Set `DSH_BROWSER_HARNESS_VERSION` for each
+run and use different proof output files and collector indexes: a single
+index cannot contain two `WORKBENCH` records. Do not repack between runs.
+Source rebuilds on the compatibility matrix do not establish compatibility
+of the primary-build artifact with another Host's codec protocol.
+
 ```powershell
 $env:DSH_RELEASE_PROOF_OUTPUT = "$PWD\evidence\workbench.json"
 pnpm pack:browser-e2e
