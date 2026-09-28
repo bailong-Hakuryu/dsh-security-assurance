@@ -34,10 +34,13 @@ const proofOutputPath = process.env.DSH_RELEASE_PROOF_OUTPUT
 const suppliedSecurityArtifact = process.env.DSH_SECURITY_PACKED_ARTIFACT
 const openLocalContextEndpoint = 'securityAssuranceWorkbenchSession/openLocalContext'
 
-/** Harness onboarding a fresh profile presents, per browser language. */
+/**
+ * Harness onboarding a fresh profile presents, per browser language. Harness
+ * 0.2.0 renamed the first notice (Internal Testing Notice -> Preview Notice).
+ */
 const ONBOARDING = Object.freeze({
-  en: { notice: 'Internal Testing Notice', continue: 'Continue', provider: 'Add an API key to get started', later: 'Configure later' },
-  zh: { notice: '内测声明', continue: '继续', provider: '添加一个 API Key 开始使用', later: '稍后配置' },
+  en: { notice: /^(Internal Testing Notice|Preview Notice)$/u, continue: 'Continue', provider: 'Add an API key to get started', later: 'Configure later' },
+  zh: { notice: /^(内测声明|预览版说明)$/u, continue: '继续', provider: '添加一个 API Key 开始使用', later: '稍后配置' },
 })
 
 let hostProcess
