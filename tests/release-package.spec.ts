@@ -34,8 +34,8 @@ const implementationSpecification = readFileSync(
 
 describe('v0.1 release candidate package', () => {
   it('binds runtime and package identity to the candidate version', () => {
-    expect(packageJson.version).toBe('0.1.0-rc.16')
-    expect(packageJson.peerDependencies?.['dsh-engineering-control-plane']).toBe('0.2.1')
+    expect(packageJson.version).toBe('0.1.0-rc.17')
+    expect(packageJson.peerDependencies?.['dsh-engineering-control-plane']).toBe('0.2.2')
     expect(SECURITY_ASSURANCE_PRODUCT_VERSION).toBe(packageJson.version)
   })
 
@@ -51,8 +51,8 @@ describe('v0.1 release candidate package', () => {
     expect(implementationSpecification).toContain(
       `The qualified candidate uses \`${version}\``,
     )
-    expect(readme).toContain('/dsh-engineering-control-plane/releases/tag/v0.2.1')
-    expect(readme).toContain('dsh-engineering-control-plane-0.2.1.tgz')
+    expect(readme).toContain('/dsh-engineering-control-plane/releases/tag/v0.2.2')
+    expect(readme).toContain('dsh-engineering-control-plane-0.2.2.tgz')
   })
 
   it('is explicitly publishable under the reviewed license', () => {

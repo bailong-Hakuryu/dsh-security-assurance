@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.17] - 2026-09-28
+
+- Qualify the optional Control Plane integration against exactly `0.2.2`.
+  Publish this RC only to `next`, retaining `latest` at `0.1.0-rc.12`.
+
 - Name the launch workspace on every Repository surface (ADR 0328). The
   Workbench repository list puts it first with a "当前启动目录 / Launch
   workspace" badge, and the `security_repositories` card puts it first and
