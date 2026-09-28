@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
 import { ToolArgsError, defineTool, type GenericCallView, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import {
   cancelAssessmentRequestSchema,
@@ -35,6 +35,13 @@ import {
 } from './internal/authority.ts'
 import { modelFindingLocation, type ModelFindingLocationV1 } from './internal/finding-location.ts'
 import { readSessionEvents } from './internal/session-events.ts'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    /** The /security command's model-facing instructions. Harness 0.1.7 has no shared plugin kind. */
+    'dsh-security-assurance': { kind: 'dsh-security-assurance' } & ContextFormed
+  }
+}
 
 export const SECURITY_COMMAND_NAME = 'security'
 
@@ -1483,12 +1490,7 @@ const SecurityAssuranceTools = {
           }
           agent.steer(createUserMessage({
             content: [{ type: 'text', text: securityCommandPrompt(rawInput.trim()) }],
-            source: {
-              kind: 'plugin',
-              plugin: 'dsh-security-assurance',
-              form: 'instructions',
-              summary: 'Run a standalone Security Assurance assessment.',
-            },
+            source: { kind: 'dsh-security-assurance', form: 'instructions' },
           }))
           return { kind: 'success', text: '已提交安全评估请求 · Security assessment request submitted.' }
         },

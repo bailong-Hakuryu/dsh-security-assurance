@@ -32,7 +32,7 @@ Service 先解析授权 Catalog 选择并冻结完整 Subject，再把已验证 
 
 - 版本：<code>0.1.0-rc.16</code>
 - 状态：Release Candidate（预发布版）
-- 适配：DeepSeek Harness <code>0.1.2-alpha.1</code>（主目标）；<code>0.1.2-alpha.2</code> 至 <code>0.1.2-rc.1</code>、<code>0.1.3-alpha.1</code>、<code>0.1.3-alpha.2</code>、<code>0.1.5-alpha.1</code>、<code>0.1.5-alpha.2</code>、<code>0.1.5-rc.1</code>、<code>0.1.5-rc.2</code> 与 <code>0.1.5-rc.3</code> 经兼容矩阵验证
+- 适配：DeepSeek Harness <code>0.1.2-alpha.1</code>（主目标）；<code>0.1.2-alpha.2</code> 至 <code>0.1.2-rc.1</code>、<code>0.1.3-alpha.1</code>、<code>0.1.3-alpha.2</code>、<code>0.1.5-alpha.1</code>、<code>0.1.5-alpha.2</code>、<code>0.1.5-rc.1</code>、<code>0.1.5-rc.2</code>、<code>0.1.5-rc.3</code>、<code>0.1.7-alpha.2</code>、<code>0.1.7-rc.1</code> 与 <code>0.1.7-rc.2</code> 经兼容矩阵验证
 - GitHub：[v0.1.0-rc.16 Release](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.16)
 
 ### 支持范围
@@ -51,7 +51,7 @@ Service 先解析授权 Catalog 选择并冻结完整 Subject，再把已验证 
 | 可选 pnpm 锁文件策略 | <code>security/pnpm-lockfile-integrity</code> |
 | 评估档案 | <code>security/standard</code>（当前唯一已资格化档案）；<code>security/deep</code> 与 Host 自定义档案在独立多轮分析组合落地前 fail closed |
 | 受治理角色目录 | 固定为 <code>threat-modeler</code>、<code>discovery-analyst</code>、<code>validation-analyst</code>、<code>attack-path-analyst</code>、<code>challenge-analyst</code>；每个条目都有版本化摘要谱系并绑定进 Start Preflight，但当前仍无已资格化执行 Provider |
-| Harness 版本 | <code>0.1.2-alpha.1</code>（主）、<code>0.1.2-alpha.2</code>、<code>0.1.2-alpha.3</code>、<code>0.1.2-alpha.4</code>、<code>0.1.2-alpha.5</code>、<code>0.1.2-rc.1</code>、<code>0.1.3-alpha.1</code>、<code>0.1.3-alpha.2</code>、<code>0.1.5-alpha.1</code>、<code>0.1.5-alpha.2</code>、<code>0.1.5-rc.1</code>、<code>0.1.5-rc.2</code>、<code>0.1.5-rc.3</code> |
+| Harness 版本 | <code>0.1.2-alpha.1</code>（主）、<code>0.1.2-alpha.2</code>、<code>0.1.2-alpha.3</code>、<code>0.1.2-alpha.4</code>、<code>0.1.2-alpha.5</code>、<code>0.1.2-rc.1</code>、<code>0.1.3-alpha.1</code>、<code>0.1.3-alpha.2</code>、<code>0.1.5-alpha.1</code>、<code>0.1.5-alpha.2</code>、<code>0.1.5-rc.1</code>、<code>0.1.5-rc.2</code>、<code>0.1.5-rc.3</code>、<code>0.1.7-alpha.2</code>、<code>0.1.7-rc.1</code>、<code>0.1.7-rc.2</code> |
 | Node.js | <code>^22.19.0 \|\| >=24.0.0</code>（CI 覆盖 22 与 24） |
 | 支持平台 | Windows、Linux、macOS |
 
@@ -97,7 +97,7 @@ Harness 支持窗口是一个显式的已验证集合：每日 [Harness Compatib
 
 ### 3 分钟最短安装（Harness Web）
 
-兼容 DeepSeek Harness <code>0.1.2-alpha.1</code> 至 <code>0.1.2-rc.1</code>、<code>0.1.3-alpha.1</code>、<code>0.1.3-alpha.2</code>、<code>0.1.5-alpha.1</code>、<code>0.1.5-alpha.2</code>、<code>0.1.5-rc.1</code>、<code>0.1.5-rc.2</code> 与 <code>0.1.5-rc.3</code>（显式已验证集合，见上方支持范围），要求 Node.js <code>^22.19.0 || >=24.0.0</code> 和 Harness CLI。将终端当前目录设为要评估的 Git 仓库，然后直接安装 GitHub Release 中已经构建的包：
+兼容 DeepSeek Harness <code>0.1.2-alpha.1</code> 至 <code>0.1.2-rc.1</code>、<code>0.1.3-alpha.1</code>、<code>0.1.3-alpha.2</code>、<code>0.1.5-alpha.1</code>、<code>0.1.5-alpha.2</code>、<code>0.1.5-rc.1</code>、<code>0.1.5-rc.2</code>、<code>0.1.5-rc.3</code>、<code>0.1.7-alpha.2</code>、<code>0.1.7-rc.1</code> 与 <code>0.1.7-rc.2</code>（显式已验证集合，见上方支持范围），要求 Node.js <code>^22.19.0 || >=24.0.0</code> 和 Harness CLI。将终端当前目录设为要评估的 Git 仓库，然后直接安装 GitHub Release 中已经构建的包：
 
 1. 下载对应 Release 的 tarball。
 2. 在目标仓库目录安装插件并检查最终组合。
@@ -299,7 +299,7 @@ The Service resolves an authorized Catalog selection and freezes the complete Su
 
 - Version: <code>0.1.0-rc.16</code>
 - Status: release candidate
-- Target Harness: <code>0.1.2-alpha.1</code> (primary); <code>0.1.2-alpha.2</code> through <code>0.1.2-rc.1</code>, <code>0.1.3-alpha.1</code>, <code>0.1.3-alpha.2</code>, <code>0.1.5-alpha.1</code>, <code>0.1.5-alpha.2</code>, <code>0.1.5-rc.1</code>, <code>0.1.5-rc.2</code>, and <code>0.1.5-rc.3</code> verified by the compatibility matrix
+- Target Harness: <code>0.1.2-alpha.1</code> (primary); <code>0.1.2-alpha.2</code> through <code>0.1.2-rc.1</code>, <code>0.1.3-alpha.1</code>, <code>0.1.3-alpha.2</code>, <code>0.1.5-alpha.1</code>, <code>0.1.5-alpha.2</code>, <code>0.1.5-rc.1</code>, <code>0.1.5-rc.2</code>, <code>0.1.5-rc.3</code>, <code>0.1.7-alpha.2</code>, <code>0.1.7-rc.1</code>, and <code>0.1.7-rc.2</code> verified by the compatibility matrix
 - Release: [v0.1.0-rc.16](https://github.com/bailong-Hakuryu/dsh-security-assurance/releases/tag/v0.1.0-rc.16)
 
 ## Support matrix
@@ -318,7 +318,7 @@ The Service resolves an authorized Catalog selection and freezes the complete Su
 | Optional pnpm lockfile policy | <code>security/pnpm-lockfile-integrity</code> |
 | Assessment profile | <code>security/standard</code> (the only currently qualified Profile); <code>security/deep</code> and Host-defined Profiles fail closed until their independent multi-pass composition is implemented |
 | Governed role catalog | Fixed to <code>threat-modeler</code>, <code>discovery-analyst</code>, <code>validation-analyst</code>, <code>attack-path-analyst</code>, and <code>challenge-analyst</code>; each entry has versioned digest lineage bound into Start Preflight, but no qualified execution Provider exists yet |
-| Harness versions | <code>0.1.2-alpha.1</code> (primary), <code>0.1.2-alpha.2</code>, <code>0.1.2-alpha.3</code>, <code>0.1.2-alpha.4</code>, <code>0.1.2-alpha.5</code>, <code>0.1.2-rc.1</code>, <code>0.1.3-alpha.1</code>, <code>0.1.3-alpha.2</code>, <code>0.1.5-alpha.1</code>, <code>0.1.5-alpha.2</code>, <code>0.1.5-rc.1</code>, <code>0.1.5-rc.2</code>, <code>0.1.5-rc.3</code> |
+| Harness versions | <code>0.1.2-alpha.1</code> (primary), <code>0.1.2-alpha.2</code>, <code>0.1.2-alpha.3</code>, <code>0.1.2-alpha.4</code>, <code>0.1.2-alpha.5</code>, <code>0.1.2-rc.1</code>, <code>0.1.3-alpha.1</code>, <code>0.1.3-alpha.2</code>, <code>0.1.5-alpha.1</code>, <code>0.1.5-alpha.2</code>, <code>0.1.5-rc.1</code>, <code>0.1.5-rc.2</code>, <code>0.1.5-rc.3</code>, <code>0.1.7-alpha.2</code>, <code>0.1.7-rc.1</code>, <code>0.1.7-rc.2</code> |
 | Node.js | <code>^22.19.0 \|\| >=24.0.0</code> (CI covers 22 and 24) |
 | Platforms | Windows, Linux, macOS |
 
@@ -372,7 +372,7 @@ The standalone tool and Workbench catalog remains backward compatible and expose
 
 ## Three-minute install in Harness Web
 
-Compatible with DeepSeek Harness <code>0.1.2-alpha.1</code> through <code>0.1.2-rc.1</code>, <code>0.1.3-alpha.1</code>, <code>0.1.3-alpha.2</code>, <code>0.1.5-alpha.1</code>, <code>0.1.5-alpha.2</code>, <code>0.1.5-rc.1</code>, <code>0.1.5-rc.2</code>, and <code>0.1.5-rc.3</code> (an explicit, verified set; see the support matrix above). Requires Node.js <code>^22.19.0 || >=24.0.0</code> and the Harness CLI. Install the prebuilt GitHub Release package directly:
+Compatible with DeepSeek Harness <code>0.1.2-alpha.1</code> through <code>0.1.2-rc.1</code>, <code>0.1.3-alpha.1</code>, <code>0.1.3-alpha.2</code>, <code>0.1.5-alpha.1</code>, <code>0.1.5-alpha.2</code>, <code>0.1.5-rc.1</code>, <code>0.1.5-rc.2</code>, <code>0.1.5-rc.3</code>, <code>0.1.7-alpha.2</code>, <code>0.1.7-rc.1</code>, and <code>0.1.7-rc.2</code> (an explicit, verified set; see the support matrix above). Requires Node.js <code>^22.19.0 || >=24.0.0</code> and the Harness CLI. Install the prebuilt GitHub Release package directly:
 
 1. Download the tarball from the matching Release.
 2. Install it from the repository you want to assess and inspect the composed profile.

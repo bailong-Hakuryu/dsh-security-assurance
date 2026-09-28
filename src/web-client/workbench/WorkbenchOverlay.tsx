@@ -1,4 +1,3 @@
-import { IconCloseOutline16, IconDataOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, MouseEvent, RefObject } from 'react'
 import type {
@@ -43,6 +42,7 @@ import {
 import { projectWorkbenchRouteStateV1 } from './navigation.ts'
 import { projectAssessmentProgressViewV1 } from './progress.ts'
 import type { WorkbenchPresentationSnapshotV1 } from './presentation.ts'
+import { CloseIcon, WorkbenchIcon } from './icons.tsx'
 
 export type WorkbenchOverlaySources = {
   readonly presentation: HostObservable<WorkbenchPresentationSnapshotV1>
@@ -126,28 +126,59 @@ export function WorkbenchOverlay({
   const closeRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
+  const lastFocusedRef = useRef<HTMLElement | null>(null)
+  const closingRef = useRef(false)
+
+  // Focus the dialog's last focused control, or its body when a view change removed it.
+  const refocus = (): void => {
+    const last = lastFocusedRef.current
+    ;(last?.isConnected === true ? last : bodyRef.current)?.focus()
+  }
+  const close = (): void => {
+    closingRef.current = true
+    closeWorkbench()
+  }
 
   useEffect(() => {
-    if (open) closeRef.current?.focus()
+    if (!open) return
+    closingRef.current = false
+    // The guard below attaches after this focus, so record the opening focus here.
+    lastFocusedRef.current = closeRef.current
+    closeRef.current?.focus()
   }, [open])
 
-  // A view change can unmount the focused control and strand focus outside the
-  // modal, where Escape and the Tab trap no longer apply; bring it back.
-  // Deliberate focus moves inside the dialog are left alone.
+  // aria-modal: focus that leaves the open dialog comes back. A Host control can
+  // focus itself while the dialog opens (Harness 0.1.7's composer does), and a
+  // view change can unmount the focused control. Closing lets focus go.
   useEffect(() => {
-    if (!open || dialogRef.current?.contains(document.activeElement) === true) return
-    bodyRef.current?.focus()
+    if (!open) return
+    const onFocusIn = (event: FocusEvent): void => {
+      const dialog = dialogRef.current
+      if (dialog === null || !(event.target instanceof HTMLElement)) return
+      if (dialog.contains(event.target)) {
+        lastFocusedRef.current = event.target
+      } else if (!closingRef.current) {
+        refocus()
+      }
+    }
+    document.addEventListener('focusin', onFocusIn)
+    return () => { document.removeEventListener('focusin', onFocusIn) }
+  }, [open])
+
+  useEffect(() => {
+    if (!open || closingRef.current || dialogRef.current?.contains(document.activeElement) === true) return
+    refocus()
   }, [open, state])
 
   if (!open) return null
 
   const onBackdrop = (event: MouseEvent<HTMLDivElement>): void => {
-    if (event.target === event.currentTarget) closeWorkbench()
+    if (event.target === event.currentTarget) close()
   }
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key === 'Escape') {
       event.preventDefault()
-      closeWorkbench()
+      close()
       return
     }
     if (event.key === 'Tab') {
@@ -184,9 +215,9 @@ export function WorkbenchOverlay({
             type="button"
             className="dsh-security-dialog__close"
             aria-label={t('dialog.close')}
-            onClick={closeWorkbench}
+            onClick={close}
           >
-            <IconCloseOutline16 />
+            <CloseIcon />
           </button>
         </header>
         <div
@@ -850,7 +881,7 @@ function MessageState({
   return (
     <div className="dsh-security-empty" role={role} aria-live={role === 'status' ? 'polite' : undefined}>
       <span className="dsh-security-empty__icon" aria-hidden="true">
-        <IconDataOutline16 />
+        <WorkbenchIcon />
       </span>
       <h2>{title}</h2>
       <p>{body}</p>

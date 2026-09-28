@@ -396,7 +396,21 @@ async function loadPlaywright() {
 
 async function assertFocused(page, locator, message) {
   const focused = await locator.evaluate(element => document.activeElement === element)
-  assert.equal(focused, true, message)
+  if (focused) return
+  // Name what holds focus instead, so a Host-owned modal or inert tree is visible in CI.
+  const context = await page.evaluate(() => {
+    const describe = element => element === null
+      ? 'none'
+      : `${element.tagName.toLowerCase()}[${element.getAttribute('aria-label') ?? element.textContent?.trim().slice(0, 40) ?? ''}]`
+    return {
+      active: describe(document.activeElement),
+      inert: [...document.querySelectorAll('[inert]')].map(describe),
+      dialogs: [...document.querySelectorAll('[role="dialog"]')].map(dialog => dialog.getAttribute('aria-label')
+        ?? dialog.querySelector('h1, h2')?.textContent?.trim() ?? ''),
+      moves: globalThis.__dshFocusTrace ?? [],
+    }
+  })
+  assert.fail(`${message}; focus is on ${context.active}; inert: ${context.inert.join(', ') || 'none'}; dialogs: ${context.dialogs.join(', ') || 'none'}; focus moves: ${context.moves.join(' -> ') || 'none'}`)
 }
 
 async function dismissHostOnboarding(page, labels, required = false) {
@@ -415,6 +429,9 @@ async function dismissHostOnboarding(page, labels, required = false) {
     assert.equal(noticeDismissed, true, 'fresh Reference Host must present its testing notice')
     assert.equal(providerDismissed, true, 'fresh Reference Host must present provider setup')
   }
+  // A Host modal marks the app tree inert; Harness 0.1.7 lifts it after the
+  // dialog is already hidden, and a dialog opened in between cannot take focus.
+  await page.waitForFunction(() => document.querySelector('[inert]') === null, undefined, { timeout: 10_000 })
 }
 
 async function assertNoForbiddenBrowserState(page, forbiddenValues) {
@@ -541,6 +558,18 @@ async function runLocalWorkbenchScenario() {
   // Launcher, dialog focus, focus containment, and focus return.
   const launcher = page.getByRole('button', { name: 'Open Security Assurance Workbench' })
   await launcher.waitFor({ timeout: 45_000 })
+  // Record every focus move from here on; assertFocused prints them on failure.
+  await page.evaluate(() => {
+    const started = performance.now()
+    globalThis.__dshFocusTrace = []
+    document.addEventListener('focusin', event => {
+      const target = event.target
+      const name = target instanceof Element
+        ? `${target.tagName.toLowerCase()}[${target.getAttribute('aria-label') ?? target.textContent?.trim().slice(0, 24) ?? ''}]`
+        : String(target)
+      globalThis.__dshFocusTrace.push(`${Math.round(performance.now() - started)}ms ${name}`)
+    }, true)
+  })
   assert.equal(await launcher.evaluate(element => element.tagName), 'BUTTON')
   await launcher.click()
   const dialog = page.getByRole('dialog', { name: 'Security Assurance Workbench' })

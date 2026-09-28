@@ -21,16 +21,21 @@ function runtimeFor(
 } {
   const terminate = vi.fn<() => void>()
   const waitForExit = vi.fn(async () => true)
-  const spawn = vi.fn<(spec: SubprocessSpawnSpec) => SubprocessHandle>(() => ({
-    pid: 42,
-    stdin: undefined,
-    stdout: Readable.from(chunks),
-    stderr: undefined,
-    collected: {},
-    done: Promise.resolve(outcome),
-    terminate,
-    waitForExit,
-  }))
+  const spawn = vi.fn<(spec: SubprocessSpawnSpec) => SubprocessHandle>(() => {
+    // Harness 0.1.7 adds `control`; a non-literal handle also satisfies the earlier handle shape.
+    const handle = {
+      pid: 42,
+      stdin: undefined,
+      stdout: Readable.from(chunks),
+      stderr: undefined,
+      control: undefined,
+      collected: {},
+      done: Promise.resolve(outcome),
+      terminate,
+      waitForExit,
+    }
+    return handle
+  })
   return {
     runtime: {
       resolveExecutable: vi.fn(async () => gitExecutable),

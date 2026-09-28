@@ -21,7 +21,10 @@
     "noFallthroughCasesInSwitch": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@deepseek-ai/schemastery": ["../deepseek-harness-latest/vendor/schemastery/lib/types/index.d.ts"]
+    }
   },
   "include": ["src"]
 }

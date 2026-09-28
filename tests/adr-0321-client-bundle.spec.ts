@@ -11,7 +11,6 @@ import * as react from 'react'
 import * as jsxRuntime from 'react/jsx-runtime'
 import { afterEach, describe, expect, it } from 'vitest'
 import { LOCAL_WORKBENCH_PERMISSIONS } from '../src/workbench-local.ts'
-import * as icons from './support/ui-primitives.ts'
 import { provideConnection, provideSlotRecorder } from './support/workbench-client-host.ts'
 
 /** The modules every supported Harness Web page seeds into its client module table. */
@@ -23,7 +22,7 @@ const PLATFORM_MODULES: Readonly<Record<string, unknown>> = {
   '@deepseek-ai/cordis': cordis,
   '@deepseek-ai/dsh-client-store': {},
   '@deepseek-ai/dsh-client-ui-slots': {},
-  '@deepseek-ai/dsh-client-ui-primitives': icons,
+  '@deepseek-ai/dsh-client-ui-primitives': {},
 }
 
 interface ClientRegistration {
@@ -64,7 +63,6 @@ describe('ADR 0321 built Security client bundle', () => {
     expect(id).toBe('dsh-security-assurance')
     expect([...requested].sort()).toEqual([
       '@deepseek-ai/cordis',
-      '@deepseek-ai/dsh-client-ui-primitives',
       'react',
       'react/jsx-runtime',
     ])

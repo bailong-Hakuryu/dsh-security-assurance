@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+- Keep focus inside the open Workbench dialog when a Host control takes it.
+  Harness 0.1.7's composer focuses itself shortly after the page loads; if
+  that lands after the dialog opened, focus left the modal and Escape and the
+  Tab trap stopped applying. Focus now returns to the dialog's last focused
+  control, and closing the dialog still returns it to the launcher. The
+  release browser proof now names what holds focus when a focus check fails.
+
+- Admit DeepSeek Harness `0.1.7-alpha.2`, `0.1.7-rc.1`, and `0.1.7-rc.2`
+  (ADR 0327). The closed verified set and the exact DSH peer disjunction add
+  them, and the Cordis peers add the graph they ship (`4.0.4`, loader
+  `1.0.5`, include `1.0.9`). `0.1.6-*` and `0.1.7-alpha.1` ship
+  intermediate graphs and stay closed. `/security` now tags its instructions
+  with its own `dsh-security-assurance` source kind, because 0.1.7 removed
+  the shared `plugin` kind. The Workbench now draws its own icons: 0.1.7
+  renamed the host icons it used, and the sidebar launcher crashed instead of
+  rendering. Verified on 0.1.7-rc.2: full suite, joint E2E, the packed
+  dual-plugin profile smoke, and the release-mode browser Workbench proof.
+
 ## [0.1.0-rc.16] - 2026-09-27
 
 - Qualify the optional Control Plane integration against exactly `0.2.1`,

@@ -1,5 +1,5 @@
-import { IconDataOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MouseEvent } from 'react'
+import { WorkbenchIcon } from './icons.tsx'
 import type { PropsWorkbenchLocale, SidebarFooterActionOwnerProps } from './slot-types.ts'
 
 export interface WorkbenchLauncherInjected {
@@ -27,7 +27,7 @@ export function WorkbenchLauncher({ wide, t, showWorkbench }: WorkbenchLauncherP
       onClick={onClick}
     >
       <span className="dsh-security-launcher__icon" aria-hidden="true">
-        <IconDataOutline16 />
+        <WorkbenchIcon />
       </span>
       {wide && <span>{t('launcher.label')}</span>}
     </button>

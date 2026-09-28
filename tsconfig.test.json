@@ -9,6 +9,7 @@
     // The generated Remote declarations name the package's own subpaths; the
     // build config maps them to source through outDir, this config cannot.
     "paths": {
+      "@deepseek-ai/schemastery": ["../deepseek-harness-latest/vendor/schemastery/lib/types/index.d.ts"],
       "dsh-security-assurance/contracts": ["./src/contracts.ts"],
       "dsh-security-assurance/workbench-local": ["./src/workbench-local.ts"],
       "dsh-security-assurance/workbench-remote": ["./src/workbench-remote.ts"],

@@ -482,6 +482,8 @@ describe('security assessment tool registration', () => {
         type: 'text',
         text: expect.stringContaining('review package lifecycle scripts'),
       }])
+      // Harness 0.1.7 removed the shared plugin kind; each producer names its own (MessageSourceMap).
+      expect(root.steered[0]?.source).toEqual({ kind: 'dsh-security-assurance', form: 'instructions' })
       expect(fixture.ctx.tools.get('security_repositories')?.description).toContain(
         'First step for a top-level standalone security assessment',
       )

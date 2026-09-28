@@ -95,3 +95,36 @@ describe('Workbench dialog keeps keyboard focus across view changes', () => {
     expect(closeWorkbench).toHaveBeenCalledOnce()
   })
 })
+
+describe('Workbench dialog keeps focus when the Host moves it', () => {
+  it('takes focus back from a Host control that focuses itself while the dialog is open', () => {
+    // Harness 0.1.7's composer focuses itself shortly after the page settles,
+    // which can land after the Workbench dialog has opened.
+    const composer = document.createElement('div')
+    composer.tabIndex = 0
+    composer.setAttribute('aria-label', 'Host composer')
+    document.body.append(composer)
+    mountOverlay({ kind: 'SELECTION_READY', consistencyWatermark: 'steal.signature', assessments: [listed()], nextCursor: null })
+    const close = document.querySelector<HTMLButtonElement>(`button[aria-label="${en['dialog.close']}"]`)
+    expect(document.activeElement).toBe(close)
+
+    act(() => { composer.focus() })
+
+    expect(document.activeElement).toBe(close)
+  })
+
+  it('lets focus return to the launcher once the dialog closes itself', () => {
+    const launcher = document.createElement('button')
+    document.body.append(launcher)
+    const { closeWorkbench } = mountOverlay({
+      kind: 'SELECTION_READY', consistencyWatermark: 'return.signature', assessments: [listed()], nextCursor: null,
+    })
+    closeWorkbench.mockImplementation(() => { launcher.focus() })
+    const close = document.querySelector<HTMLButtonElement>(`button[aria-label="${en['dialog.close']}"]`)
+
+    act(() => { close!.click() })
+
+    expect(closeWorkbench).toHaveBeenCalledOnce()
+    expect(document.activeElement).toBe(launcher)
+  })
+})
