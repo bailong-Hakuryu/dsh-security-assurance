@@ -4,6 +4,14 @@
 
 ## [0.1.0-rc.17] - 2026-09-28
 
+- Admit DeepSeek Harness `0.2.0-rc.1`, npm `next` since 2026-09-28, into
+  the closed verified set and the exact DSH peer disjunction. It ships the
+  same Cordis graph as 0.1.7 (`4.0.4`, loader `1.0.5`, include `1.0.9`), so
+  the Cordis peers are unchanged. Before admission its matrix lanes failed
+  only the fail-closed version check; the full suite, joint E2E, packed
+  profile smoke, and the release browser proof of the retained candidate now
+  pass on it.
+
 - Preserve strict Typert codec compatibility in the published artifact (ADR
   0329). Host and Remote contributions expose both `schema` and `create()`
   using the same generated parser, so a candidate built on the primary
