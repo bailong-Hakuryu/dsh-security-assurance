@@ -122,6 +122,7 @@ and the plugin's own security claims as stated in README.md/SECURITY.md/ADRs.
 | F-06/F-22/F-23 risk decisions | Fixed: expiry and case-insensitive dual-authority checks are enforced at finalization |
 | F-09/F-11/F-12/F-33/F-34/F-35/F-40/F-41/F-42/F-43/F-45/F-46/F-48/F-49 | Fixed or hardened at module seams; residual host-private trust assumptions remain documented |
 | F-04/F-13/F-19/F-25/F-27/F-28/F-36/F-37/F-44/F-47 | Accepted design limitations / defense-in-depth notes; no release-blocking behavior |
+| F-15(c) launcher-cwd registrations (2026-09-28) | Mitigated: registrations from earlier launch directories stay ENABLED by design; ADR 0326 and ADR 0328 name the launch workspace on the model tool, the tool card, and the Workbench |
 
 ## 4. Findings
 

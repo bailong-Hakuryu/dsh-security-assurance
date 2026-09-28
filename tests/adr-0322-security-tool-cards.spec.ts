@@ -200,8 +200,8 @@ describe('ADR 0322 Security tool card view models', () => {
     }))
     expect(summaryText(repositories)).toBe('2 个仓库 · Current workspace')
     expect(repositories.fields.map(field => [text(field.label), text(field.value)])).toEqual([
-      ['Current workspace', '已启用 · security/standard'],
-      ['Archive', '已停用 · security/standard'],
+      ['Current workspace · repo-1', '已启用 · security/standard'],
+      ['Archive · repo-2', '已停用 · security/standard'],
     ])
 
     const catalog = securityToolCard('security_catalog', settled('security_catalog', { repository_id: 'repo-1' }, {

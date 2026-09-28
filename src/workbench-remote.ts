@@ -44,6 +44,7 @@ import type {
   WaitForAssessmentRevisionRequest,
 } from './contracts.ts'
 import { createTrustedCallerChannel, resolveTrustedInvocation } from './internal/authority.ts'
+import { hostBindingIdsByRepository } from './internal/host-binding-marks.ts'
 
 declare const workbenchAuthorityContextIdBrand: unique symbol
 
@@ -255,6 +256,33 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
  * context into an opaque Security Invocation and delegates domain behavior to
  * {@link SecurityAssuranceService}.
  */
+/** One Repository Registry entry as the Workbench shows it (ADR 0328). */
+export interface WorkbenchRepositoryV1 extends RepositorySnapshotV1 {
+  /** Host bindings resolved to this Repository at launch, such as `current-workspace`. */
+  readonly hostBindingIds?: readonly string[]
+}
+
+/** Repository Registry page as the Workbench shows it (ADR 0328). */
+export interface WorkbenchRepositoryListV1 {
+  readonly schemaVersion: 1
+  readonly repositories: readonly WorkbenchRepositoryV1[]
+  readonly truncated: boolean
+}
+
+function withHostBindingIds(
+  snapshot: RepositoryListSnapshotV1,
+  marks: ReadonlyMap<string, readonly string[]>,
+): WorkbenchRepositoryListV1 {
+  return {
+    schemaVersion: snapshot.schemaVersion,
+    repositories: snapshot.repositories.map((repository) => {
+      const hostBindingIds = marks.get(repository.repositoryId)
+      return hostBindingIds === undefined ? repository : { ...repository, hostBindingIds: [...hostBindingIds] }
+    }),
+    truncated: snapshot.truncated,
+  }
+}
+
 export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
   static inject = ['securityAssurance', 'typert']
 
@@ -351,18 +379,23 @@ export class SecurityAssuranceWorkbenchRemote extends TypertRemoteService {
     )
   }
 
-  /** List authority-visible path-free Repository Registry entries. */
+  /**
+   * List authority-visible path-free Repository Registry entries, naming the
+   * Host binding each one serves (ADR 0328).
+   */
   @Remote
-  listRepositories(
+  async listRepositories(
     securityAssuranceWorkbenchContext: SecurityInvocation,
     request: ListRepositoriesRequest,
     signal: AbortSignal,
-  ): Promise<SecurityResult<RepositoryListSnapshotV1>> {
-    return this.ctx.securityAssurance.listRepositories(
+  ): Promise<SecurityResult<WorkbenchRepositoryListV1>> {
+    const result = await this.ctx.securityAssurance.listRepositories(
       securityAssuranceWorkbenchContext,
       request,
       { signal },
     )
+    if (!result.ok) return result
+    return { ok: true, value: withHostBindingIds(result.value, await hostBindingIdsByRepository(this.ctx)) }
   }
 
   /** Resolve Catalog choices and an optional immutable Start Preflight proposal. */

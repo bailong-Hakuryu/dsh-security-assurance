@@ -12,6 +12,7 @@ import type {
   WorkbenchStartSubmissionStateV1,
 } from './controller.ts'
 import type {
+  WorkbenchRepositoryV1,
   WorkbenchEvidenceDisclosureViewV1,
   WorkbenchEvidenceMetadataViewV1,
 } from '../../workbench-remote.ts'
@@ -511,6 +512,15 @@ function RuntimeHealthView({
   )
 }
 
+/** The Repository the Host bound at launch; display names repeat across launch directories. */
+function isLaunchWorkspace(repository: WorkbenchRepositoryV1): boolean {
+  return repository.hostBindingIds?.includes('current-workspace') === true
+}
+
+function launchWorkspaceFirst(repositories: readonly WorkbenchRepositoryV1[]): readonly WorkbenchRepositoryV1[] {
+  return [...repositories.filter(isLaunchWorkspace), ...repositories.filter(repository => !isLaunchWorkspace(repository))]
+}
+
 function RepositorySelection({
   repositories,
   truncated,
@@ -518,7 +528,7 @@ function RepositorySelection({
   selectRepository,
   t,
 }: {
-  readonly repositories: readonly RepositorySnapshotV1[]
+  readonly repositories: readonly WorkbenchRepositoryV1[]
   readonly truncated: boolean
   readonly backToAssessmentSelection: () => void
   readonly selectRepository: (repositoryId: RepositorySnapshotV1['repositoryId']) => void
@@ -541,11 +551,14 @@ function RepositorySelection({
         ? <p className="dsh-security-muted">{t('repositories.empty')}</p>
         : (
             <ul className="dsh-security-repository-list">
-              {repositories.map(repository => (
+              {launchWorkspaceFirst(repositories).map(repository => (
                 <li key={repository.repositoryId}>
                   <div className="dsh-security-repository-list__heading">
                     <div>
                       <strong>{repository.displayName}</strong>
+                      {isLaunchWorkspace(repository) && (
+                        <span className="dsh-security-repository-list__launch">{t('repositories.launchWorkspace')}</span>
+                      )}
                       <code>{repository.repositoryId} @ {repository.repositoryRevision}</code>
                     </div>
                     <MachineBadge value={repository.state} />

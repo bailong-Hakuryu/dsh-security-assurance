@@ -26,7 +26,6 @@ import {
   type SecurityInvocation,
   type SecurityVerdict,
 } from './contracts.ts'
-import type { SecurityAssuranceHostRepositoryProvider } from './host-repository-provider.ts'
 import type { SecurityAssuranceService } from './index.ts'
 import {
   createTrustedCallerChannel,
@@ -34,6 +33,7 @@ import {
   type SecurityPermission,
 } from './internal/authority.ts'
 import { modelFindingLocation, type ModelFindingLocationV1 } from './internal/finding-location.ts'
+import { hostBindingIdsByRepository } from './internal/host-binding-marks.ts'
 import { readSessionEvents } from './internal/session-events.ts'
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -742,27 +742,6 @@ async function findingLocations(
     if (location !== undefined) locations.set(summary.recordId, location)
   }
   return locations
-}
-
-/**
- * Path-free Host bindings grouped by Repository (ADR 0326). A missing,
- * failed, or disposing Host Repository Provider yields no marks, never a
- * guessed one.
- */
-async function hostBindingIdsByRepository(ctx: Context): Promise<ReadonlyMap<string, readonly string[]>> {
-  const grouped = new Map<string, string[]>()
-  try {
-    const provider = ctx.get('securityAssuranceHostRepositories') as SecurityAssuranceHostRepositoryProvider | undefined
-    for (const binding of await provider?.bindings() ?? []) {
-      const ids = grouped.get(binding.repositoryId) ?? []
-      ids.push(binding.bindingId)
-      grouped.set(binding.repositoryId, ids)
-    }
-  } catch {
-    return new Map()
-  }
-  for (const ids of grouped.values()) ids.sort()
-  return grouped
 }
 
 function repositoriesValue(

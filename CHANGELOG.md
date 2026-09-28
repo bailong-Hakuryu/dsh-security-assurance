@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Name the launch workspace on every Repository surface (ADR 0328). The
+  Workbench repository list puts it first with a "当前启动目录 / Launch
+  workspace" badge, and the `security_repositories` card puts it first and
+  labels every entry with a short Repository ID, so several "Current
+  workspace" entries from earlier launch directories can be told apart.
+  Earlier entries stay enabled.
+
 - Keep focus inside the open Workbench dialog when a Host control takes it.
   Harness 0.1.7's composer focuses itself shortly after the page loads; if
   that lands after the dialog opened, focus left the modal and Escape and the

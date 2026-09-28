@@ -39,6 +39,8 @@ import type {
 import { INTERNAL_JSON_EXPORT_PROFILE_ID } from '../../contracts.ts'
 import type { LocalWorkbenchContextV1 } from '../../workbench-local.ts'
 import type {
+  WorkbenchRepositoryListV1,
+  WorkbenchRepositoryV1,
   WorkbenchAuthorityContextId,
   WorkbenchEvidenceDisclosureViewV1,
   WorkbenchEvidenceMetadataViewV1,
@@ -244,7 +246,7 @@ export type SecurityAssuranceWorkbenchStateV1 =
   | { readonly kind: 'REPOSITORIES_LOADING' }
   | {
     readonly kind: 'REPOSITORIES_READY'
-    readonly repositories: readonly RepositorySnapshotV1[]
+    readonly repositories: readonly WorkbenchRepositoryV1[]
     readonly truncated: boolean
   }
   | {
@@ -487,7 +489,7 @@ export class SecurityAssuranceWorkbenchController extends Service {
     this.clearEvidenceExpiry(session)
     session.assessmentId = undefined
     this.publish(Object.freeze({ kind: 'REPOSITORIES_LOADING' }))
-    let result: RemoteResult<SecurityResult<import('../../contracts.ts').RepositoryListSnapshotV1>>
+    let result: RemoteResult<SecurityResult<WorkbenchRepositoryListV1>>
     try {
       result = await this.ownerCtx.remote.securityAssuranceWorkbench.listRepositories(
         session.contextId,

@@ -204,9 +204,15 @@ function assessmentId(value: unknown): CardLabel[] {
   return id === undefined ? [] : [literal(id)]
 }
 
+/** The Repository the Host bound at launch (ADR 0326); display names repeat across launch directories. */
+function isLaunchWorkspace(item: Json): boolean {
+  return list(item['hostBindingIds']).includes('current-workspace')
+}
+
 function repositories({ state, output }: ToolCallFacts): Body {
   if (state !== 'ok') return NONE
-  const items = list(output['repositories']).map(record)
+  const listed = list(output['repositories']).map(record)
+  const items = [...listed.filter(isLaunchWorkspace), ...listed.filter(item => !isLaunchWorkspace(item))]
   const first = items.map(item => text(item['displayName'])).find(name => name !== undefined)
   return {
     summary: [
@@ -217,10 +223,15 @@ function repositories({ state, output }: ToolCallFacts): Body {
     fields: items.flatMap((item) => {
       const name = text(item['displayName'])
       if (name === undefined) return []
+      const id = shortId(text(item['repositoryId']))
       const profile = text(item['assessmentProfileId'])
       return [{
-        label: literal(name),
-        value: join([...label(item['state'], REPOSITORY_STATE), ...profile === undefined ? [] : [literal(profile)]]),
+        label: id === undefined ? literal(name) : join([literal(name), literal(id)]),
+        value: join([
+          ...label(item['state'], REPOSITORY_STATE),
+          ...profile === undefined ? [] : [literal(profile)],
+          ...isLaunchWorkspace(item) ? [msg('value.launchWorkspace')] : [],
+        ]),
       }]
     }),
   }
