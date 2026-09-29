@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- npm `latest` now points to `0.1.0-rc.17` (moved from `0.1.0-rc.12` on
+  2026-09-29), alongside `next`. rc.12 admits no Harness beyond 0.1.5-rc.1,
+  so it failed closed on Harness `latest` 0.1.7-rc.2, and its optional
+  Control Plane peer `^0.1.0` rejects Control Plane `latest` 0.2.2, which
+  binds Security rc.17 exactly. The registry package is byte-identical to the
+  verified rc.17 candidate. This is still a release candidate, not 0.1.0.
+
 ## [0.1.0-rc.17] - 2026-09-28
 
 - Admit DeepSeek Harness `0.2.0-rc.1`, npm `next` since 2026-09-28, into
