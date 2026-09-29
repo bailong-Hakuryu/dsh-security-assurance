@@ -11,15 +11,19 @@ import { parse as parseYaml } from 'yaml'
 
 import { SUPPORTED_HARNESS_VERSIONS } from '../lib/contracts.js'
 import { writeReleaseProofRecord } from '../lib/release-proof-output.js'
+import { resolveBrowserHarnessVersion } from './support/browser-harness-version.mjs'
 
 const execute = promisify(execFile)
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const playwrightHarnessRoot = resolve(projectRoot, '..', 'deepseek-harness-latest')
-// The npm `latest` Harness a direct-use operator installs; any verified version may be chosen.
-const browserHarnessVersion = process.env.DSH_BROWSER_HARNESS_VERSION ?? '0.1.5-rc.3'
-if (!SUPPORTED_HARNESS_VERSIONS.includes(browserHarnessVersion)) {
-  throw new Error(`DSH_BROWSER_HARNESS_VERSION ${browserHarnessVersion} is outside the verified Harness set`)
-}
+// Default to the npm `latest` Harness a direct-use operator installs, read from
+// the same npm that installs it; any verified version may be requested instead.
+const browserHarnessVersion = await resolveBrowserHarnessVersion({
+  requested: process.env.DSH_BROWSER_HARNESS_VERSION,
+  supported: SUPPORTED_HARNESS_VERSIONS,
+  readLatest: async () => (await executeNpm(['view', '@deepseek-ai/dsh', 'dist-tags.latest'], { windowsHide: true })).stdout,
+})
+console.log(`packed-browser-e2e: Harness ${browserHarnessVersion} (${process.env.DSH_BROWSER_HARNESS_VERSION ? 'requested' : 'npm latest'})`)
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'dsh-security-browser-e2e-'))
 const npmCache = join(temporaryRoot, 'npm-cache')
 const artifactRoot = join(temporaryRoot, 'artifacts')

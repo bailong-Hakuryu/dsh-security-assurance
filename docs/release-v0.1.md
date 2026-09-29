@@ -88,11 +88,13 @@ pnpm pack:profile-smoke
 The real-browser runner uses the same Security candidate variable and output
 variable. It reads the package manifest and bundle patch from the tarball. When
 the candidate ships the local Workbench (ADRs 0321, 0324), it installs a fresh
-Harness (`DSH_BROWSER_HARNESS_VERSION`, default the npm `latest` in the
-verified set) and drives the Workbench through real controls; otherwise it
+Harness and drives the Workbench through real controls; otherwise it
 verifies only the Harness Web shell and records `WORKBENCH` as
-`INCONCLUSIVE`. It must never turn generic Web availability into passed
-Workbench evidence.
+`INCONCLUSIVE`. The Harness is `DSH_BROWSER_HARNESS_VERSION` when set, and
+otherwise the npm `latest` of `@deepseek-ai/dsh`, read at run time. Either
+must be in the verified set: when npm `latest` moves to a Harness that is not
+yet admitted, the run fails closed instead of testing an older one. It must
+never turn generic Web availability into passed Workbench evidence.
 
 Run the same retained candidate on `0.1.5-rc.3`, `0.1.7-rc.2`, and
 `0.2.0-rc.1` before publication (ADR 0329). Set `DSH_BROWSER_HARNESS_VERSION` for each

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- The release browser proof now defaults to the npm `latest` Harness, read
+  at run time, instead of a hard-coded `0.1.5-rc.3`. An explicit
+  `DSH_BROWSER_HARNESS_VERSION` still wins, and either must be in the verified
+  set, so a newly published npm `latest` fails closed until it is admitted.
+
 - npm `latest` now points to `0.1.0-rc.17` (moved from `0.1.0-rc.12` on
   2026-09-29), alongside `next`. rc.12 admits no Harness beyond 0.1.5-rc.1,
   so it failed closed on Harness `latest` 0.1.7-rc.2, and its optional
